@@ -1,0 +1,37 @@
+# Project memory repo: track the vault + the bots brain, nothing else
+/*
+!/.gitignore
+!/AGENTS.md
+!/vault/
+!/.hermes/
+/.hermes/*
+!/.hermes/SOUL.md
+!/.hermes/config.yaml
+!/.hermes/profile.yaml
+!/.hermes/memories/
+!/.hermes/skills/
+!/.hermes/scripts/
+!/.hermes/cron/
+/.hermes/cron/*
+!/.hermes/cron/jobs.json
+!/.hermes/profiles/
+/.hermes/profiles/*/*
+!/.hermes/profiles/*/SOUL.md
+!/.hermes/profiles/*/config.yaml
+!/.hermes/profiles/*/profile.yaml
+!/.hermes/profiles/*/memories/
+!/.hermes/profiles/*/skills/
+!/.hermes/profiles/*/scripts/
+!/.hermes/profiles/*/cron/
+/.hermes/profiles/*/cron/*
+!/.hermes/profiles/*/cron/jobs.json
+# never, anywhere
+.env
+*.env
+*.db
+*.db-*
+auth*.json
+*token*
+*.key
+.usage.json
+*.lock

@@ -1,0 +1,76 @@
+---
+title: How this install works
+type: system
+status: active
+owner: manager
+updated: {{DATE}}
+summary: The install at a glance — bots, gateway, Discord, cron, kanban limits, scripts, repos, hiring, and what needs a restart.
+sources: []
+tags: [system]
+---
+
+# How this install works
+
+The Manager keeps this page true. Changes to anything here go through a proposal in `system/changes/` (see the Manager's SOUL).
+
+## The machine
+- Host `{{HOST}}`. This project lives at `/srv/projects/{{PROJECT_NAME}}`, the home of the Linux user `agent-{{PROJECT_NAME}}`. Nothing outside it belongs to this project except the read-only registry `/srv/projects/registry.yaml`.
+- Ports: the Hermes API server on {{API_PORT}} (localhost only); apps use {{APP_PORTS}}.
+- The owner ({{OWNER}}) runs anything needing sudo, and edits `.env` files (secrets).
+
+## The bots (Hermes profiles)
+- `default`: stock Hermes, the install console. Not a role bot. It holds the plumbing: the gateway service, the kanban settings, the housekeeping cron jobs and the API server.
+- `manager`: the front door. The project starts with the Manager alone.
+- Hired bots: listed in the team table in `workspace/AGENTS.md` (kept current by `hire.sh`) and described in `team/<bot>.md`.
+- Each profile lives in `~/.hermes/profiles/<name>/` with its own `SOUL.md`, `config.yaml`, `.env`, memories and skills. Display names are set in `profile.yaml` (`display_name:`); never rename a profile.
+- Models: {{MODELS}}. Hired bots copy the Manager's settings.
+
+## Hiring
+1. The Manager drafts or picks a role in `system/roles/` (the catalogue; `_guide.md` is the shape every role follows).
+2. The Manager proposes the hire in `system/changes/`; the owner says yes.
+3. `~/.hermes/scripts/hire.sh <role> [--channel <discord-channel-id>]` creates the profile (cloned from the Manager: model, key, toolsets, working folder), installs the SOUL, sets the display name, creates its Hermes Project, adds it to the team table and the Discord routes, logs and checkpoints.
+4. If a Discord route was added, the owner restarts the gateway.
+5. The new bot proposes its domain; once the owner agrees, it writes `team/<role>.md`.
+
+## The gateway
+- One multiplexed gateway serves every profile: the systemd user service `hermes-gateway`. It starts at boot (linger is on) and restarts itself if it crashes.
+- It hosts Discord, cron, the kanban dispatcher and the API server. Hermes Desktop connects over SSH and runs its own `hermes serve`.
+- **It reads its config only at start.** Changes to `kanban:`, `gateway:` (including Discord routes), platform tokens or cron schedules need a restart. The owner restarts it, ideally when nothing is Running on the board:
+  `systemctl --user restart hermes-gateway`
+
+## Discord
+- One Discord bot per project, owned by the Manager (token and owner-only allowlist in `profiles/manager/.env`).
+- DMs to the bot, and any channel that isn't routed, reach the **Manager**.
+- A hired bot can have its own channel: `hire.sh --channel <id>` adds a `gateway.profile_routes` entry (`bot_profile: manager`, that channel → that bot). Replies show under the one bot's name; the channel says who is answering.
+- Discord chats are separate sessions from Hermes Desktop chats. Decisions go to the vault or a card, so nothing is lost between them.
+
+## Kanban
+- One shared board: `~/.hermes/kanban.db`. The dispatcher starts a worker per ready card, as the card's assignee.
+- Limits (default profile config): at most {{MAX_IN_PROGRESS}} cards running at once, 1 per bot; a card that fails twice is blocked (`failure_limit: 2`). Orchestrator: `manager`.
+- Review: `kanban_request_review(reviewer="<bot>")` names the reviewer; without it the card stays with its builder.
+- After a crash or reboot, cards whose worker died go back to ready and re-run.
+
+## Cron jobs (default profile, no model tokens)
+| Job | When | Does |
+|---|---|---|
+| `vault-sweep` | every 15 min | Regenerates `index.md`, commits leftover vault changes |
+| `vault-lint` | 02:15 daily | Checks the vault; silent when clean, fails loudly on problems |
+
+## Scripts (`~/.hermes/scripts/`)
+`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `vault-sweep.sh`, `vault-lint.py`, `vault-lint-job.sh`, `hire.sh`. Cron scripts must live here.
+
+## Repos
+1. **Product**: `workspace/`. Only the bots whose domain includes it commit; code goes in worktrees.
+2. **Project memory**: the project root: the vault, AGENTS.md and each bot's brain (SOUL, config, memories, skills, cron). An allowlist `.gitignore` keeps secrets, databases and runtime state out. Commit only through `vault-commit.sh`; the sweep commits the rest. Any system change can be rolled back from here.
+
+## Gotchas (learned the hard way)
+- The gateway reads config only at start (see above).
+- Use `/usr/bin/python3` in scripts and commands: inside a bot's terminal, the plain `python3` on PATH is Hermes' own Python, which lacks PyYAML; the system one has it.
+- Never `hermes profile rename` a named profile (it changes its ID); set `display_name:` instead.
+- Never `profile create --clone-all`: it copies the kanban database. `hire.sh` uses `--clone-from manager`.
+- Every bot needs its own Hermes Project on `~/workspace`, or its chats start in `~` without AGENTS.md. `hire.sh` does this.
+- A Hermes Desktop "New task" lands in Triage; drag it to Ready if the description is already a proper task.
+- Tell bots one thing per message, with a clear stop ("…then stop"). Open-ended asks make very long turns.
+
+## Change process (summary)
+Propose in `system/changes/YYYY-MM-DD-<slug>.md` → owner says yes → apply while affected bots are idle → log a `decision`, checkpoint, notify the bots → say if a gateway restart is needed. Never touch `.env` or secrets; the owner edits those.
