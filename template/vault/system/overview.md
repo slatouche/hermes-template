@@ -55,7 +55,27 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 |---|---|---|
 | `vault-sweep` | every 15 min | Regenerates `index.md`, commits leftover vault changes |
 | `vault-lint` | 02:15 daily | Checks the vault; silent when clean, fails loudly on problems |
-| `workspace-tidy` | hourly at :40 | Deletes card branches already merged into main and prunes dead worktree records; never touches unmerged work |
+| `workspace-tidy` | hourly at :40 | Removes finished card worktrees and card branches already merged into main; never touches unmerged work |
+
+**The Manager's jobs** (Manager profile; a script runs first and wakes the Manager only when it finds something, so quiet runs cost no tokens; scripts in `~/.hermes/profiles/manager/scripts/`):
+| Job | When | Wakes the Manager when |
+|---|---|---|
+| `manager-watch` | every 2 hours | a new finding: board diagnostics, a card blocked or in triage over a day, sent back twice, over its runtime, ready with nobody on it; owner items waiting 48 h; a handoff with no card id; memory over 90%, `AGENTS.md` over 6 KB, a SOUL over 10 KB, lessons over 40, lint problems, an import left 3 days, a stale unmerged branch. Each finding is raised once, then again after a day if still open |
+| `weekly-retro` | Mondays 08:00 | since the last retro: 2+ cards sent back or blocked, a bot-written skill new or changed, memory over 85%, or 10+ cards done. The Manager runs the `retro` skill: at most 5 changes for the owner's yes, upkeep cards, lessons |
+
+## Every loop has a stop
+| Loop | Stop |
+|---|---|
+| A worker crashes, times out or fails to spawn | blocked after 2 (`kanban.failure_limit`) |
+| A worker ends without a board call | blocked after 3 in a row (Hermes) |
+| One worker's runtime | killed and requeued at the card's `max_runtime_seconds` |
+| Worker turns | warning at 80%, stop at the role's `max_turns` |
+| The same check failing | three tries, then revert and block (AGENTS.md) |
+| Review send-backs | the Tester blocks on the third failing review |
+| The same owner question re-blocked | to triage after 2 (Hermes) |
+| Goal-mode card | 6 turns |
+| Sub-agents | 3 at once, 60 iterations each |
+| A stuck card | `manager-watch` raises it within 2 hours; the Manager never loops a card a fourth time |
 
 ## Scripts (`~/.hermes/scripts/`)
 `vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `vault-sweep.sh`, `vault-lint.py`, `vault-lint-job.sh`, `workspace-tidy.sh`, `hire.sh`, `import-survey.py` (a zero-token survey of `workspace/`: shape, how it runs, other AI tools' files, secret risks; writes `raw/predecessor/inventory.md`). Cron scripts must live here.

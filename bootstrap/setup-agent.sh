@@ -123,6 +123,7 @@ chmod +x "$H"/scripts/*.sh "$H"/scripts/*.py
 # Files import-project.sh needs later: the team rules (rendered) and the onboarding status page.
 render "$T/workspace/AGENTS.md" > "$H/scripts/templates/team-rules.md"
 render "$T/import/00-status.md" > "$H/scripts/templates/00-status-onboarding.md"
+cp "$T/workspace/scripts/run-tests.sh" "$H/scripts/templates/run-tests.sh"
 # Role defaults for hire.sh (host.conf isn't kept in the project). A role file's own settings win.
 cat > "$H/scripts/hire-defaults.conf" <<EOF
 COMPRESSION_ROLE_TOKENS="$COMPRESSION_ROLE_TOKENS"
@@ -144,8 +145,10 @@ if [ -d "$HOME/workspace/.git" ]; then
 else
   render "$T/workspace/AGENTS.md" > "$HOME/workspace/AGENTS.md"
   render "$T/workspace/README.md" > "$HOME/workspace/README.md"
+  mkdir -p "$HOME/workspace/scripts"
+  install -m 755 "$T/workspace/scripts/run-tests.sh" "$HOME/workspace/scripts/run-tests.sh"
   git -C "$HOME/workspace" init -q
-  git -C "$HOME/workspace" add AGENTS.md README.md
+  git -C "$HOME/workspace" add AGENTS.md README.md scripts/run-tests.sh
   git -C "$HOME/workspace" commit -q -m "Initialise workspace from the project template"
   echo "created"
 fi
@@ -184,6 +187,9 @@ for d in "$T"/manager/skills/*/*/; do
   rm -rf "$P/skills/$rel"; mkdir -p "$P/skills/$(dirname "$rel")"; cp -r "$d" "$P/skills/$rel"
 done
 echo "template skills: $(cd "$T/manager/skills" && ls -d */*/ | tr '\n' ' ')"
+# The Manager's own jobs' scripts live in its profile (cron runs a profile's scripts from there).
+mkdir -p "$P/scripts"
+cp "$T"/manager/scripts/*.py "$P/scripts/"; chmod +x "$P"/scripts/*.py
 if ! hermes -p manager project list 2>/dev/null | grep -q "$NAME"; then
   hermes -p manager project create "$NAME" "$HOME/workspace" --use
 fi
@@ -220,6 +226,16 @@ JOBS="$(hermes cron list 2>/dev/null || true)"
 grep -q 'vault-sweep' <<<"$JOBS" || hermes cron create "*/15 * * * *" --name vault-sweep --script vault-sweep.sh --no-agent --deliver local
 grep -q 'vault-lint'  <<<"$JOBS" || hermes cron create "15 2 * * *"   --name vault-lint  --script vault-lint-job.sh --no-agent --deliver local
 grep -q 'workspace-tidy' <<<"$JOBS" || hermes cron create "40 * * * *" --name workspace-tidy --script workspace-tidy.sh --no-agent --deliver local
+# The Manager's two jobs: a script decides whether there's anything to do, so quiet runs cost no tokens.
+MJOBS="$(hermes -p manager cron list 2>/dev/null || true)"
+grep -q 'manager-watch' <<<"$MJOBS" || hermes -p manager cron create "0 */2 * * *" \
+  "manager-watch tick. The script output above lists new findings with card ids. Load the work-planning skill and act on each one (its 'When work comes back' and 'manager-watch wakes you' parts). Keep 00-status.md true, put owner questions in waiting_on_owner, log what you did with vault-log.sh, then stop. Be brief." \
+  --name manager-watch --script manager-watch.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
+grep -q 'weekly-retro' <<<"$MJOBS" || hermes -p manager cron create "0 8 * * 1" \
+  "weekly-retro. The script output above is the evidence pack since the last retro. Load the retro skill and follow it: causes, upkeep cards, and at most 5 proposed changes in system/changes/, then add one line to waiting_on_owner and stop." \
+  --name weekly-retro --script retro-gate.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
+/usr/bin/python3 "$H/profiles/manager/scripts/retro-gate.py" --baseline    # today's skills are the starting point
+echo "Manager jobs: manager-watch (every 2 h), weekly-retro (Mondays 08:00); both silent unless their script finds something"
 
 # ---------- repo 2: project memory (vault + the bots' brains) ----------
 step "Project memory repo"

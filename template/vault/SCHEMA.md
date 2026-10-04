@@ -15,7 +15,7 @@ Other bots propose changes to whoever holds this file; they never edit it.
 
 ## Session startup (always)
 1. Read this file.
-2. Read `00-status.md` (current state) and skim `index.md`.
+2. Read `00-status.md` (current state), `system/lessons.md`, and skim `index.md`.
 3. Read the last ~20 entries of `log.md`.
 
 ## Working together (concurrency rules)
@@ -38,9 +38,10 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 | `product/` | Gate 1: problem, users, goals, success metrics, requirements, screens | Manager (+ Designer) |
 | `architecture/` | Gate 2: system overview, integrations, data model | Architect |
 | `architecture/decisions/` | ADRs: `NNNN-short-title.md`, one decision each | Architect |
-| `design/` | UX flows, wireframes, HTML mockups, UI spec, design system | Designer |
+| `design/` | `DESIGN.md` (the locked tokens), `anti-slop.md`, UX flows, wireframes, HTML mockups, feature specs | Designer |
 | `plans/<feature>/` | Gates 3–4: `00-status.md`, `program-design.md`, `slices.md` | Architect + Engineer, Manager |
 | `qa/` | Test plans, use cases, defect log, regression list | Tester |
+| `research/` | Prior art, app teardowns (`research/<app>/`), fact checks with sources | Researcher |
 | `team/` | The bot roster: each bot's remit, how to reach it, and when to use it | Manager |
 | `system/` | How this install works (`overview.md`: bots, gateway, cron, kanban limits, scripts, Discord) and owner-approved change proposals (`changes/`), the owner profile, `team-rules.md` and `takeover.md` (imported projects), and `skills/` (skill folders kept for hires; not pages) | Manager |
 
@@ -67,7 +68,7 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
   ---
   title: …
   type: product|architecture|adr|design|plan|qa|team|system|research|note
-  status: draft|active|superseded|archived
+  status: draft|active|approved|superseded|archived   # approved: an owner-approved test plan or design file
   owner: <the bot's profile name, e.g. manager>
   updated: YYYY-MM-DD
   summary: One line — this is what index.md shows.
@@ -80,6 +81,8 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 - `sources:` is a **YAML list** of wikilinks — one `- "[[page]]"` per line. Two links on one line (`[[a]] [[b]]`) is not valid YAML.
 - Link with `[[wikilinks]]`. One topic per page. Prefer **updating** an existing page to creating a near-duplicate.
 - Superseded content: set `status: superseded` and link to the replacement. Don't delete.
+- **Approved pages** (`qa/<feature>/test-plan.md`, `design/DESIGN.md`) are not edited in place: a change after approval is a new card and a new owner approval. The Tester checks the plan's git history at review.
+- `system/lessons.md`: team habits the owner approved from a retro, at most 40 lines, each with a date and a card id. Every bot reads it at session start.
 - Keep pages short and factual. No chat transcripts outside `raw/`.
 
 ## Committing

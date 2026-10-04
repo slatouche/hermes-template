@@ -67,7 +67,7 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 5. applies it after your yes (Hermes shows an approval prompt for the `AGENTS.md` write), re-runs the tests (reverting if anything got worse), moves any data you want kept to `~/data/`, empties the drop folder, and moves on to normal work.
 
 ## How it grows
-- The Manager proposes each hire in `vault/system/changes/`. The catalogue in `vault/system/roles/` has an Architect, Engineer, Designer and Tester. For anything else (a Writer, say) the Manager drafts a role from `_guide.md`.
+- The Manager proposes each hire in `vault/system/changes/`. The catalogue in `vault/system/roles/` has an Architect, Engineer, Designer, Tester and Researcher (hire the Researcher with `--skill ~/vault/system/skills/app-teardown` to study other apps). For anything else (a Writer, say) the Manager drafts a role from `_guide.md`.
 - After you say yes, the Manager runs `~/.hermes/scripts/hire.sh <role> [--channel <id>]`. For a bot with its own Discord channel, create the channel, give the Manager its ID, and restart the gateway afterwards:
   ```bash
   ssh p330-<name> "systemctl --user restart hermes-gateway"
@@ -95,7 +95,9 @@ Stops its services and deletes the user, folder, registry entry and firewall rul
 | `remove-project.sh` | Delete a project (run with sudo) |
 | `bootstrap/setup-agent.sh` | Part 2, run automatically as the agent user |
 | `template/manager/SOUL.md` | The Manager |
-| `template/manager/skills/` | The Manager's template skills: `intake-interview`, `project-takeover` |
+| `template/manager/skills/` | The Manager's template skills: `intake-interview`, `project-takeover`, `work-planning`, `retro` |
+| `template/manager/scripts/` | The Manager's job scripts: `manager-watch.py`, `retro-gate.py` (zero-token gates) |
+| `template/workspace/scripts/run-tests.sh` | The one failures-only test command every bot runs |
 | `template/import/` | Files used only for an imported project (the onboarding status page) |
 | `template/workspace/` | The product repo's starting `AGENTS.md` (team table) and README |
 | `template/root-AGENTS.md` | Guardrails for the stock default profile |
