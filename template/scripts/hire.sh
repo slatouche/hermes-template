@@ -125,6 +125,12 @@ EOF
     echo "display_name: $DNAME ($PROJECT)" >> "$P/profile.yaml"
   fi
 
+  # Its own key for the local API (/p/<role>/...); cloning strips it. Generated here, never printed.
+  if ! grep -q '^API_SERVER_KEY=.' "$P/.env" 2>/dev/null; then
+    touch "$P/.env"; chmod 600 "$P/.env"
+    printf 'API_SERVER_KEY=%s\n' "$(openssl rand -hex 32)" >> "$P/.env"
+  fi
+
   echo "==> Settings: context $R_CTX tokens, $R_TURNS turns, effort $R_EFFORT, verify-on-stop $R_VERIFY"
   hermes -p "$ROLE" config set terminal.cwd "$HOME/workspace" >/dev/null
   hermes -p "$ROLE" config set compression.threshold_tokens "$R_CTX" >/dev/null

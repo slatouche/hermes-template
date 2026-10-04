@@ -17,7 +17,7 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
 
 ## Cutting cards
 1. **One outcome per card, smallest first.** Slice 1 is always a plain card (no goal mode). If you can't write the Verification, the card isn't ready: ask, prototype or research first.
-2. **Verification comes from the test plan** (`qa/<feature>/test-plan.md` when there's a Tester), copied verbatim. Without a Tester, write 2–5 checks yourself: a command and its exact expected output, plus one "reachable from the running app" check.
+2. **Verification comes from the test plan** (`qa/<feature>/test-plan.md` when there's a Tester), copied verbatim. The owner approves the plan's checks once, in plain words, **before** the build starts: create the build card with `initial_status="blocked"` (or a parent the approval unblocks), show the owner the checks as a short list, then set the plan to `status: approved` and unblock. Without a Tester, write 2–5 checks yourself: a command and its exact expected output, plus one "reachable from the running app" check.
 3. **Title at most 50 characters, no trailing punctuation** (the branch name is built from it; a long one can end in "." and git refuses it).
 4. **Settings:** `idempotency_key` (so a retry doesn't duplicate), `max_runtime_seconds` 3600 for code, 1800 for research and docs; workspace `worktree` for code, `dir` on `~/workspace` for docs and vault work; `skills=[...]` only for task-specific skills. Don't pin a model on a card that goes to review (the pin applies to the review run too).
 5. **Order with parents, not hope.** No two cards that can run at once own the same paths.

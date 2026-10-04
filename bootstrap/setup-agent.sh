@@ -219,6 +219,9 @@ fi
 # ---------- kanban board ----------
 step "Kanban board"
 hermes kanban init
+# Cards created from a chat may carry no workspace path; without a board default their worker can't start.
+hermes kanban boards set-default-workdir default "$HOME/workspace" >/dev/null
+hermes -p manager project bind-board "$NAME" default >/dev/null 2>&1 || true
 
 # ---------- housekeeping jobs (no model tokens) ----------
 step "Cron jobs"

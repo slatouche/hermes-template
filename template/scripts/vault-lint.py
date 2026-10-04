@@ -116,7 +116,7 @@ def main() -> int:
             stale_days = int(a.split("=", 1)[1])
 
     pages = {p.relative_to(root).with_suffix("").as_posix(): p
-             for p in root.rglob("*.md") if ".git" not in p.parts
+             for p in root.rglob("*.md") if p.is_file() and ".git" not in p.parts
              and not p.relative_to(root).as_posix().startswith(NOT_PAGES)}
     today = datetime.date.today()
     problems, advisories = [], []

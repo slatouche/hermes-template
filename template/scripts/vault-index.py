@@ -42,7 +42,7 @@ def main() -> int:
     vault = pathlib.Path(sys.argv[1] if len(sys.argv) > 1 else os.path.expanduser("~/vault"))
     pages = {}
     for p in sorted(vault.rglob("*.md")):
-        if ".git" in p.parts:
+        if ".git" in p.parts or not p.is_file():
             continue
         name = p.relative_to(vault).with_suffix("").as_posix()
         if name == "index" or name.startswith(NOT_PAGES):
