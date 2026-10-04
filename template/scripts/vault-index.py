@@ -15,6 +15,7 @@ import yaml
 
 FOLDER_ORDER = ["product", "architecture", "design", "plans", "qa", "team", "research", "raw"]
 ROOT_PAGES = ["SCHEMA", "00-status", "log"]
+NOT_PAGES = ("raw/predecessor/snapshot/", "raw/predecessor/notes/", "system/skills/")   # copied evidence and skill folders: not vault pages
 
 
 def frontmatter(path: pathlib.Path) -> dict:
@@ -44,7 +45,7 @@ def main() -> int:
         if ".git" in p.parts:
             continue
         name = p.relative_to(vault).with_suffix("").as_posix()
-        if name == "index":
+        if name == "index" or name.startswith(NOT_PAGES):
             continue
         fm = frontmatter(p)
         summary = str(fm.get("summary") or fm.get("title") or name).strip().replace("\n", " ")

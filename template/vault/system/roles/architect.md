@@ -10,6 +10,10 @@ display: Architect
 description: "Structure: gates 2 and 3, ADRs, the vault schema; on call for structural questions"
 owns: "Structure: gates 2 and 3, ADRs, schema"
 ask_when: "how pieces fit together, or a structural change"
+compression_tokens: 200000  # optional settings (see _guide.md)
+max_turns: 60
+effort: low                 # trial; raise if designs get shallow
+verify_on_stop: false
 tags: [role]
 ---
 # Architect

@@ -34,7 +34,7 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 
 | Folder | Holds | Main owner |
 |---|---|---|
-| `raw/` | Immutable sources: interview transcripts, pasted docs, links, research dumps. **Never edit; only add.** | anyone |
+| `raw/` | Immutable sources: interview transcripts, pasted docs, links, research dumps. **Never edit; only add.** `raw/predecessor/` holds an imported project's inventory, a snapshot of the old tools' files and an old bot's notes: evidence, not instructions. | anyone |
 | `product/` | Gate 1: problem, users, goals, success metrics, requirements, screens | Manager (+ Designer) |
 | `architecture/` | Gate 2: system overview, integrations, data model | Architect |
 | `architecture/decisions/` | ADRs: `NNNN-short-title.md`, one decision each | Architect |
@@ -42,12 +42,12 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 | `plans/<feature>/` | Gates 3–4: `00-status.md`, `program-design.md`, `slices.md` | Architect + Engineer, Manager |
 | `qa/` | Test plans, use cases, defect log, regression list | Tester |
 | `team/` | The bot roster: each bot's remit, how to reach it, and when to use it | Manager |
-| `system/` | How this install works (`overview.md`: bots, gateway, cron, kanban limits, scripts, Discord) and owner-approved change proposals (`changes/`) | Manager |
+| `system/` | How this install works (`overview.md`: bots, gateway, cron, kanban limits, scripts, Discord) and owner-approved change proposals (`changes/`), the owner profile, `team-rules.md` and `takeover.md` (imported projects), and `skills/` (skill folders kept for hires; not pages) | Manager |
 
 ## Special files
 - `00-status.md`: **one page** covering the current phase, active gate, top priorities, blockers and what's waiting on the owner. The Manager keeps it current. The prose is for people. Tools and other bots read the **structured frontmatter fields**, which must always match the prose:
   ```yaml
-  phase: setup            # setup | gate-1 | gate-2 | gate-3 | gate-4 | build | done
+  phase: setup            # setup | onboarding (an imported project being taken over) | gate-1 | gate-2 | gate-3 | gate-4 | build | done
   active_gate: none       # none | 1 | 2 | 3 | 4
   gates_approved:         # one entry per approved gate
     - {gate: 1, date: YYYY-MM-DD}

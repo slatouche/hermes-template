@@ -10,6 +10,10 @@ display: Designer
 description: "Design first: UX flows, layout, mockups, design system and a checklist the Tester can verify"
 owns: "UX/UI: specs, mockups, design checklist"
 ask_when: "anything the user sees, or how it should look or behave"
+compression_tokens: 150000  # optional settings (see _guide.md)
+max_turns: 90
+effort: medium
+verify_on_stop: false
 tags: [role]
 ---
 # Designer

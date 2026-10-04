@@ -55,9 +55,10 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 |---|---|---|
 | `vault-sweep` | every 15 min | Regenerates `index.md`, commits leftover vault changes |
 | `vault-lint` | 02:15 daily | Checks the vault; silent when clean, fails loudly on problems |
+| `workspace-tidy` | hourly at :40 | Deletes card branches already merged into main and prunes dead worktree records; never touches unmerged work |
 
 ## Scripts (`~/.hermes/scripts/`)
-`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `vault-sweep.sh`, `vault-lint.py`, `vault-lint-job.sh`, `hire.sh`. Cron scripts must live here.
+`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `vault-sweep.sh`, `vault-lint.py`, `vault-lint-job.sh`, `workspace-tidy.sh`, `hire.sh`, `import-survey.py` (a zero-token survey of `workspace/`: shape, how it runs, other AI tools' files, secret risks; writes `raw/predecessor/inventory.md`). Cron scripts must live here.
 
 ## Repos
 1. **Product**: `workspace/`. Only the bots whose domain includes it commit; code goes in worktrees.
@@ -65,6 +66,9 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 
 ## Gotchas (learned the hard way)
 - The gateway reads config only at start (see above).
+- **Hermes loads only one instructions file per project:** `.hermes.md`/`HERMES.md` first, then `AGENTS.md` (plus per-folder `AGENTS.md` files, loaded lazily), then `CLAUDE.md`, then Cursor rules. Keep exactly one, `workspace/AGENTS.md`, with the team table; a leftover `.hermes.md` silently replaces it for every bot. A repo file that looks like a prompt injection is blocked from loading.
+- **Instruction files are write-protected.** A bot writing `AGENTS.md`, `CLAUDE.md`, `SOUL.md` or `.cursorrules` (any folder) triggers an approval prompt for the owner every time, even on auto-approve; with no human present (kanban workers, cron) the write is refused. So changes to `AGENTS.md` happen in a Manager chat with the owner. (`hire.sh` updates the team table itself.)
+- **`hermes chat -q` / `-Q` is a one-shot run:** Hermes hides skill writing and tells the bot nobody will answer, so it behaves differently from a real chat. Test bots through Desktop or the API (`/p/<profile>/api/sessions/...`, each profile with its own `API_SERVER_KEY`).
 - Use `/usr/bin/python3` in scripts and commands: inside a bot's terminal, the plain `python3` on PATH is Hermes' own Python, which lacks PyYAML; the system one has it.
 - Never `hermes profile rename` a named profile (it changes its ID); set `display_name:` instead.
 - Never `profile create --clone-all`: it copies the kanban database. `hire.sh` uses `--clone-from manager`.

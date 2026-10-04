@@ -12,4 +12,4 @@ tags: [log]
 Append-only. One line per event, newest at the bottom:
 `YYYY-MM-DD HH:MM | <bot> | <ingest|decision|gate|handoff|lint|note> | <one line> | [[link]]`
 
-{{DATE}} 00:00 | admin | note | Vault created from template skeleton | [[SCHEMA]]
+{{DATE}} {{TIME}} | admin | note | Vault created from template skeleton | [[SCHEMA]]

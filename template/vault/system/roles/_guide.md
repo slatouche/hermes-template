@@ -29,6 +29,13 @@ ask_when: "<when another bot should come to it>"
 tags: [role]
 ---
 ```
+Optional settings (`hire.sh` applies them; leave a line out to use the project default from `hire-defaults.conf`):
+```yaml
+compression_tokens: 150000   # compact the bot's context at this size: 200000 for roles that read a lot of code, 150000 otherwise, 100000 for chat-facing bots
+max_turns: 90                # turn cap; the bot is warned at 80%
+effort: medium               # reasoning effort: low | medium | high
+verify_on_stop: false        # true for roles that edit code: one nudge if they stop without having run checks
+```
 Keep every value on one line, in double quotes if it contains a colon.
 
 ## The body (becomes the SOUL)

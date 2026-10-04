@@ -2,15 +2,19 @@
 # Remove a project completely: its services, Linux user, folder (vault, repos, bots, keys),
 # registry entry and firewall rules. There is no undo, so it asks you to type the name.
 #
-#   sudo bash remove-project.sh <name>
+#   sudo bash remove-project.sh <name> [--yes]     (--yes skips typing the name: for scripted tests)
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=host.conf
 source "$HERE/host.conf"
+# Host-specific settings that survive template updates
+# shellcheck disable=SC1091
+[ -f /etc/hermes/host.conf ] && source /etc/hermes/host.conf
 die() { echo "remove-project: $*" >&2; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "run with sudo:  sudo bash remove-project.sh <name>"
 NAME="${1:-}"
+YES=0; [ "${2:-}" = "--yes" ] && YES=1
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,24}$ ]] || die "usage: sudo bash remove-project.sh <name>"
 AGENT="$USER_PREFIX$NAME"
 HOST_LABEL="${HOST_LABEL:-$(hostname -s)}"
@@ -20,7 +24,11 @@ NUM="$(awk -v key="  $NAME:" '$0==key{f=1;next} f&&/^  [^ ]/{f=0} f&&/^    num:/
 echo "This permanently deletes project '$NAME':"
 echo "  - user $AGENT and everything in $HOME_DIR (vault, repos, bots, keys, sessions)"
 [ -n "$NUM" ] && echo "  - registry entry (num $NUM) and its firewall rules"
-read -rp "Type the project name to confirm: " CONFIRM </dev/tty
+if [ "$YES" = 1 ]; then
+  CONFIRM="$NAME"
+else
+  read -rp "Type the project name to confirm: " CONFIRM </dev/tty
+fi
 [ "$CONFIRM" = "$NAME" ] || die "not confirmed; nothing changed"
 
 if id "$AGENT" >/dev/null 2>&1; then

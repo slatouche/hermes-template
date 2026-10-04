@@ -16,8 +16,9 @@ cd "$HOME"
 step() { printf '\n==> %s\n' "$*"; }
 die()  { echo "setup-agent: $*" >&2; exit 1; }
 TODAY="$(date +%F)"
+NOW="$(date +%H:%M)"
 render() {
-  sed -e "s|{{PROJECT_NAME}}|$NAME|g" -e "s|{{OWNER}}|$OWNER_NAME|g" \
+  sed -e "s|{{PROJECT_NAME}}|$NAME|g" -e "s|{{OWNER}}|$OWNER_NAME|g" -e "s|{{TIME}}|$NOW|g" \
       -e "s|{{APP_PORTS}}|$APP_LO–$APP_HI|g" -e "s|{{API_PORT}}|$API|g" \
       -e "s|{{HOST}}|$HOST_LABEL ($HOST_ADDR)|g" -e "s|{{DATE}}|$TODAY|g" \
       -e "s|{{MAX_IN_PROGRESS}}|$KANBAN_MAX_IN_PROGRESS|g" \
@@ -47,6 +48,11 @@ step "Keys (.env)"
 ENV="$H/.env"
 if has_env "$ENV" "$KEY_VAR"; then
   echo "$KEY_VAR already set"
+elif [ -s "$B/provider.env" ]; then
+  K="$(grep "^$KEY_VAR=" "$B/provider.env" | head -1 | cut -d= -f2-)"
+  [ -n "$K" ] || die "the key file has no $KEY_VAR value"
+  set_env "$ENV" "$KEY_VAR" "$K"; unset K
+  echo "$KEY_VAR set from the key file"
 else
   K="$(ask_secret "Paste the $PROVIDER API key for $NAME (input hidden): ")"
   [ -n "$K" ] || die "an API key is required"
@@ -66,17 +72,42 @@ hermes config set model.provider "$PROVIDER"
 hermes config set model.default "$MODEL"
 hermes config set model.base_url "$BASE_URL"
 hermes config set model.api_mode chat_completions
-hermes config set agent.reasoning_effort "$EFFORT"
+hermes config set --force agent.reasoning_effort "$EFFORT"   # --force: the key checker wrongly flags this key
 hermes config set agent.max_turns "$AGENT_MAX_TURNS"
 hermes config set kanban.orchestrator_profile manager
 hermes config set kanban.max_in_progress "$KANBAN_MAX_IN_PROGRESS"
 hermes config set kanban.max_in_progress_per_profile "$KANBAN_MAX_PER_PROFILE"
 hermes config set kanban.failure_limit "$KANBAN_FAILURE_LIMIT"
+hermes config set kanban.review_dispatch true
+hermes config set kanban.auto_subscribe_on_create true
 hermes config set gateway.multiplex_profiles true
+
+# Context, learning and limits. Set on the default profile first (the Manager is cloned from it), then
+# re-asserted on the Manager below, because a re-run skips creating an existing Manager.
+apply_learning_settings() {   # apply_learning_settings <profile> <compression tokens>
+  local p="$1" ctx="$2"
+  hermes -p "$p" config set compression.threshold_tokens "$ctx"
+  hermes -p "$p" config set compression.min_tail_user_messages "$COMPRESSION_MIN_TAIL_USER"
+  # --force: Hermes reads these two keys but its key checker doesn't list them (verified in v0.21.5 source)
+  hermes -p "$p" config set --force skills.creation_nudge_interval "$SKILL_NUDGE_INTERVAL"
+  hermes -p "$p" config set --force auxiliary.background_review.max_input_tokens "$REVIEW_MAX_INPUT_TOKENS"
+  hermes -p "$p" config set curator.stale_after_days "$CURATOR_STALE_DAYS"
+  hermes -p "$p" config set curator.archive_after_days "$CURATOR_ARCHIVE_DAYS"
+  hermes -p "$p" config set checkpoints.enabled true
+  hermes -p "$p" config set delegation.max_concurrent_children "$DELEGATION_MAX_CHILDREN"
+  hermes -p "$p" config set delegation.max_iterations "$DELEGATION_MAX_ITERATIONS"
+  hermes -p "$p" config set --force delegation.reasoning_effort "$DELEGATION_EFFORT"
+  # Every bot needs the board tools in chats (CLI/Desktop and Discord); story-maker's Manager had them off.
+  hermes -p "$p" tools enable kanban >/dev/null
+  hermes -p "$p" tools enable --platform discord kanban >/dev/null
+}
+apply_learning_settings default "$COMPRESSION_MANAGER_TOKENS"
 
 # ---------- files: vault, scripts, AGENTS.md ----------
 step "Vault, scripts and AGENTS.md"
-mkdir -p "$HOME/workspace" "$HOME/scratch" "$H/scripts"
+mkdir -p "$HOME/workspace" "$HOME/scratch" "$HOME/data" "$H/scripts/templates"
+# import/: the drop folder for bringing a project in later (copy with the project's own SSH login).
+install -d -m 750 "$HOME/import"
 if [ -f "$HOME/vault/SCHEMA.md" ]; then
   echo "vault exists; left as is"
 else
@@ -87,8 +118,18 @@ else
   /usr/bin/python3 "$T/scripts/vault-index.py" "$HOME/vault" >/dev/null
   echo "vault created"
 fi
-cp "$T"/scripts/* "$H/scripts/"
-chmod +x "$H"/scripts/*
+cp "$T"/scripts/* "$H/scripts/" 2>/dev/null || true
+chmod +x "$H"/scripts/*.sh "$H"/scripts/*.py
+# Files import-project.sh needs later: the team rules (rendered) and the onboarding status page.
+render "$T/workspace/AGENTS.md" > "$H/scripts/templates/team-rules.md"
+render "$T/import/00-status.md" > "$H/scripts/templates/00-status-onboarding.md"
+# Role defaults for hire.sh (host.conf isn't kept in the project). A role file's own settings win.
+cat > "$H/scripts/hire-defaults.conf" <<EOF
+COMPRESSION_ROLE_TOKENS="$COMPRESSION_ROLE_TOKENS"
+ROLE_MAX_TURNS="$ROLE_MAX_TURNS"
+ROLE_BUDGET_WARNING="$ROLE_BUDGET_WARNING"
+EFFORT="$EFFORT"
+EOF
 render "$T/root-AGENTS.md" > "$HOME/AGENTS.md"
 
 # ---------- git identity ----------
@@ -109,6 +150,9 @@ else
   echo "created"
 fi
 
+# Kanban worktrees live in workspace/.worktrees/: keep them out of git status without touching the repo's files.
+grep -qxF '.worktrees/' "$HOME/workspace/.git/info/exclude" 2>/dev/null || echo '.worktrees/' >> "$HOME/workspace/.git/info/exclude"
+
 # ---------- the Manager ----------
 step "Manager profile"
 P="$H/profiles/manager"
@@ -118,12 +162,28 @@ else
   hermes profile create manager --clone \
     --description "The owner's front door: intake, planning, hiring, card routing, status and approved system changes"
   render "$T/manager/SOUL.md" > "$P/SOUL.md"
-  sed -i '/^API_SERVER_/d' "$P/.env"          # only the default profile serves the API
+  # The Manager's notes about the owner start from the owner profile's seed block, like every hire's.
+  mkdir -p "$P/memories"
+  sed -n '/<!-- user-seed:start -->/,/<!-- user-seed:end -->/p' "$HOME/vault/system/owner-profile.md" \
+    | sed '1d;$d' | head -c 1375 > "$P/memories/USER.md"
+  sed -i '/^API_SERVER_\(ENABLED\|HOST\|PORT\)=/d' "$P/.env"   # only the default profile serves the API
 fi
+# The API reaches the Manager at /p/manager/ with the Manager's own key (one per profile; hires copy it).
+grep -q '^API_SERVER_KEY=.' "$P/.env" 2>/dev/null && ! cmp -s <(grep '^API_SERVER_KEY=' "$P/.env") <(grep '^API_SERVER_KEY=' "$ENV") \
+  || set_env "$P/.env" API_SERVER_KEY "$(openssl rand -hex 32)"
 grep -q '^display_name:' "$P/profile.yaml" 2>/dev/null || echo "display_name: Manager ($NAME)" >> "$P/profile.yaml"
 hermes -p manager config set terminal.cwd "$HOME/workspace"
 hermes -p manager config set agent.disabled_toolsets "$DISABLED_TOOLSETS"
 hermes -p manager config set discord.require_mention false
+hermes -p manager config set agent.max_turns "$AGENT_MAX_TURNS"
+apply_learning_settings manager "$COMPRESSION_MANAGER_TOKENS"
+# The Manager's template skills (intake-interview, project-takeover...). Refreshed on every run; the bot's
+# own skills have other names and are left alone.
+for d in "$T"/manager/skills/*/*/; do
+  rel="${d#"$T"/manager/skills/}"; rel="${rel%/}"
+  rm -rf "$P/skills/$rel"; mkdir -p "$P/skills/$(dirname "$rel")"; cp -r "$d" "$P/skills/$rel"
+done
+echo "template skills: $(cd "$T/manager/skills" && ls -d */*/ | tr '\n' ' ')"
 if ! hermes -p manager project list 2>/dev/null | grep -q "$NAME"; then
   hermes -p manager project create "$NAME" "$HOME/workspace" --use
 fi
@@ -132,6 +192,8 @@ fi
 step "Discord"
 if has_env "$P/.env" DISCORD_BOT_TOKEN; then
   echo "already set"
+elif [ "${NO_DISCORD:-0}" = 1 ]; then
+  echo "skipped (--no-discord)"
 else
   echo "Paste this project's Discord bot token, or press Enter to skip (add it later; see README)."
   DT="$(ask_secret "Discord bot token (input hidden): ")"
@@ -157,6 +219,7 @@ step "Cron jobs"
 JOBS="$(hermes cron list 2>/dev/null || true)"
 grep -q 'vault-sweep' <<<"$JOBS" || hermes cron create "*/15 * * * *" --name vault-sweep --script vault-sweep.sh --no-agent --deliver local
 grep -q 'vault-lint'  <<<"$JOBS" || hermes cron create "15 2 * * *"   --name vault-lint  --script vault-lint-job.sh --no-agent --deliver local
+grep -q 'workspace-tidy' <<<"$JOBS" || hermes cron create "40 * * * *" --name workspace-tidy --script workspace-tidy.sh --no-agent --deliver local
 
 # ---------- repo 2: project memory (vault + the bots' brains) ----------
 step "Project memory repo"
@@ -168,6 +231,14 @@ else
   git -C "$HOME" add -A
   git -C "$HOME" commit -q -m "Initialise project memory repo (vault + bot brains)"
   echo "created"
+fi
+
+# ---------- import an existing project (optional) ----------
+if [ -n "${IMPORT_SRC:-}" ] && [ "$(git -C "$HOME/workspace" rev-list --count HEAD 2>/dev/null)" = 1 ]; then
+  step "Import $IMPORT_SRC"
+  ARGS=("$IMPORT_SRC" --interactive)
+  [ -z "${IMPORT_NOTES:-}" ] || ARGS+=(--notes "$IMPORT_NOTES")
+  "$H/scripts/import-project.sh" "${ARGS[@]}"
 fi
 
 # ---------- the gateway (messaging, cron, kanban dispatcher, API) ----------

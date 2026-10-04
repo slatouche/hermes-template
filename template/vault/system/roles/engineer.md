@@ -10,6 +10,10 @@ display: Engineer
 description: "Builds from kanban cards: code, tests and docs in the product repo, in git worktrees"
 owns: "Building: code, tests, docs in `workspace/`"
 ask_when: "something needs implementing or fixing"
+compression_tokens: 200000  # optional settings (see _guide.md)
+max_turns: 90
+effort: medium
+verify_on_stop: true
 tags: [role]
 ---
 # Engineer

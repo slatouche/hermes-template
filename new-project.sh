@@ -1,29 +1,56 @@
 #!/bin/bash
 # Create a new Hermes project on this host: one Linux user, one Hermes install, one vault, and a Manager.
 #
-#   sudo bash new-project.sh <name> [--num N]
+#   sudo bash new-project.sh                     (asks for everything it needs)
+#   sudo bash new-project.sh <name> [--import <source>] [--notes <folder>] [--key-file <file>] [--no-discord] [--num N]
 #
-# Run it as the admin user from a clone of this repo. It is safe to re-run: finished steps are skipped.
+# --import    adopt an existing project: a git URL, a repo folder, a plain folder or a .bundle file. Its history
+#             goes into workspace/ (committed files only for a repo) and the Manager takes it over: it reads
+#             everything, asks what it can't work out, keeps the know-how, then cleans up. You can also import
+#             later: copy the project into the project's ~/import/ folder and tell the Manager.
+# --notes     a folder of an old bot's notes (memory, owner notes, skills), kept as evidence.
+# --key-file  a root-only file with the provider key line (e.g. OPENCODE_GO_API_KEY=...), so it isn't typed.
+#             host.conf PROVIDER_KEY_FILE sets a default. The key is never printed.
+# --no-discord  don't ask for a Discord bot token (add one later; see README).
+#
+# Safe to re-run: finished steps are skipped.
 # Part 1 (root): user, folder, linger, SSH keys, registry entry, firewall.
-# Part 2 (as agent-<name>): bootstrap/setup-agent.sh installs Hermes and sets up the Manager.
+# Part 2 (as agent-<name>): bootstrap/setup-agent.sh installs Hermes, sets up the Manager, and imports.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=host.conf
 source "$HERE/host.conf"
+# Host-specific settings that survive template updates
+# shellcheck disable=SC1091
+[ -f /etc/hermes/host.conf ] && source /etc/hermes/host.conf
 
 die()  { echo "new-project: $*" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$*"; }
 
-[ "$(id -u)" -eq 0 ] || die "run with sudo:  sudo bash new-project.sh <name>"
-NAME="${1:-}"
-if [ $# -gt 0 ]; then shift; fi
-NUM=""
+[ "$(id -u)" -eq 0 ] || die "run with sudo:  sudo bash new-project.sh"
+NAME=""
+if [ $# -gt 0 ] && [[ "$1" != --* ]]; then NAME="$1"; shift; fi
+NUM=""; IMPORT=""; NOTES=""; KEY_FILE=""; NO_DISCORD=0
 while [ $# -gt 0 ]; do
   case "$1" in
-    --num) NUM="${2:-}"; shift 2 ;;
+    --num)        NUM="${2:-}"; shift 2 ;;
+    --import)     IMPORT="${2:-}"; shift 2 ;;
+    --notes)      NOTES="${2:-}"; shift 2 ;;
+    --key-file)   KEY_FILE="${2:-}"; shift 2 ;;
+    --no-discord) NO_DISCORD=1; shift ;;
     *) die "unknown option '$1'" ;;
   esac
 done
+ask() { local v; read -rp "$1" v </dev/tty; printf '%s' "$v"; }
+if [ -z "$NAME" ]; then
+  echo "New Hermes project. Press Ctrl+C at any point to stop; nothing is half-done that a re-run can't finish."
+  NAME="$(ask "Project name (lowercase, digits, '-'; e.g. tcg-proxy): ")"
+  if [ -z "$IMPORT" ]; then
+    echo "Bring in an existing project? Give a git URL, or a folder or .bundle path on this server."
+    echo "Press Enter to start from scratch (you can still import later via the project's ~/import folder)."
+    IMPORT="$(ask "Import from: ")"
+  fi
+fi
 [[ "$NAME" =~ ^[a-z][a-z0-9-]{1,24}$ ]] || die "name must be 2-25 chars: lowercase letters, digits and '-', starting with a letter"
 AGENT="$USER_PREFIX$NAME"
 HOME_DIR="$ROOT/$NAME"
@@ -32,6 +59,20 @@ OWNER_USER="${OWNER_USER:-${SUDO_USER:-}}"
 id "$OWNER_USER" >/dev/null 2>&1 || die "owner user '$OWNER_USER' does not exist"
 HOST_LABEL="${HOST_LABEL:-$(hostname -s)}"
 HOST_ADDR="${HOST_ADDR:-$(hostname -I | awk '{print $1}')}"
+IMPORT="${IMPORT/#\~/$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)}"     # allow ~/path
+NOTES="${NOTES/#\~/$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)}"
+if [ -n "$IMPORT" ]; then
+  if [[ "$IMPORT" =~ ^https://[^/]*@ ]]; then die "--import: no credentials in the URL; a private repo asks for a token"
+  elif [[ "$IMPORT" =~ ^(https://|ssh://|git@) ]]; then :
+  elif [ -e "$IMPORT" ]; then IMPORT="$(readlink -f "$IMPORT")"
+  else die "--import: '$IMPORT' is not a git URL, a folder or a .bundle file"; fi
+fi
+KEY_FILE="${KEY_FILE:-${PROVIDER_KEY_FILE:-}}"
+[ -z "$NOTES" ] || [ -d "$NOTES" ] || die "--notes: '$NOTES' is not a folder"
+if [ -n "$KEY_FILE" ]; then
+  [ -f "$KEY_FILE" ] || die "--key-file: '$KEY_FILE' not found"
+  grep -q "^$KEY_VAR=." "$KEY_FILE" || die "--key-file: no $KEY_VAR= line in it"
+fi
 
 # ---------- host packages (once per server; only what's missing) ----------
 step "Host packages"
@@ -104,6 +145,12 @@ else
 fi
 chmod 750 "$HOME_DIR"
 usermod -aG "$AGENT" "$OWNER_USER"          # the owner can read the project (log in again to take effect)
+# The owner reads the project's two git repos, which belong to another user: mark them safe for the
+# owner, or git refuses with "dubious ownership".
+OWNER_SAFE="$(sudo -u "$OWNER_USER" -H git config --global --get-all safe.directory 2>/dev/null || true)"
+for R in "$HOME_DIR" "$HOME_DIR/workspace"; do
+  grep -qxF "$R" <<<"$OWNER_SAFE" || sudo -u "$OWNER_USER" -H git config --global --add safe.directory "$R"
+done
 install -d -m 700 -o "$AGENT" -g "$AGENT" "$HOME_DIR/.ssh"
 OWNER_HOME="$(getent passwd "$OWNER_USER" | cut -d: -f6)"
 if [ ! -s "$HOME_DIR/.ssh/authorized_keys" ]; then
@@ -141,8 +188,31 @@ fi
 step "Staging the template for $AGENT"
 B="$HOME_DIR/.bootstrap"
 rm -rf "$B"; install -d -m 700 -o "$AGENT" -g "$AGENT" "$B"
+trap 'rm -rf "$B"' EXIT                     # the staged key and bundle never outlive this run
 cp -r "$HERE/template" "$HERE/bootstrap" "$HERE/host.conf" "$B/"
+[ ! -f /etc/hermes/host.conf ] || cat /etc/hermes/host.conf >> "$B/host.conf"
+# The import source: handed over where it is if the project user can read it (so the takeover can also list
+# what git leaves behind), else copied into the project's ~/import/ drop folder first.
+stage_for_agent() {   # stage_for_agent <path> -> prints the path the agent should use
+  local src="$1" dst
+  if sudo -u "$AGENT" test -r "$src" && { [ -f "$src" ] || sudo -u "$AGENT" test -x "$src"; }; then echo "$src"; return; fi
+  dst="$HOME_DIR/import/$(basename "$src")"
+  install -d -m 750 -o "$AGENT" -g "$AGENT" "$HOME_DIR/import"
+  rm -rf "$dst"
+  if [ -e "$src/.git" ]; then git -c safe.directory='*' clone -q --no-hardlinks "$src" "$dst"; else cp -r "$src" "$dst"; fi
+  chown -R "$AGENT:$AGENT" "$dst"
+  echo "$dst"
+}
+IMPORT_SRC="$IMPORT"; IMPORT_NOTES=""
+if [ -n "$IMPORT" ] && [[ ! "$IMPORT" =~ ^(https://|ssh://|git@) ]]; then IMPORT_SRC="$(stage_for_agent "$IMPORT")"; fi
+[ -z "$NOTES" ] || IMPORT_NOTES="$(stage_for_agent "$(readlink -f "$NOTES")")"
+if [ -n "$KEY_FILE" ]; then
+  grep "^$KEY_VAR=." "$KEY_FILE" | head -1 > "$B/provider.env"; chmod 600 "$B/provider.env"; chown "$AGENT:$AGENT" "$B/provider.env"
+fi
 cat > "$B/project.env" <<EOF
+IMPORT_SRC="$IMPORT_SRC"
+IMPORT_NOTES="$IMPORT_NOTES"
+NO_DISCORD="$NO_DISCORD"
 NAME="$NAME"
 NUM="$NUM"
 AGENT="$AGENT"
@@ -177,6 +247,9 @@ On your PC, add this to ~/.ssh/config (same key as the other projects):
 
 Then:
   1. Hermes Desktop: add an SSH connection to $HOST_LABEL-$NAME and open the Manager.
-  2. Discord: DM the bot (or use your project channel). The Manager starts the intake interview.
+  2. Say hello. $([ -n "$IMPORT_SRC" ] && echo "The Manager takes the imported project over (it reads it, then asks questions)." || echo "The Manager starts the interview.")
+  To import a project later: copy it into the project's import folder with the project's own login,
+     scp -r <folder> $HOST_LABEL-$NAME:import/
+  then tell the Manager "take over the project in ~/import/<folder>" (or just give it a git URL).
   3. $OWNER_USER was added to group $AGENT: log out and in again to read the project folder.
 EOF

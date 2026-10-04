@@ -41,10 +41,11 @@ EXEMPT_FRONTMATTER = {"SCHEMA"}          # the rules file itself, deliberately b
 EXEMPT_ORPHAN = {"index", "log", "SCHEMA", "00-status"}
 EXEMPT_SUMMARY = {"log"}                 # append-only via vault-log.sh: nobody may edit its frontmatter
 EXEMPT_LINKS = {"log"}                   # append-only: example links in old lines cannot be corrected
+NOT_PAGES = ("raw/predecessor/snapshot/", "raw/predecessor/notes/", "system/skills/")   # copied evidence and skill folders: not vault pages
 REQUIRED_FIELDS = ("title", "type", "status", "owner", "updated", "summary")
 
 # Contract defined in SCHEMA.md — the fields tools read from 00-status.md.
-STATUS_PHASES = {"setup", "gate-1", "gate-2", "gate-3", "gate-4", "build", "done"}
+STATUS_PHASES = {"setup", "onboarding", "gate-1", "gate-2", "gate-3", "gate-4", "build", "done"}
 STATUS_ACTIVE_GATES = {"none", "1", "2", "3", "4"}
 STATUS_REQUIRED = ("phase", "active_gate")
 STATUS_LIST_FIELDS = ("gates_approved", "waiting_on_owner", "blockers")
@@ -115,7 +116,8 @@ def main() -> int:
             stale_days = int(a.split("=", 1)[1])
 
     pages = {p.relative_to(root).with_suffix("").as_posix(): p
-             for p in root.rglob("*.md") if ".git" not in p.parts}
+             for p in root.rglob("*.md") if ".git" not in p.parts
+             and not p.relative_to(root).as_posix().startswith(NOT_PAGES)}
     today = datetime.date.today()
     problems, advisories = [], []
     check_status_contract(root, problems, advisories)

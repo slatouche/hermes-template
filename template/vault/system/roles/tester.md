@@ -10,6 +10,10 @@ display: Tester
 description: "Quality gate: functional and UI/UX testing against acceptance criteria, with evidence"
 owns: "Quality: functional + UI testing, the merge gate"
 ask_when: "work needs verifying"
+compression_tokens: 200000  # optional settings (see _guide.md)
+max_turns: 60
+effort: low                 # trial; raise if reviews miss things
+verify_on_stop: false
 tags: [role]
 ---
 # Tester
