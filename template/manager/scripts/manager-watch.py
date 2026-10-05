@@ -111,7 +111,7 @@ def findings():
                     waiting.append(p.stem)
         for b in sorted(batches):
             f["feedback-batch:" + b] = (f"the owner sent a batch of feedback: raw/feedback/{b}.md (one review pass: "
-                                         "card it as one round for the bot that owns it)")
+                                         "ONE card for the whole batch, never one per note; all on one variant = the owner picked it)")
         if waiting:
             waiting.sort()
             f["feedback:" + waiting[-1]] = (f"{len(waiting)} owner note(s) from the Mark overlay without a card "
