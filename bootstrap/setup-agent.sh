@@ -113,6 +113,8 @@ step "Vault, scripts and AGENTS.md"
 mkdir -p "$HOME/workspace" "$HOME/scratch" "$HOME/data" "$H/scripts/templates"
 # import/: the drop folder for bringing a project in later (copy with the project's own SSH login).
 install -d -m 750 "$HOME/import"
+# side/: ad-hoc side tracks (reverse-engineering, data pulls, experiments), outside the product and git, cleaned up when done.
+install -d -m 750 "$HOME/side"
 if [ -f "$HOME/vault/SCHEMA.md" ]; then
   echo "vault exists; left as is"
 else

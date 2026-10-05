@@ -109,6 +109,20 @@ def findings():
             f["feedback:" + waiting[-1]] = (f"{len(waiting)} owner note(s) from the Mark overlay without a card "
                                             f"(raw/feedback/): " + ", ".join(waiting[:5]))
 
+    pg = HOME / "vault" / "design" / "playground"
+    if pg.is_dir():
+        live = [d for d in pg.iterdir() if d.is_dir()]
+        if len(live) > 2:
+            f[f"playgrounds:{len(live)}"] = f"{len(live)} design playgrounds open (cap 2): archive the unpicked ones"
+        for d in live:
+            if NOW - max((p.stat().st_mtime for p in d.rglob("*")), default=d.stat().st_mtime) > 14 * DAY:
+                f[f"playground-stale:{d.name}"] = f"design playground {d.name} untouched for 14+ days: archive it or ask the owner to pick"
+    side = HOME / "side"
+    if side.is_dir():
+        for d in side.iterdir():
+            if d.is_dir() and NOW - d.stat().st_ctime > 21 * DAY:
+                f[f"side:{d.name}"] = f"side track ~/side/{d.name} is 21+ days old: check its cap and exit condition in product/roadmap.md, or run its clean-up card"
+
     # ---- upkeep ----
     for prof in [ROOT_H] + sorted((ROOT_H / "profiles").glob("*")):
         name = "default" if prof == ROOT_H else prof.name

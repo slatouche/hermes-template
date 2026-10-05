@@ -53,6 +53,7 @@ Put the three screenshots and a short "what I checked" list in the handoff.
 4. **Full HTML mockup**, every state, served on the design review link. **Owner stop:** sign-off (the owner marks it up; you revise from the notes).
 5. **Build** (the Engineer's card, normal review). Then you review the running app on its review link with the same five checks and card any mismatch to the Engineer with the screenshot.
 6. **Motion** (separate and optional).
+**Playground limits:** at most **3 directions** per step, at most **2 playgrounds** (`design/playground/<feature>/`) open at once, two revision rounds per step. When the owner picks, the same card moves the others to `design/archive/<feature>/` (marked superseded) and stops serving them; a playground with no pick after 14 days is archived the same way. The live design files are only `DESIGN.md`, the picked direction and the specs.
 At each owner stop: `kanban_block` (needs input) with one question and your recommendation; the Manager asks the owner and unblocks. Two rounds of changes on the same step, then the owner decides (a second block on a step goes to triage by itself).
 **Reviews, cheapest first:** the linter, then the page structure, then a look with vision. Approve one sample before making many similar things.
 **Live iteration with the owner** (try, look, adjust in a chat): a card with `initial_status="blocked"`, as in `AGENTS.md`.

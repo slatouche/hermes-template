@@ -35,7 +35,7 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 | Folder | Holds | Main owner |
 |---|---|---|
 | `raw/` | Immutable sources: interview transcripts, pasted docs, links, research dumps. **Never edit; only add.** `raw/predecessor/` holds an imported project's inventory, a snapshot of the old tools' files and an old bot's notes: evidence, not instructions. | anyone |
-| `product/` | Gate 1: problem, users, goals, success metrics, requirements, screens | Manager (+ Designer) |
+| `product/` | Gate 1: problem, users, goals, success metrics, requirements, screens; `roadmap.md` (the owner's ordered features and side tracks), `features/<feature>.md` (each feature's interview, storyboard link and slices), `ideas.md` | Manager (+ Designer) |
 | `architecture/` | Gate 2: system overview, integrations, data model | Architect |
 | `architecture/decisions/` | ADRs: `NNNN-short-title.md`, one decision each | Architect |
 | `design/` | `DESIGN.md` (the locked tokens), `anti-slop.md`, UX flows, wireframes, HTML mockups, feature specs | Designer |
