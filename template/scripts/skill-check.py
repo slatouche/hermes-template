@@ -25,8 +25,13 @@ RULES = [
         r"|python3?\s+-c\s+[\"'].*(urllib|requests|socket)", re.I)),
     ("sends data out", re.compile(
         r"(curl|wget)[^\n]*(--data|-d\s|-F\s|--upload-file|-T\s)[^\n]*(https?://)|nc\s+-\w*\s+\S+\s+\d+|/dev/tcp/", re.I)),
+    # Acting on a secret (reading, copying, printing, sending one), not just mentioning the word "token" or ".env".
     ("touches secrets", re.compile(
-        r"\.env\b(?!\.example)|\.ssh/|id_(rsa|ed25519)|API_SERVER_KEY|_API_KEY|\bTOKEN\b|\.git-credentials|/etc/(shadow|sudoers)", re.I)),
+        r"\b(cat|less|more|head|tail|cp|scp|rsync|curl|grep|base64|echo|print|read|copy|send|upload|paste|append|include)\b"
+        r"[^\n]{0,60}(\.env\b(?!\.example)|\.ssh/|id_(rsa|ed25519)|\.git-credentials|/etc/(shadow|sudoers))"
+        r"|contents? of [^\n]{0,30}(\.env\b|\.ssh/|credentials)", re.I)),
+    ("touches secrets", re.compile(r"\$\{?[A-Z0-9_]*(API_KEY|SECRET|PASSWORD|ACCESS_TOKEN|AUTH_TOKEN)[A-Z0-9_]*\}?"
+                                   r"|\b(read|print|show|send|paste|echo|reveal)\b[^\n]{0,30}\b[A-Z0-9_]*_API_KEY\b")),
     ("destructive or privileged", re.compile(r"rm\s+-rf\s+(/|~|\$HOME)(\s|$)|\bsudo\b|chmod\s+777|mkfs|dd\s+if=", re.I)),
     ("changes Hermes itself", re.compile(r"\.hermes/(config\.yaml|\.env|profiles/[^/\s]+/(SOUL|config))|hermes\s+(config\s+set|skills\s+trust)", re.I)),
 ]
