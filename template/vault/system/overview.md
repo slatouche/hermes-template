@@ -60,7 +60,7 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 **The Manager's jobs** (Manager profile; a script runs first and wakes the Manager only when it finds something, so quiet runs cost no tokens; scripts in `~/.hermes/profiles/manager/scripts/`):
 | Job | When | Wakes the Manager when |
 |---|---|---|
-| `manager-watch` | every 2 hours | a new finding: board diagnostics, a card blocked or in triage over a day, sent back twice, over its runtime, ready with nobody on it; owner items waiting 48 h; a handoff with no card id; memory over 90%, `AGENTS.md` over 6 KB, a SOUL over 10 KB, lessons over 40, lint problems, an import left 3 days, a stale unmerged branch. Each finding is raised once, then again after a day if still open |
+| `manager-watch` | every 2 hours | a new finding: board diagnostics, a card blocked or in triage over a day, sent back twice, over its runtime, ready with nobody on it; owner items waiting 48 h; a handoff with no card id; memory over 90%, `AGENTS.md` over 8 KB, a SOUL over 10 KB, lessons over 40, lint problems, an import left 3 days, a stale unmerged branch. Each finding is raised once, then again after a day if still open |
 | `weekly-retro` | Mondays 08:00 | since the last retro: 2+ cards sent back or blocked, a bot-written skill new or changed, memory over 85%, or 10+ cards done. The Manager runs the `retro` skill: at most 5 changes for the owner's yes, upkeep cards, lessons |
 
 ## Every loop has a stop

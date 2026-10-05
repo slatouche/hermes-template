@@ -7,7 +7,7 @@ Reads the board, the status page, the log and a few hygiene signals, with no mod
 
 Findings: board diagnostics; cards blocked or in triage over a day; cards sent back 2+ times; cards running
 past their runtime limit; ready cards nobody picked up for 6 hours; owner items waiting over 48 hours;
-specialists' log lines with no card id; and upkeep: memory files over 90% full, AGENTS.md over 6 KB, a SOUL
+specialists' log lines with no card id; and upkeep: memory files over 90% full, AGENTS.md over 8 KB, a SOUL
 over 10 KB, lessons over 40 lines, vault lint problems, an import left in ~/import for 3+ days, unmerged
 card branches untouched for 7 days.
 """
@@ -108,8 +108,8 @@ def findings():
         if name != "default" and soul.exists() and soul.stat().st_size > 10_000:
             f[f"soul:{name}"] = f"{name}'s SOUL.md is {soul.stat().st_size // 1000} KB (keep under 10)"
     for agents in (HOME / "workspace" / "AGENTS.md",):
-        if agents.exists() and agents.stat().st_size > 6_500:
-            f["agents:size"] = f"workspace/AGENTS.md is {agents.stat().st_size // 100 / 10} KB (keep under about 6; move detail to the vault)"
+        if agents.exists() and agents.stat().st_size > 8_500:
+            f["agents:size"] = f"workspace/AGENTS.md is {agents.stat().st_size // 100 / 10} KB (keep under about 8; move detail to the vault or per-folder AGENTS.md files)"
     lessons = HOME / "vault" / "system" / "lessons.md"
     if lessons.exists():
         n = len(re.findall(r"^\d{4}-\d{2}-\d{2}", lessons.read_text(errors="replace"), re.M))

@@ -1,6 +1,6 @@
 # {{PROJECT_NAME}}: agent guide
 
-Loaded into every bot's context each session, so keep it short (under about 6 KB). Details live in the vault.
+Loaded into every bot's context each session, so keep it short (under about 8 KB, project section included). Details live in the vault.
 
 ## Where things are
 - **Owner:** {{OWNER}}. The only person who approves gates, bot domains and hires.

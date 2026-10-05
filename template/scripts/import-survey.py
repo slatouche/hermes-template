@@ -47,7 +47,7 @@ AI_TOOL_PATTERNS = {
     "Agent working notes (may be real docs)": ["TASKS.md", "TODO.md", "HANDOFF.md", "PROGRESS.md", "NOTES.md",
                                                "CONVENTIONS.md", "memory-bank/", ".specstory/"],
     # Prompts and handoffs written for an AI tool (name patterns, any folder).
-    "Prompts and handoffs for AI tools": ["HANDOFF*.md", "*-HANDOFF.md", "PROMPT*.md", "*PROMPT-FOR-*.md"],
+    "Prompts and handoffs for AI tools": ["HANDOFF*.md", "*-HANDOFF.md", "PROMPT*.md", "*-PROMPT.md", "*PROMPT-FOR-*.md"],
 }
 SECRET_NAME = re.compile(r"(^|/)(\.env(\.[^/]*)?|[^/]*\.pem|[^/]*\.key|id_(rsa|ed25519|ecdsa)[^/]*"
                          r"|[^/]*credentials[^/]*\.(json|ya?ml|txt)|[^/]*secrets?\.(json|ya?ml|txt|toml))$", re.I)
@@ -97,7 +97,7 @@ def ai_tool_files(files: list[str]) -> dict[str, list[str]]:
         for pat in pats:
             for rel in sorted(on_disk):
                 if "*" in pat:          # a name pattern, matched against the file's name in any folder
-                    name_match = fnmatch.fnmatch(rel.rsplit("/", 1)[-1], pat)
+                    name_match = fnmatch.fnmatch(rel.rsplit("/", 1)[-1].lower(), pat.lower())
                 else:
                     name_match = (rel == pat or rel.endswith("/" + pat)) if not pat.endswith("/") else \
                                  (rel.startswith(pat) or ("/" + pat) in "/" + rel)
