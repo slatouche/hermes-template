@@ -15,7 +15,7 @@ Stand up a new Hermes project on the P330 with one command. Each project gets it
 ## Create a project
 One command on the server, as your admin user (the one with sudo):
 ```bash
-curl -fsSL https://raw.githubusercontent.com/slatouche/hermes-template/main/install.sh | sudo bash
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/slatouche/hermes-template/main/install.sh)"
 ```
 It puts the template in `/opt/hermes-template` (owned by root; re-running updates it) and asks for:
 1. the project name;
@@ -23,7 +23,7 @@ It puts the template in `/opt/hermes-template` (owned by root; re-running update
 3. the OpenCode key (hidden; skipped if `PROVIDER_KEY_FILE` is set in `/etc/hermes/host.conf`);
 4. a Discord bot token (Enter skips; add it later).
 
-Later projects: `sudo bash /opt/hermes-template/new-project.sh` (or the same one-liner, which also updates the template). Options for scripts: `<name> --import <source> --notes <folder> --key-file <file> --no-discord`. Host settings (owner name, subnets, a key file) go in `/etc/hermes/host.conf`, which overrides `host.conf` and survives updates. Allow 5–10 minutes; the first run on a fresh server also installs Ubuntu packages. It's safe to re-run if something fails part-way.
+Later projects: `sudo bash /opt/hermes-template/new-project.sh` (or the same one-liner, which also updates the template). Don't pipe it into `sudo bash`: the questions can't read your keyboard that way. Options for scripts: `<name> --import <source> --notes <folder> --key-file <file> --no-discord`. Host settings (owner name, subnets, a key file) go in `/etc/hermes/host.conf`, which overrides `host.conf` and survives updates. Allow 5–10 minutes; the first run on a fresh server also installs Ubuntu packages. It's safe to re-run if something fails part-way.
 
 What it does:
 | Part | As | Steps |
