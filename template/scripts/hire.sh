@@ -32,6 +32,8 @@ case "$ROLE" in default|manager) die "'$ROLE' is not a hireable role" ;; esac
 for s in "${SKILLS[@]}"; do
   [ -f "$s/SKILL.md" ] || die "--skill $s: no SKILL.md in that folder"
   case "$(cd "$s" && pwd)" in "$HOME"/*) ;; *) die "--skill $s: the folder must be inside this project" ;; esac
+  # A skill is instructions a bot will follow: refuse one that shows signs of planted instructions.
+  /usr/bin/python3 "$HOME/.hermes/scripts/skill-check.py" "$s" >&2     || die "--skill $s failed skill-check (above). Rewrite the skill in your own words without those lines, then hire again."
 done
 
 PROJECT="$(basename "$HOME")"
@@ -138,6 +140,7 @@ EOF
   hermes -p "$ROLE" config set agent.budget_warning_ratio "$ROLE_BUDGET_WARNING" >/dev/null
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null
   hermes -p "$ROLE" config set agent.verify_on_stop "$R_VERIFY" >/dev/null
+  hermes -p "$ROLE" config set --force skills.disabled '["llm-wiki"]' >/dev/null   # the vault has its own rules
   hermes -p "$ROLE" tools enable kanban >/dev/null
   hermes -p "$ROLE" tools enable --platform discord kanban >/dev/null
   hermes -p "$ROLE" project create "$PROJECT" "$HOME/workspace" --use >/dev/null
@@ -158,6 +161,12 @@ EOF
   if ! git -C "$HOME/workspace" diff --quiet -- "$AGN"; then
     git -C "$HOME/workspace" commit -q -m "$AGN: $DNAME joins the team (hire.sh)" -- "$AGN"
   fi
+  # Its starting eval (a held-back check for later changes to its SOUL or skills).
+  EV="$HOME/vault/system/evals"
+  if [ -f "$EV/_role.md" ] && [ ! -f "$EV/$ROLE.md" ]; then
+    sed -e "s/<role>/$ROLE/g" -e "s/^title: .*/title: \"Eval: $DNAME\"/" -e "s/^summary: .*/summary: \"$DNAME's fixed eval, run before and after changing its SOUL or skills.\"/"       -e "s/^updated: .*/updated: $(date +%F)/" "$EV/_role.md" > "$EV/$ROLE.md"
+  fi
+  CHANGED+=("vault/system/evals/$ROLE.md")
   CHANGED+=(".hermes/profiles/$ROLE/SOUL.md" ".hermes/profiles/$ROLE/config.yaml" ".hermes/profiles/$ROLE/profile.yaml"
             ".hermes/profiles/$ROLE/memories/MEMORY.md" ".hermes/profiles/$ROLE/memories/USER.md")
 fi

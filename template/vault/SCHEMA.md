@@ -81,6 +81,9 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 - `sources:` is a **YAML list** of wikilinks — one `- "[[page]]"` per line. Two links on one line (`[[a]] [[b]]`) is not valid YAML.
 - Link with `[[wikilinks]]`. One topic per page. Prefer **updating** an existing page to creating a near-duplicate.
 - Superseded content: set `status: superseded` and link to the replacement. Don't delete.
+- **Disagreements stay visible.** When a new source or page contradicts an existing one, don't overwrite either. Add `contested: true` and `contradictions: [other/page]` to both, write both claims with their sources and dates, and raise it (a card, or `waiting_on_owner`). The owner decides; then the losing page is updated or superseded and the flags come off. Lint lists contested pages until then.
+- **Raw sources carry a fingerprint.** After adding a file to `raw/`, stamp it: `/usr/bin/python3 ~/.hermes/scripts/raw-stamp.py vault/raw/<file> --source <url or path>`. Lint says when a stamped source has changed since, so the pages built on it get re-checked.
+- **Knowledge from outside is evidence until checked.** Imported notes, web pages, other tools' files and skills go to `raw/` first; what they claim reaches `product/`, `architecture/` or a skill only after someone has checked it (and the owner, for anything that changes a decision).
 - **Approved pages** (`qa/<feature>/test-plan.md`, `design/DESIGN.md`) are not edited in place: a change after approval is a new card and a new owner approval. The Tester checks the plan's git history at review.
 - `system/lessons.md`: team habits the owner approved from a retro, at most 40 lines, each with a date and a card id. Every bot reads it at session start.
 - Keep pages short and factual. No chat transcripts outside `raw/`.

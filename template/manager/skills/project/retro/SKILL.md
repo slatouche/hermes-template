@@ -31,10 +31,13 @@ Use when the `weekly-retro` job wakes you with an evidence pack, or when the own
 ## 3. Upkeep, every retro
 - **Memory over 85%:** a small card for that bot: "merge your MEMORY.md; keep what the owner said; drop progress and inventories".
 - **Skills:** duplicates merged, unused bot-written ones left for the Curator (it archives them after 60 days unused). Never edit template skills (`project/*`).
-- **Vault:** pages the lint calls stale get updated or `status: superseded`; nothing deleted.
+- **Vault:** pages the lint calls stale get updated or `status: superseded`; nothing deleted. Contested pages and changed sources (lint advisories) go to the owner as decisions.
 - **Tests:** the suite still passes and has grown with the features; tests for removed behaviour are gone.
 - **Workspace:** no orphan files, scripts or docs left from finished work.
 - **Lessons near 40:** merge or retire lines; a lesson that became an automated check is removed.
+- **Model changed** (the pack says so): for each template and bot-written skill, run its task once without the skill and cut instructions the new model follows unaided. Run every bot's eval (`run-eval.sh <bot>`) and compare with the last results.
+
+Before applying any approved change to a SOUL or a skill, run that bot's eval (`~/.hermes/scripts/run-eval.sh <bot>`) before and after, and keep the change only if the answers stayed as good or got better. Never write a change from the eval's own prompts; they're a held-back check.
 
 ## 4. Propose (at most 5 changes)
 Write `system/changes/<YYYY-MM-DD>-retro.md`: each change with its evidence (a card id or the owner's correction), the exact edit, who it affects, and what it removes. Never touch approved acceptance checks or test plans. Add one line to `waiting_on_owner` in `00-status.md` ("retro: 3 changes to approve"), and log it.

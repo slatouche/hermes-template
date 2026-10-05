@@ -59,6 +59,12 @@ Skills are how a bot keeps a procedure it would otherwise relearn. Hermes's back
 - **Trigger first:** Hermes shows only the first 60 characters of the description, so start with what it's for ("Release the app: …"), not "This skill…".
 - **About 200 lines at most.** Longer detail goes in reference files one level down (`references/x.md`), with a contents list.
 - **Scripts for fragile steps:** a command that must be exact goes in a script the skill runs, not in prose.
+- **Full commands and full paths.** Write the exact command with its options (`scripts/run-tests.sh`, not "run the tests"; every flag you need), and absolute paths for tools, inputs and outputs. Left vague, a bot uses the laziest form, or decides a tool is missing and improvises.
+- **Outputs never go in the skill's folder:** use the card's workspace or the vault. A skill folder that fills with output gets worse.
+- **Long procedures get a checklist.** Past about 10 steps, the skill writes a checklist file at the start (`- [ ] step`), the bot ticks each step as it finishes, and the last step checks every promised output exists and isn't empty. Past about 15 steps, split it into two skills that run one after the other: long lists get partly skipped.
+- **Check a skill before a bot gets it:** `/usr/bin/python3 ~/.hermes/scripts/skill-check.py <folder>` (planted instructions, hidden text, fetch-and-run commands, secret reads). `hire.sh` runs it on every `--skill`. Skills from outside are rewritten in our own words, never installed as they are.
+- **Test the change, not just the skill:** each bot has a small fixed eval in `system/evals/<bot>.md`. Run it before and after changing that bot's SOUL or skills (`~/.hermes/scripts/run-eval.sh <bot>`); keep the change only if the answers got better or stayed the same.
+- **When the model changes,** re-check each skill: run its task once without the skill, and remove instructions the new model already follows unaided. The weekly retro flags a model change.
 - **Plain, positive instructions** ("run X, then check Y") with the key words up front. Test it on our model before relying on it.
 - **Prune:** in the retro, try removing a line and re-running; keep it only if the result changes. Unused bot-written skills are archived by the Curator after 60 days; template skills are never touched.
 - **Kept skills for hires** live in `system/skills/<name>/SKILL.md`; install one with `hire.sh <role> --skill ~/vault/system/skills/<name>`.

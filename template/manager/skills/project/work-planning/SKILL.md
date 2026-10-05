@@ -32,7 +32,7 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
 7. **Goal mode is the exception.** Only when it repeats, the budget allows, a command decides it, and the worker can run what it built; then `goal_max_turns: 6`, never on slice 1. Its judge reads only 2,000 characters of the card, so keep the card short.
 
 ## When work comes back
-- **Done:** read the handoff. Check every `Verified:` line against the card's Verification. Missing or vague: send it back with one line saying which check.
+- **Done:** read the handoff. Check every `Verified:` line against the card's Verification, and that every output the card promised exists and isn't empty (`ls -l`). Missing, empty or vague: send it back with one line saying which.
 - **Blocked or in triage:** never loop a card a fourth time. Pick one:
   1. The check is wrong: fix it, with the owner's OK if they approved it.
   2. The card is too big: re-slice it into smaller cards.

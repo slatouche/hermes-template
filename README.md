@@ -75,6 +75,11 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 - All changes to how the team works (SOULs, config, jobs) go through the same propose → approve → apply loop. The Manager never touches `.env`, sudo or the gateway.
 - `vault/system/overview.md` in each project explains how its install works.
 
+## Keeping an eye on it
+- **`/vault-changes`** in a Manager chat: what the bots changed in the vault since you last looked (page by page, no model call). Anything wrong rolls back from git.
+- **`~/.hermes/scripts/run-eval.sh <bot>`:** a bot's fixed eval (`vault/system/evals/<bot>.md`), run before and after changing its SOUL or skills.
+- Skills kept from an imported project are rewritten and checked (`skill-check.py`) before any bot gets them; `hire.sh` refuses one that fails.
+
 ## Adding Discord later
 ```bash
 ssh p330-<name> "nano ~/.hermes/profiles/manager/.env"

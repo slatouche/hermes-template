@@ -19,10 +19,10 @@ if [ ! -t 0 ] && [ $# -eq 0 ]; then
   sudo bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/slatouche/hermes-template/main/install.sh)\""
 fi
 command -v git >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq git >/dev/null; } || die "git is needed"
-if [ -d "$DIR/.git" ]; then
-  git -C "$DIR" pull -q --ff-only || die "could not update $DIR (local changes? put host settings in /etc/hermes/host.conf)"
-elif [ -d "$REPO" ]; then
+if [ -d "$REPO" ]; then
   rm -rf "$DIR"; cp -r "$REPO" "$DIR"            # a local copy (testing a template change before it's pushed)
+elif [ -d "$DIR/.git" ]; then
+  git -C "$DIR" pull -q --ff-only || die "could not update $DIR (local changes? put host settings in /etc/hermes/host.conf)"
 else
   rm -rf "$DIR"; git clone -q "$REPO" "$DIR"   # also replaces a non-git copy left by a test
 fi

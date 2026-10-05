@@ -31,6 +31,7 @@ import re
 import sys
 import pathlib
 import datetime
+import hashlib
 
 try:                                     # PyYAML is the one non-stdlib need; degrade loudly if absent
     import yaml
@@ -145,6 +146,13 @@ def main() -> int:
                     age = (today - updated).days
                     if age > stale_days:
                         advisories.append(f"{name}: active but updated {age}d ago")
+                if parsed.get("contested"):
+                    others = parsed.get("contradictions") or []
+                    advisories.append(f"{name}: contested (disagrees with {', '.join(map(str, others)) or 'another page'}): needs an owner decision")
+                if name.startswith("raw/") and parsed.get("sha256"):
+                    body_bytes = raw.split("---", 2)[2].lstrip(chr(10)).encode()
+                    if hashlib.sha256(body_bytes).hexdigest() != str(parsed["sha256"]):
+                        advisories.append(f"{name}: source changed since it was ingested (sha256 differs): re-read it and update the pages built on it")
 
         if name not in EXEMPT_LINKS:          # append-only pages: their old example links are frozen
             for link in re.findall(r"\[\[([^\]]+?)\]\]", body):

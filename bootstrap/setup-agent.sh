@@ -63,7 +63,9 @@ set_env "$ENV" API_SERVER_ENABLED true
 set_env "$ENV" API_SERVER_HOST 127.0.0.1
 set_env "$ENV" API_SERVER_PORT "$API"
 set_env "$ENV" OBSIDIAN_VAULT_PATH "$HOME/vault"
-set_env "$ENV" WIKI_PATH "$HOME/vault"
+# No WIKI_PATH: Hermes' bundled llm-wiki skill would treat the vault as its own wiki (different rules); it's
+# switched off below. Remove it if an older setup wrote it.
+sed -i '/^WIKI_PATH=/d' "$ENV"
 echo "ok"
 
 # ---------- default profile: stock Hermes plus the install's plumbing ----------
@@ -94,6 +96,8 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
   hermes -p "$p" config set curator.stale_after_days "$CURATOR_STALE_DAYS"
   hermes -p "$p" config set curator.archive_after_days "$CURATOR_ARCHIVE_DAYS"
   hermes -p "$p" config set checkpoints.enabled true
+  # The vault has its own rules (SCHEMA.md); the bundled llm-wiki skill's conflict with them.
+  hermes -p "$p" config set --force skills.disabled '["llm-wiki"]' >/dev/null
   hermes -p "$p" config set delegation.max_concurrent_children "$DELEGATION_MAX_CHILDREN"
   hermes -p "$p" config set delegation.max_iterations "$DELEGATION_MAX_ITERATIONS"
   hermes -p "$p" config set --force delegation.reasoning_effort "$DELEGATION_EFFORT"
@@ -180,6 +184,8 @@ hermes -p manager config set agent.disabled_toolsets "$DISABLED_TOOLSETS"
 hermes -p manager config set discord.require_mention false
 hermes -p manager config set agent.max_turns "$AGENT_MAX_TURNS"
 apply_learning_settings manager "$COMPRESSION_MANAGER_TOKENS"
+# /vault-changes in a Manager chat: what the bots changed in the vault since you last looked (no model call).
+hermes -p manager config set --force quick_commands '{"vault-changes": {"type": "exec", "command": "bash ~/.hermes/scripts/vault-changes.sh"}}' >/dev/null
 # The Manager's template skills (intake-interview, project-takeover...). Refreshed on every run; the bot's
 # own skills have other names and are left alone.
 for d in "$T"/manager/skills/*/*/; do

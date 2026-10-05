@@ -75,12 +75,17 @@ def main():
                 memory.append(f"{name} {fn} {pct}%")
                 full |= pct > 85
 
-    if "--baseline" in sys.argv:                      # setup / hire: today's skills are the starting point
+    model = subprocess.run(["hermes", "config", "get", "model.default"], capture_output=True, text=True,
+                           env={**os.environ, "PATH": f"{HOME}/.local/bin:" + os.environ.get("PATH", "")}).stdout.strip().splitlines()
+    model = model[-1].strip() if model else ""
+    if "--baseline" in sys.argv:                      # setup / hire: today's skills and model are the starting point
         state["skills"] = seen
+        state["model"] = model
         STATE.parent.mkdir(parents=True, exist_ok=True)
         STATE.write_text(json.dumps(state))
         return 0
-    wake = len(troubled) >= 2 or bool(skills) or full or len(done) >= 10
+    model_changed = bool(model and state.get("model") and state["model"] != model)
+    wake = len(troubled) >= 2 or bool(skills) or full or len(done) >= 10 or model_changed
     if not wake:
         print(json.dumps({"wakeAgent": False}))
         return 0
@@ -98,8 +103,10 @@ def main():
         print(f"  - {s}")
     print("- memory fill: " + ", ".join(memory))
     print(f"- test files tracked: {tests}; lessons: {n_lessons}/40")
+    if model_changed:
+        print(f"- MODEL CHANGED: {state['model']} -> {model}. Re-check skills (the retro skill's 'Model changed' step) and run every bot's eval.")
     STATE.parent.mkdir(parents=True, exist_ok=True)
-    STATE.write_text(json.dumps({"last_retro": NOW, "skills": seen}))
+    STATE.write_text(json.dumps({"last_retro": NOW, "skills": seen, "model": model or state.get("model")}))
     print(json.dumps({"wakeAgent": True}))
     return 0
 
