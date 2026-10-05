@@ -192,7 +192,7 @@ hermes -p manager config set discord.require_mention false
 hermes -p manager config set agent.max_turns "$AGENT_MAX_TURNS"
 apply_learning_settings manager "$COMPRESSION_MANAGER_TOKENS"
 # /vault-changes in a Manager chat: what the bots changed in the vault since you last looked (no model call).
-hermes -p manager config set --force quick_commands '{"vault-changes": {"type": "exec", "command": "bash ~/.hermes/scripts/vault-changes.sh"}}' >/dev/null
+hermes -p manager config set --force quick_commands '{"vault-changes": {"type": "exec", "command": "bash ~/.hermes/scripts/vault-changes.sh"}, "queue": {"type": "exec", "command": "/usr/bin/python3 ~/.hermes/scripts/owner-queue.py"}}' >/dev/null
 # The Manager's template skills (intake-interview, project-takeover...). Refreshed on every run; the bot's
 # own skills have other names and are left alone.
 for d in "$T"/manager/skills/*/*/; do

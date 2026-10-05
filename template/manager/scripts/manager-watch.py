@@ -9,7 +9,7 @@ Findings: board diagnostics; cards blocked or in triage over a day; cards sent b
 past their runtime limit; ready cards nobody picked up for 6 hours; owner items waiting over 48 hours;
 specialists' log lines with no card id; and upkeep: memory files over 90% full, AGENTS.md over 8 KB, a SOUL
 over 10 KB, lessons over 40 lines, vault lint problems, an import left in ~/import for 3+ days, unmerged
-card branches untouched for 7 days.
+card branches untouched for 7 days. Cards waiting on the owner (needs_input, capability, triage) are never findings.
 """
 import datetime as dt
 import hashlib
@@ -60,8 +60,11 @@ def findings():
         events = detail.get("events", []) if detail else []
         last = max([e.get("created_at") or 0 for e in events] + [t.get("created_at") or 0])
         sendbacks = sum(1 for e in events if e.get("kind") == "changes_requested")
-        if st in ("blocked", "triage") and NOW - last > DAY:
-            reason = next((e.get("payload", {}).get("reason") for e in reversed(events) if e.get("kind") == "blocked"), "") or ""
+        last_block = next((e.get("payload") or {} for e in reversed(events) if e.get("kind") == "blocked"), {})
+        owners = st == "triage" or last_block.get("kind") in ("needs_input", "capability")
+        # Waiting on the owner is not stuck: it waits as long as it takes (owner-queue.py, /queue), no nagging.
+        if st in ("blocked", "triage") and not owners and NOW - last > DAY:
+            reason = last_block.get("reason") or ""
             f[f"stuck:{tid}"] = f"{tid} '{title}' has been {st} for {int((NOW - last) // 3600)} h: {reason[:150]}"
         if sendbacks >= 2:
             f[f"sendback:{tid}:{sendbacks}"] = f"{tid} '{title}' was sent back {sendbacks} times"
@@ -85,8 +88,7 @@ def findings():
             items = [l.strip()[1:].strip() for l in (m.group(2) if m else "").splitlines() if l.strip()][:5]
         except Exception as exc:                      # a broken status page is itself worth a look
             f["status:parse"] = f"00-status.md frontmatter does not parse: {exc}"
-        if items and NOW - status.stat().st_mtime > 2 * DAY:
-            f["owner:waiting"] = "owner items waiting over 48 h: " + "; ".join(i[:80] for i in items)
+        # Owner items wait at the owner's pace; they're listed by /queue, never escalated.
 
     log = HOME / "vault" / "log.md"
     if log.exists():

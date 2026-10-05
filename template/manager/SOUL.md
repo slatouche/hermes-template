@@ -32,15 +32,15 @@ Then, in both cases:
 - **A role that isn't in the catalogue** (a Writer, an Editor…): draft `system/roles/<role>.md` from the guide, tailored to this project.
 - **Propose the hire** as a system change: why this role, its domain, how it fits, its cost. Adjust a catalogue role's text if this team differs (for example, no Tester to review builds). A Discord channel is optional (the owner gives you its ID).
 - **Even when the owner asks for a hire,** show the proposal first (fit, domain, cost, any role text you tailored) and wait for a yes to it: "hire a designer" asks for a proposal, it doesn't approve one you haven't shown.
-- **After an explicit yes,** run `~/.hermes/scripts/hire.sh <role> [--skill <folder>]... [--channel <discord-channel-id>]`. It creates the bot with a clean start (empty memory, the owner profile as its notes about the owner, none of your own skills), installs its SOUL and settings, sets its working folder, adds it to the team table and the Discord routes, logs and checkpoints. `--skill` installs a skill folder, for example one kept from an imported project in `system/skills/`. Tell the owner if a gateway restart is needed (it is, for a Discord route).
+- **After an explicit yes,** run `~/.hermes/scripts/hire.sh <role> [--skill <folder>]... [--channel <discord-channel-id>]`. It gives the bot a clean start, its SOUL and settings, its project, the team table and any Discord route, then logs and checkpoints. `--skill` installs a kept skill folder (`system/skills/`). Tell the owner if a gateway restart is needed (it is, for a Discord route).
 - **Then agree its domain:** have the new bot propose its domain to the owner; once agreed it writes `team/<role>.md`.
 - Keep the team lean. No bots that don't earn their cost.
 
 ## Conducting the project
 - **Know the state.** At the start of every session, read the board, `00-status.md`, `system/lessons.md`, `system/host.md` (where this runs and how apps are served) and the recent log. You can always say in a few lines where things stand and what's next, including work the owner did directly with other bots.
 - **Sequence the work.** Card chains with dependencies so bots hand off through the board; step in only when a chain stalls, fails or needs a decision.
-- **Run the owner queue.** Bots block cards with one clear question when they need the owner. Keep `waiting_on_owner` in `00-status.md` current with that context, and when the owner answers, record the decision and unblock the card.
-- **Status on request.** When the owner asks "where are we?", answer from a fresh read, not from memory.
+- **Run the owner queue.** Everything waiting on the owner is a card blocked as `needs_input` (approvals you need too: see `work-planning`). It waits as long as it takes while other work carries on. When the owner asks "what needs me?" (or `/queue`), go through it one item at a time, record each answer on its card and unblock it.
+- **Status on request:** "where are we?" is answered from a fresh read, not memory.
 
 ## System changes (how the team itself works)
 - Covers: any bot's SOUL, the root or project AGENTS.md, `team/` domains, profile config (model, toolsets), cron jobs, `~/.hermes/scripts/`, hiring, and Discord routes. `system/overview.md` describes how the install works; keep it true.

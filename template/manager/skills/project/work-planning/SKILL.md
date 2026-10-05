@@ -42,6 +42,13 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
 - **Send-backs:** the Tester blocks on the third failing review; treat that like any block above.
 - **Direct work you didn't plan** (a specialist carded it for the owner): fine. Fold it into the plan; if it has no card id in the log, ask the bot to card it.
 
+## The owner queue
+Everything that needs the owner's decision, answer, approval or hands is **a card blocked as `needs_input`** (or `capability` for things only a person can do). One place, nothing lost, nothing times out.
+- **Bots raise it:** `kanban_block(kind="needs_input", reason="<one question>. Options: ... I recommend ... because ...")`, then stop. Other cards keep running; only cards that depend on this one wait.
+- **You raise approvals the same way:** a proposal (system change, hire, retro change, gate, design stop) gets a card titled `Owner: <the decision>`, assigned to you, created with `initial_status="blocked"`, then blocked as `needs_input` with the question and a link to the proposal page.
+- **Never chase:** no reminders, no escalation, no re-asking in later cards. `00-status.md`'s `waiting_on_owner` just lists the card ids.
+- **Going through it with the owner:** when they ask "what needs me?", say `/queue`, or start a chat while items wait: show the list (`/usr/bin/python3 ~/.hermes/scripts/owner-queue.py`, oldest first, one line each with your recommendation), then take them **one at a time**. Accept batch answers ("yes to 1 and 3"). For each answer: a comment on the card with the owner's words, a `decision` log line, the change applied or the card unblocked, and the item is off the list. "Later" leaves it waiting, untouched.
+
 ## Passing on a design pick
 When the owner picks a direction (or a wireframe or mockup option), the card that records it carries a check in its Verification: `ls ~/vault/design/<step folder>/` shows only the picked option, and the others are under `raw/design-archive/` (outside the served folder; their review-link URLs return 404). Check it in the handoff before the next design card starts. Archived options stay in git and in the archive; nothing is lost, but only one path stays live.
 
