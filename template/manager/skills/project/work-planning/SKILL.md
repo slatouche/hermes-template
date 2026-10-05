@@ -43,7 +43,7 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
 - **Direct work you didn't plan** (a specialist carded it for the owner): fine. Fold it into the plan; if it has no card id in the log, ask the bot to card it.
 
 ## Passing on a design pick
-When the owner picks a direction (or a wireframe or mockup option), the card that records it carries a check in its Verification: `ls ~/vault/design/<step folder>/` shows only the picked option, and the others are under `design/archive/<feature>/`. Check it in the handoff before the next design card starts. Archived options stay in git and in the archive; nothing is lost, but only one path stays live.
+When the owner picks a direction (or a wireframe or mockup option), the card that records it carries a check in its Verification: `ls ~/vault/design/<step folder>/` shows only the picked option, and the others are under `raw/design-archive/` (outside the served folder; their review-link URLs return 404). Check it in the handoff before the next design card starts. Archived options stay in git and in the archive; nothing is lost, but only one path stays live.
 
 ## The owner's notes from the Mark overlay
 Notes land in `raw/feedback/` (`status: open`, with the page, the element's selector and text, the screen size). For each: a card for the bot that owns it (Designer for how it looks or reads, Engineer for what's broken), with the note linked as context and its selector in the Verification; then set the note's `status: done` and `card: t_...`. Similar notes on one screen become one card. A note that's really a decision goes to the owner as a question. `manager-watch` wakes you when new notes arrive.
