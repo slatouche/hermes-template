@@ -97,6 +97,18 @@ def findings():
                     and parts[2] == "handoff" and not re.search(r"\bt_[0-9a-f]{6,}", line):
                 f[f"nocard:{parts[0]}:{parts[1]}"] = f"{parts[1]} logged work with no card id: {parts[3][:120]}"
 
+    fb = HOME / "vault" / "raw" / "feedback"
+    if fb.is_dir():
+        waiting = []
+        for p in fb.glob("*.md"):
+            t = p.read_text(errors="replace")
+            if re.search(r"^status:\s*open", t, re.M) and re.search(r"^card:\s*none", t, re.M):
+                waiting.append(p.stem)
+        if waiting:
+            waiting.sort()
+            f["feedback:" + waiting[-1]] = (f"{len(waiting)} owner note(s) from the Mark overlay without a card "
+                                            f"(raw/feedback/): " + ", ".join(waiting[:5]))
+
     # ---- upkeep ----
     for prof in [ROOT_H] + sorted((ROOT_H / "profiles").glob("*")):
         name = "default" if prof == ROOT_H else prof.name

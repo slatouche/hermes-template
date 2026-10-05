@@ -248,6 +248,7 @@ On your PC, add this to ~/.ssh/config (same key as the other projects):
 Then:
   1. Hermes Desktop: add an SSH connection to $HOST_LABEL-$NAME and open the Manager.
   2. Say hello. $([ -n "$IMPORT_SRC" ] && echo "The Manager takes the imported project over (it reads it, then asks questions)." || echo "The Manager starts the interview.")
+  Feedback: http://$HOST_ADDR:$((API + 99))/ (review links with the Mark toolbar, once an app is running)
   To import a project later: copy it into the project's import folder with the project's own login,
      scp -r <folder> $HOST_LABEL-$NAME:import/
   then tell the Manager "take over the project in ~/import/<folder>" (or just give it a git URL).

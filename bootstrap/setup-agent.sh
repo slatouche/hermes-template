@@ -246,6 +246,28 @@ grep -q 'weekly-retro' <<<"$MJOBS" || hermes -p manager cron create "0 8 * * 1" 
   --name weekly-retro --script retro-gate.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
 /usr/bin/python3 "$H/profiles/manager/scripts/retro-gate.py" --baseline    # today's skills are the starting point
 echo "Manager jobs: manager-watch (every 2 h), weekly-retro (Mondays 08:00); both silent unless their script finds something"
+grep -q 'host-facts' <<<"$JOBS" || hermes cron create "5 3 * * *" --name host-facts --script host-facts.sh --no-agent --deliver local
+bash "$H/scripts/host-facts.sh" >/dev/null || true      # vault/system/host.md: where this runs, how apps are served
+
+# ---------- the owner's feedback inbox (Mark overlay + review links), last port of the block ----------
+step "Feedback inbox"
+FEEDBACK_PORT=$((API + 99))
+touch "$H/scripts/review-mirrors.conf"
+mkdir -p "$HOME/.config/systemd/user"
+cat > "$HOME/.config/systemd/user/feedback-inbox.service" <<EOF
+[Unit]
+Description=Owner feedback inbox for $NAME (Mark overlay and review links)
+
+[Service]
+ExecStart=/usr/bin/python3 %h/.hermes/scripts/feedback-inbox.py $FEEDBACK_PORT
+Restart=always
+
+[Install]
+WantedBy=default.target
+EOF
+systemctl --user daemon-reload
+if systemctl --user enable --now feedback-inbox >/dev/null 2>&1; then echo "running on :$FEEDBACK_PORT"
+else echo "warning: the feedback inbox didn't start (systemctl --user status feedback-inbox)"; fi
 
 # ---------- repo 2: project memory (vault + the bots' brains) ----------
 step "Project memory repo"

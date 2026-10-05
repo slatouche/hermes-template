@@ -53,11 +53,15 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 ## Apps the owner uses
 Anything the owner opens (an app, a page, an API) runs as a systemd user service in `~/.config/systemd/user/<name>.service` (`Restart=always`, enabled; it starts at boot without anyone logged in, because linger is on), on a port in the project's block, reachable from the LAN. The unit file is tracked in the memory repo. Restart it after a change: `systemctl --user restart <name>`.
 
+## The owner's feedback inbox
+`feedback-inbox` (a user service) on the block's last port: `http://<host>:<API port + 99>/`. For each app in `~/.hermes/scripts/review-mirrors.conf` (`<review port> <app port> <name>`; review port = app port + 50) it serves a **review link**: the same live app with a **Mark** toolbar (click an element or drag an area, type a note, Save). Notes go to `raw/feedback/` and the log; `manager-watch` wakes the Manager, who cards them. Restart the service after editing the mirrors file. Kept small on purpose (stdlib, no app changes); SitePing (MIT) is the option if a triage dashboard is ever wanted.
+
 ## Cron jobs (default profile, no model tokens)
 | Job | When | Does |
 |---|---|---|
 | `vault-sweep` | every 15 min | Regenerates `index.md`, commits leftover vault changes |
 | `vault-lint` | 02:15 daily | Checks the vault; silent when clean, fails loudly on problems |
+| `host-facts` | 03:05 daily | Rewrites `system/host.md`: OS, hardware, LAN address, port block, running app services, tools |
 | `workspace-tidy` | hourly at :40 | Removes finished card worktrees and card branches already merged into main; never touches unmerged work |
 
 **The Manager's jobs** (Manager profile; a script runs first and wakes the Manager only when it finds something, so quiet runs cost no tokens; scripts in `~/.hermes/profiles/manager/scripts/`):

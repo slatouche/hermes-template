@@ -24,7 +24,7 @@ Use when `00-status.md` says `phase: onboarding`: the code in `workspace/` was b
 ## 1. Survey (no questions yet)
 1. Read `raw/predecessor/inventory.md`, and `raw/predecessor/not-imported.md` if present (what git left behind in the source folder: data, caches, local settings; ask the owner about anything the project may need). Re-run `/usr/bin/python3 ~/.hermes/scripts/import-survey.py` if it's older than the repo's last commit.
 2. Read the repo in its own start-here order: README, the docs index, the old instruction files (`.hermes.md`, `AGENTS.md`, `CLAUDE.md`, `.cursor/rules`...), the task list, the tests. Big repos: read the map, not every file.
-3. Find out how it runs and how it's tested. Run the test suite once and record the **baseline**: the command, the pass/fail counts, the time. If it can't run here (missing system packages, another OS, a GPU, data that wasn't moved), write down exactly why. That becomes a card, not a blocker.
+3. Read `system/host.md` and compare it with what the repo assumes (a Windows PC? a GPU? fonts, paths, start scripts). Every mismatch is a porting item in the ledger. Find out how it runs and how it's tested. Run the test suite once and record the **baseline**: the command, the pass/fail counts, the time. If it can't run here (missing system packages, another OS, a GPU, data that wasn't moved), write down exactly why. That becomes a card, not a blocker.
 4. Read `raw/predecessor/notes/` if present: an old bot's memory, its owner notes and its skills.
 
 ## 2. Keep the know-how (the ledger)

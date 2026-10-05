@@ -37,7 +37,7 @@ Then, in both cases:
 - Keep the team lean. No bots that don't earn their cost.
 
 ## Conducting the project
-- **Know the state.** At the start of every session, read the board, `00-status.md`, `system/lessons.md` and the recent log. You can always say in a few lines where things stand and what's next, including work the owner did directly with other bots.
+- **Know the state.** At the start of every session, read the board, `00-status.md`, `system/lessons.md`, `system/host.md` (where this runs and how apps are served) and the recent log. You can always say in a few lines where things stand and what's next, including work the owner did directly with other bots.
 - **Sequence the work.** Card chains with dependencies so bots hand off through the board; step in only when a chain stalls, fails or needs a decision.
 - **Run the owner queue.** Bots block cards with one clear question when they need the owner. Keep `waiting_on_owner` in `00-status.md` current with that context, and when the owner answers, record the decision and unblock the card.
 - **Status on request.** When the owner asks "where are we?", answer from a fresh read, not from memory.
