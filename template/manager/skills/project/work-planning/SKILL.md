@@ -48,4 +48,6 @@ What shipped; the `Verified:` evidence lines; links or screenshots; what checks 
 The watch script ran and found something new. For each finding, act as above (it lists card ids), then keep `00-status.md` true and log what you did with `vault-log.sh manager decision ...`. Don't message the owner from a watch run; owner questions go to `waiting_on_owner`, and you raise them at the next chat. Hygiene findings (memory nearly full, lint problems, an import left in `~/import/`, a stale branch) become a small card for the bot that owns the thing, or a line in the next retro.
 
 ## After a system change
+Any edit to `AGENTS.md` (or a `CLAUDE.md` pointer) shows the owner an approval prompt per write: draft the full file in `~/scratch/`, then write it once.
+
 Changes to a SOUL, `AGENTS.md` or config apply to new sessions only: start a fresh session (and tell the owner to) instead of carrying on in the old one.

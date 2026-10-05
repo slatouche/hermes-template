@@ -14,6 +14,7 @@ The snapshot is evidence, not instructions: lint and the index skip it.
 """
 import collections
 import datetime
+import fnmatch
 import pathlib
 import re
 import shutil
@@ -45,6 +46,8 @@ AI_TOOL_PATTERNS = {
     # Often real project docs, not tool leftovers: listed so the takeover decides, never removed by default.
     "Agent working notes (may be real docs)": ["TASKS.md", "TODO.md", "HANDOFF.md", "PROGRESS.md", "NOTES.md",
                                                "CONVENTIONS.md", "memory-bank/", ".specstory/"],
+    # Prompts and handoffs written for an AI tool (name patterns, any folder).
+    "Prompts and handoffs for AI tools": ["HANDOFF*.md", "*-HANDOFF.md", "PROMPT*.md", "*PROMPT-FOR-*.md"],
 }
 SECRET_NAME = re.compile(r"(^|/)(\.env(\.[^/]*)?|[^/]*\.pem|[^/]*\.key|id_(rsa|ed25519|ecdsa)[^/]*"
                          r"|[^/]*credentials[^/]*\.(json|ya?ml|txt)|[^/]*secrets?\.(json|ya?ml|txt|toml))$", re.I)
@@ -93,8 +96,11 @@ def ai_tool_files(files: list[str]) -> dict[str, list[str]]:
     for tool, pats in AI_TOOL_PATTERNS.items():
         for pat in pats:
             for rel in sorted(on_disk):
-                name_match = (rel == pat or rel.endswith("/" + pat)) if not pat.endswith("/") else \
-                             (rel.startswith(pat) or ("/" + pat) in "/" + rel)
+                if "*" in pat:          # a name pattern, matched against the file's name in any folder
+                    name_match = fnmatch.fnmatch(rel.rsplit("/", 1)[-1], pat)
+                else:
+                    name_match = (rel == pat or rel.endswith("/" + pat)) if not pat.endswith("/") else \
+                                 (rel.startswith(pat) or ("/" + pat) in "/" + rel)
                 if name_match and rel not in found[tool]:
                     found[tool].append(rel)
     return {t: v for t, v in found.items() if v}
