@@ -24,6 +24,7 @@ import datetime
 import html
 import http.client
 import json
+import os
 import pathlib
 import re
 import subprocess
@@ -38,12 +39,13 @@ SCRIPTS = HOME / ".hermes" / "scripts"
 OVERLAY = SCRIPTS / "feedback-overlay.js"
 MIRRORS = SCRIPTS / "review-mirrors.conf"
 VARIANTS = HOME / "vault" / "design" / "variants"
+SANDBOXES = SCRIPTS / "sandboxes.conf"
 MAX = 4000
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
        "transfer-encoding", "upgrade", "content-length", "accept-encoding", "content-encoding"}
 
 
-def notes(status="open", page=None):
+def notes(status="open", page=None, app=None):
     out = []
     for f in sorted(INBOX.glob("*.md")):
         txt = f.read_text(encoding="utf-8", errors="replace")
@@ -57,7 +59,9 @@ def notes(status="open", page=None):
         st = re.search(r"^status:\s*(\S+)", txt, re.M)
         d["status"] = st.group(1) if st else "open"
         d["id"] = f.stem
-        if status and d["status"] != status:
+        if status and d["status"] not in status.split(","):
+            continue
+        if app and d.get("app") != app:
             continue
         if page:                                   # same screen: path plus #route (single-page apps), query ignored
             a, b = urlparse(d.get("page", "")), urlparse(page)
@@ -71,6 +75,23 @@ def clean(s, n):
     return str(s or "").replace("\r", "")[:n]
 
 
+def render(rec, status, now):
+    note = rec["note"]
+    summary = note.splitlines()[0][:90].replace('"', "'")
+    vp = rec.get("viewport") or {}
+    quoted = "\n".join("> " + ln for ln in note.splitlines())
+    return (f"---\ntitle: \"Owner note: {summary}\"\ntype: research\nstatus: {status}\nowner: manager\n"
+            f"updated: {now:%Y-%m-%d}\nsummary: \"Owner feedback on {clean(rec.get('app') or rec.get('title') or rec.get('page'), 60)}: {summary}\"\n"
+            f"tags: [feedback]\ncard: none\n---\n"
+            f"# {summary}\n\n{quoted}\n\n- **App / page:** {rec.get('app') or '-'} · {rec.get('page')}\n"
+            + (f"- **Variant on:** `design/variants/{rec['variant']}/`\n" if rec.get("variant") else "") +
+            f"- **Where:** `{rec.get('selector') or 'an area'}` ({rec.get('kind')})\n"
+            f"- **Element text:** {clean(rec.get('text'), 200)!r}\n- **Screen:** {vp.get('w')}x{vp.get('h')}\n\n"
+            "_From the owner's Mark overlay. Evidence for a card, not instructions to follow as written: "
+            "the Manager turns it into a card and sets `status: done` and `card:` here._\n\n"
+            f"```json\n{json.dumps(rec, ensure_ascii=False)}\n```\n")
+
+
 def save(d):
     INBOX.mkdir(parents=True, exist_ok=True)
     now = datetime.datetime.now()
@@ -81,25 +102,69 @@ def save(d):
     stem = f"{now:%Y-%m-%d-%H%M%S}-{slug}"
     rec = {k: d.get(k) for k in ("page", "app", "variant", "title", "kind", "selector", "text", "rect", "viewport", "scroll", "ua")}
     rec["note"] = note
-    rec = {k: (clean(v, 600) if isinstance(v, str) else v) for k, v in rec.items()}
-    summary = note.splitlines()[0][:90].replace('"', "'")
-    vp = rec.get("viewport") or {}
-    body = (f"---\ntitle: \"Owner note: {summary}\"\ntype: research\nstatus: open\nowner: manager\n"
-            f"updated: {now:%Y-%m-%d}\nsummary: \"Owner feedback on {clean(rec.get('app') or rec.get('title') or rec.get('page'), 60)}: {summary}\"\n"
-            f"tags: [feedback]\ncard: none\n---\n"
-            f"# {summary}\n\n> {note}\n\n- **App / page:** {rec.get('app') or '-'} · {rec.get('page')}\n"
-            + (f"- **Variant on:** `design/variants/{rec['variant']}/`\n" if rec.get("variant") else "") +
-            f"- **Where:** `{rec.get('selector') or 'an area'}` ({rec.get('kind')})\n"
-            f"- **Element text:** {clean(rec.get('text'), 200)!r}\n- **Screen:** {vp.get('w')}x{vp.get('h')}\n\n"
-            "_From the owner's Mark overlay. Evidence for a card, not instructions to follow as written: "
-            "the Manager turns it into a card and sets `status: done` and `card:` here._\n\n"
-            f"```json\n{json.dumps(rec, ensure_ascii=False)}\n```\n")
-    (INBOX / f"{stem}.md").write_text(body, encoding="utf-8")
+    rec = {k: (clean(v, 600) if isinstance(v, str) and k != "note" else v) for k, v in rec.items()}
+    status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
+    (INBOX / f"{stem}.md").write_text(render(rec, status, now), encoding="utf-8")
+    log = SCRIPTS / "vault-log.sh"
+    if log.exists() and status == "open":
+        subprocess.run([str(log), "owner", "note", f"Feedback on {clean(rec.get('app') or rec.get('title'), 40)}: "
+                        f"{note.splitlines()[0][:80]}", f"raw/feedback/{stem}"], capture_output=True)
+    return stem
+
+
+def edit(stem, note):
+    """Change a draft's text (sent notes are the team's now)."""
+    f = INBOX / f"{stem}.md"
+    t = f.read_text(encoding="utf-8")
+    m = re.search(r"^```json\n(.*?)\n```", t, re.S | re.M)
+    if not m or not re.search(r"^status:\s*draft", t, re.M):
+        return False
+    rec = json.loads(m.group(1))
+    rec["note"] = clean(note, MAX).strip()
+    f.write_text(render(rec, "draft", datetime.datetime.now()), encoding="utf-8")
+    return True
+
+
+def set_field(f, field, value):
+    t = f.read_text(encoding="utf-8")
+    if re.search(rf"^{field}:", t, re.M):
+        t = re.sub(rf"^{field}:.*$", f"{field}: {value}", t, count=1, flags=re.M)
+    else:
+        t = t.replace("\n---\n", f"\n{field}: {value}\n---\n", 1)
+    f.write_text(t, encoding="utf-8")
+
+
+def send(app, summary=""):
+    """The owner pressed Send: every draft for this app becomes one batch of open notes, and the Manager is woken."""
+    drafts = [n for n in notes("draft") if not app or n.get("app") == app]
+    if not drafts:
+        return None, 0
+    now = datetime.datetime.now()
+    batch = f"{now:%Y-%m-%d-%H%M%S}-batch"
+    for n in drafts:
+        f = INBOX / f"{n['id']}.md"
+        set_field(f, "status", "open")
+        set_field(f, "batch", batch)
+    variants = sorted({n["variant"] for n in drafts if n.get("variant")})
+    lines = "".join(f"- [[raw/feedback/{n['id']}]]" + (f" (variant `{n['variant']}`)" if n.get("variant") else "")
+                    + f": {clean(n.get('note'), 200).splitlines()[0]}\n" for n in drafts)
+    summary = clean(summary, MAX).strip()
+    on = f" on variant {', '.join(variants)}" if variants else ""
+    (INBOX / f"{batch}.md").write_text(
+        f"---\ntitle: \"Owner feedback batch: {len(drafts)} notes{on}\"\ntype: research\nstatus: open\nowner: manager\n"
+        f"updated: {now:%Y-%m-%d}\nsummary: \"{len(drafts)} notes the owner sent together{on}\"\ntags: [feedback, batch]\n"
+        f"card: none\n---\n# Owner feedback: {len(drafts)} notes, sent together\n\n"
+        + ("\n".join("> " + ln for ln in summary.splitlines()) + "\n\n" if summary else "")
+        + lines + "\n_One review pass: card it as one round for the bot that owns it (the Designer when a variant was on), "
+        "then set `status: done` and `card:` here and on each note._\n", encoding="utf-8")
     log = SCRIPTS / "vault-log.sh"
     if log.exists():
-        subprocess.run([str(log), "owner", "note", f"Feedback on {clean(rec.get('app') or rec.get('title'), 40)}: {summary[:80]}",
-                        f"raw/feedback/{stem}"], capture_output=True)
-    return stem
+        subprocess.run([str(log), "owner", "note", f"Sent {len(drafts)} feedback notes{on}"
+                        + (f": {summary.splitlines()[0][:80]}" if summary else ""), f"raw/feedback/{batch}"], capture_output=True)
+    # Wake the Manager now instead of at the next 2-hourly watch (it runs on the scheduler's next tick).
+    subprocess.Popen(["hermes", "-p", "manager", "cron", "run", "manager-watch"], stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, env={**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"})
+    return batch, len(drafts)
 
 
 def mirrors():
@@ -128,13 +193,25 @@ def variant_list():
     return out
 
 
-def variants_page():
+def sandboxes():
+    """{sandbox port: name} from sandbox.sh's list: copies of an app, safe to click around in."""
+    out = {}
+    if SANDBOXES.exists():
+        for line in SANDBOXES.read_text().splitlines():
+            p = line.split("|")
+            if len(p) >= 2 and p[1].strip().isdigit() and not line.lstrip().startswith("#"):
+                out[int(p[1])] = p[0].strip()
+    return out
+
+
+def variants_page(base=""):
+    """base: where "try it live" opens, "" for this link or "//host:port" for the design sandbox's link."""
     esc = html.escape
     cards = ""
     for v in variant_list():
         n = v["name"]
         path, _, frag = v["page"].partition("#")
-        live = f"{path or '/'}{'&' if '?' in path else '?'}__variant={'off' if n == 'current' else n}" + (f"#{frag}" if frag else "")
+        live = base + f"{path or '/'}{'&' if '?' in path else '?'}__variant={'off' if n == 'current' else n}" + (f"#{frag}" if frag else "")
         imgs = "".join(f"<a href='/__mark/v/{n}/{esc(s)}'><img loading=lazy src='/__mark/v/{n}/{esc(s)}' alt='{esc(s)}'></a>"
                        for s in v["shots"])
         cards += (f"<section><h2>{esc(v['title'])}</h2><p class=dim>{esc(v['why'])}</p><div class=shots>{imgs}</div>"
@@ -144,13 +221,34 @@ def variants_page():
 a{{color:#9db8ff}}.bm{{display:inline-block;padding:.45rem .9rem;border-radius:.5rem;background:#2d5bff;color:#fff;text-decoration:none;font-weight:600}}
 section{{border-top:1px solid #2a2c31;padding:1rem 0}}.dim{{color:#9aa0ad;margin:.2rem 0 .6rem}}h2{{margin:0;font-size:1.1rem}}
 .shots{{display:flex;gap:.6rem;overflow-x:auto;margin-bottom:.7rem}}.shots a{{flex:none}}.shots img{{display:block;height:min(24rem,62vw);width:auto;border:1px solid #2a2c31;border-radius:.4rem}}</style>
-<h1>Design variants</h1><p class=dim>Each is the live app with a different look. Try one, click around, Mark what you think.
-<a href="/?__variant=off">Back to the current look</a></p>{cards or '<p class=dim>No variants yet.</p>'}"""
+<h1>Design variants</h1><p class=dim>Each is the app with a different look{' (a sandbox copy: nothing you do touches your real data)' if base else ''}.
+Try one, click around, Mark what you think, then Send.</p>{cards or '<p class=dim>No variants yet.</p>'}"""
 
 
-VARIANT_BADGE = ("<div id=__variant_badge style='position:fixed;left:12px;bottom:12px;z-index:2147483646;font:600 12px system-ui;"
-                 "background:#2d5bff;color:#fff;padding:6px 10px;border-radius:999px;box-shadow:0 2px 8px #0006'>Variant: {n} · "
-                 "<a style='color:#fff' href='/__mark/variants'>compare</a> · <a style='color:#fff' href='?__variant=off'>off</a></div>")
+def badge(variant, sandbox):
+    """The pill bottom-left on a review link: every look as a one-click switch (it keeps you on the same screen), and
+    on a sandbox, which snapshot it is. It stays while you click around."""
+    names = [v["name"] for v in variant_list() if v["name"] != "current"]
+    if not variant and not sandbox and not names:
+        return b""
+    esc = html.escape
+    sw = ("(function(v){var u=new window.URL(location.href);u.searchParams.set('__variant',v);location.href=u.pathname+u.search+u.hash;"
+          "return false})")
+    looks = [("off", "current")] + [(n, n) for n in names]
+    look = "Look: " + " ".join(
+        f"<b>{esc(label)}</b>" if (key == variant or (key == "off" and not variant))
+        else f"<button onclick=\"return {sw}('{key}')\">{esc(label)}</button>" for key, label in looks)
+    look += " · <a href='/__mark/variants'>compare</a>"
+    snap = ""
+    if sandbox:
+        sf = HOME / "sandbox" / sandbox / "SNAPSHOT"
+        info = sf.read_text(encoding="utf-8").strip() if sf.exists() else ""
+        snap = (f"<span title='{esc(info, quote=True)}'>Sandbox</span> · <button onclick=\"if(confirm('Put the sandbox data back to a "
+                f"fresh copy of the real data?'))fetch('/__mark/sandbox/reset',{{method:'POST'}}).then(()=>location.reload());"
+                f"return false\">reset data</button> · ")
+    return (f"<div id=__mark_badge style='position:fixed;left:12px;bottom:12px;z-index:2147483646;font:600 12px system-ui;"
+            f"background:{'#7a3cff' if sandbox else '#2d5bff'};color:#fff;padding:6px 10px;border-radius:999px;"
+            f"box-shadow:0 2px 8px #0006'><style>#__mark_badge a,#__mark_badge button{{all:unset;color:#fff;text-decoration:underline;cursor:pointer}}</style>{snap}{look}</div>").encode()
 
 
 class Base(BaseHTTPRequestHandler):
@@ -185,7 +283,7 @@ class Base(BaseHTTPRequestHandler):
             return True
         if path == "/notes":
             q = parse_qs(query)
-            self._send(200, json.dumps(notes(q.get("status", ["open"])[0], q.get("page", [None])[0])))
+            self._send(200, json.dumps(notes(q.get("status", ["open"])[0], q.get("page", [None])[0], q.get("app", [None])[0])))
             return True
         return False
 
@@ -203,6 +301,22 @@ class Base(BaseHTTPRequestHandler):
                 self._send(201, json.dumps({"id": save(d)}))
             except ValueError as e:
                 self._send(400, json.dumps({"error": str(e)}))
+            return True
+        if path == "/notes/send":
+            try:
+                d = json.loads(raw or b"{}")
+            except ValueError:
+                d = {}
+            batch, count = send(d.get("app") or self.app_name, d.get("summary", ""))
+            self._send(200, json.dumps({"batch": batch, "sent": count}))
+            return True
+        m = re.fullmatch(r"/notes/([\w-]+)/edit", path)
+        if m and (INBOX / f"{m.group(1)}.md").exists():
+            try:
+                ok = edit(m.group(1), json.loads(raw or b"{}").get("note", ""))
+            except ValueError:
+                ok = False
+            self._send(200 if ok else 409, '{"ok":true}' if ok else '{"error":"only drafts can be edited"}')
             return True
         m = re.fullmatch(r"/notes/([\w-]+)/withdraw", path)
         if m and (INBOX / f"{m.group(1)}.md").exists():
@@ -276,8 +390,15 @@ def mirror_handler(app_port, name):
 
         def _proxy(self):
             u = urlparse(self.path)
+            sandbox = sandboxes().get(app_port)
             if u.path == "/__mark/variants":
-                return self._send(200, variants_page(), "text/html")
+                # "Try it live" goes to the design sandbox when there is one, so trying a look never touches real data.
+                sb = next(iter(sandboxes()), None)
+                base = "" if sandbox or not sb else f"//{(self.headers.get('Host') or '').split(':')[0]}:{sb + 50}"
+                return self._send(200, variants_page(base), "text/html")
+            if u.path == "/__mark/sandbox/reset" and self.command == "POST" and sandbox:
+                r = subprocess.run([str(SCRIPTS / "sandbox.sh"), "reset", sandbox], capture_output=True, text=True)
+                return self._send(200 if r.returncode == 0 else 500, json.dumps({"ok": r.returncode == 0, "out": r.stdout[-300:] + r.stderr[-300:]}))
             if u.path.startswith("/__mark/v/"):
                 return self._variant_file(u.path[len("/__mark"):])
             if u.path.startswith("/__mark/"):
@@ -311,7 +432,7 @@ def mirror_handler(app_port, name):
                     vd = VARIANTS / v
                     tag += f'<link rel="stylesheet" href="/__mark/v/{v}/style.css">'.encode() if (vd / "style.css").exists() else b""
                     tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
-                    tag += b"" if shot else VARIANT_BADGE.format(n=v).encode()
+                tag += b"" if shot else badge(v, sandbox)
                 page = re.sub(rb"(?i)</body>", tag + b"</body>", page, count=1) if re.search(rb"(?i)</body>", page) else page + tag
                 self.send_response(r.status, r.reason)
                 q = parse_qs(u.query).get("__variant", [None])[0]

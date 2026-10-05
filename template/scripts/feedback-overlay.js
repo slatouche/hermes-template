@@ -1,6 +1,7 @@
 /* Mark overlay: the owner marks things on a page and the notes go to the project's feedback inbox.
    Loaded by the "Mark" bookmarklet from the inbox (__INBOX__ is filled in when it's served).
    Mark = click an element; Area = drag a box. Type what's wrong, Save (Ctrl+Enter). Esc stops.
+   Saved notes are drafts (amber pins: click one to change or delete it) until Send hands them all to the team at once.
    Everything lives in a shadow root so the page's styles can't touch it, and it never changes the page. */
 (() => {
   if (window.__markLoaded) return;
@@ -20,7 +21,9 @@
     .area{position:fixed;border:2px dashed #ffb02e;background:rgba(255,176,46,.10);pointer-events:none;display:none}
     .pin{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#ff4d6d;color:#fff;
       font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
-      box-shadow:0 2px 8px rgba(0,0,0,.4)}
+      box-shadow:0 2px 8px rgba(0,0,0,.4)}.pin.draft{background:#ffb02e;color:#1a1300}
+    button.send{background:#1e7d4f;color:#fff;font-weight:600;display:none}button.send:hover{background:#249760}
+    button.del{margin-right:auto;background:transparent;color:#ff8095}
     .pop{position:fixed;width:min(340px,calc(100vw - 24px));padding:10px;border-radius:12px;background:#15161a;
       border:1px solid #2a2c33;box-shadow:0 12px 40px rgba(0,0,0,.5);pointer-events:auto;color:#e8e8ea;display:none}
     .pop textarea{width:100%;min-height:90px;resize:vertical;border-radius:8px;border:1px solid #2a2c33;background:#0f1013;
@@ -36,15 +39,20 @@
   </style>
   <div class="hl"></div><div class="area"></div><div class="layer"></div>
   <div class="pop"><div class="what"></div><textarea placeholder="What's wrong, or what should change?"></textarea>
-    <div class="row"><button class="cancel">Cancel</button><button class="save on">Save</button></div></div>
-  <div class="toast">Saved. The team will pick it up.</div>
+    <div class="row"><button class="del">Delete</button><button class="cancel">Cancel</button><button class="save on">Save</button></div></div>
+  <div class="toast"></div>
   <div class="bar"><button class="mark" title="Click an element to mark it">Mark</button>
     <button class="areab" title="Drag a box over an area">Area</button><span class="count"></span>
+    <button class="send" title="Send your draft notes to the team as one piece of feedback"></button>
     <button class="pins" title="Show or hide the numbered notes">Pins</button><button class="close" title="Fold away (click M to bring it back)">×</button></div>
   <div class="fold" title="Open the Mark toolbar">M</div>`;
   const $ = (s) => root.querySelector(s);
   const hl = $(".hl"), area = $(".area"), pop = $(".pop"), layer = $(".layer"), toast = $(".toast");
   let mode = null, target = null, rect = null, start = null, open = [], showPins = true;
+  let editing = null, sending = false, drafts = 0;   // editing: the draft whose pin was clicked; sending: the Send box
+  const APP = "__APP__";
+  const say = (msg) => { toast.textContent = msg; toast.style.display = "block"; setTimeout(() => (toast.style.display = "none"), 2600); };
+  const post = (path, body) => fetch(INBOX + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
   const selectorOf = (el) => {
     if (!el || el === document.body) return "body";
@@ -101,32 +109,58 @@
       ask(`area ${Math.round(rect.w)}×${Math.round(rect.h)}`, e.clientX, e.clientY);
     }
   });
-  const ask = (what, x, y) => {
+  const ask = (what, x, y, text = "", placeholder = "What's wrong, or what should change?") => {
     $(".what").textContent = what;
     pop.style.display = "block";
-    pop.style.left = Math.min(x, innerWidth - pop.offsetWidth - 12) + "px";
-    pop.style.top = Math.min(y + 12, innerHeight - pop.offsetHeight - 12) + "px";
-    $("textarea").value = "";
+    pop.style.left = Math.max(12, Math.min(x, innerWidth - pop.offsetWidth - 12)) + "px";
+    pop.style.top = Math.max(12, Math.min(y + 12, innerHeight - pop.offsetHeight - 12)) + "px";
+    $(".del").style.display = editing ? "" : "none";
+    $(".save").textContent = sending ? "Send" : "Save";
+    $("textarea").placeholder = placeholder;
+    $("textarea").value = text;
     $("textarea").focus();
   };
-  const closePop = () => { pop.style.display = "none"; area.style.display = "none"; hl.style.display = "none"; };
+  const closePop = () => { pop.style.display = "none"; area.style.display = "none"; hl.style.display = "none"; editing = null; sending = false; };
   const save = async () => {
     const note = $("textarea").value.trim();
-    if (!note) return;
-    const body = {
-      page: location.href, app: "__APP__" || undefined, title: document.title, note, kind: target ? "element" : "area",
-      selector: target ? selectorOf(target) : null, text: target ? (target.innerText || target.alt || "").trim().slice(0, 300) : null,
-      rect, viewport: { w: innerWidth, h: innerHeight }, scroll: { x: scrollX, y: scrollY }, ua: navigator.userAgent,
-    };
     try {
-      const r = await fetch(INBOX + "/notes", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-      if (!r.ok) throw new Error(r.status);
-      closePop(); toast.style.display = "block"; setTimeout(() => (toast.style.display = "none"), 1800);
+      if (sending) {                                  // Send: every draft goes to the team as one batch
+        const r = await post("/notes/send", { app: APP || undefined, summary: note });
+        if (!r.ok) throw new Error(r.status);
+        const d = await r.json();
+        closePop(); say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The Manager has them now.` : "Nothing to send.");
+      } else if (editing) {
+        if (!note) return;
+        const r = await post(`/notes/${editing}/edit`, { note });
+        if (!r.ok) throw new Error(r.status);
+        closePop(); say("Draft updated.");
+      } else {
+        if (!note) return;
+        const body = {
+          page: location.href, app: APP || undefined, title: document.title, note, draft: true, kind: target ? "element" : "area",
+          selector: target ? selectorOf(target) : null, text: target ? (target.innerText || target.alt || "").trim().slice(0, 300) : null,
+          rect, viewport: { w: innerWidth, h: innerHeight }, scroll: { x: scrollX, y: scrollY }, ua: navigator.userAgent,
+        };
+        const r = await post("/notes", body);
+        if (!r.ok) throw new Error(r.status);
+        closePop(); say("Saved as a draft. Press Send when you're done.");
+      }
       load();
     } catch (err) { $(".what").textContent = "Couldn't save (" + err.message + "). Is the inbox running?"; }
   };
   $(".save").onclick = save;
   $(".cancel").onclick = closePop;
+  $(".del").onclick = async () => {
+    if (!editing) return;
+    await post(`/notes/${editing}/withdraw`, {});
+    closePop(); say("Draft deleted."); load();
+  };
+  $(".send").onclick = () => {
+    if (!drafts) return;
+    setMode(null); closePop(); sending = true;
+    ask(`Send ${drafts} note${drafts === 1 ? "" : "s"} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
+        "", "Anything to say about them overall? (optional)");
+  };
   $("textarea").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); });
   $(".mark").onclick = () => setMode("mark");
   $(".areab").onclick = () => setMode("area");
@@ -145,20 +179,27 @@
   const draw = () => {
     layer.innerHTML = "";
     layer.style.transform = `translate(${-scrollX}px,${-scrollY}px)`;
-    $(".count").textContent = open.length ? `${open.length} open` : "";
+    const sent = open.filter((n) => n.status === "open").length;
+    $(".count").textContent = sent ? `${sent} sent` : "";
+    $(".send").textContent = `Send ${drafts}`;
+    $(".send").style.display = drafts ? "inline-block" : "none";
     if (!showPins) return;
     open.forEach((n, i) => {
       let x = n.rect && n.rect.x, y = n.rect && n.rect.y;
       try { const el = n.selector && document.querySelector(n.selector); if (el) { const r = el.getBoundingClientRect(); x = r.left + scrollX; y = r.top + scrollY; } } catch (_) {}
       if (x == null) return;
       const p = document.createElement("div");
-      p.className = "pin"; p.textContent = i + 1; p.title = n.note;
+      const draft = n.status === "draft";
+      p.className = "pin" + (draft ? " draft" : ""); p.textContent = i + 1;
+      p.title = (draft ? "Draft (click to change): " : "Sent: ") + n.note;
       p.style.left = x + "px"; p.style.top = y + "px";
+      if (draft) p.onclick = (e) => { e.stopPropagation(); setMode(null); closePop(); editing = n.id; ask("Your draft note", e.clientX, e.clientY, n.note); };
       layer.appendChild(p);
     });
   };
   const load = async () => {
-    try { open = await (await fetch(INBOX + "/notes?page=" + encodeURIComponent(location.href))).json(); } catch (_) { open = []; }
+    try { open = await (await fetch(INBOX + "/notes?status=draft,open&page=" + encodeURIComponent(location.href))).json(); } catch (_) { open = []; }
+    try { drafts = (await (await fetch(INBOX + "/notes?status=draft" + (APP ? "&app=" + encodeURIComponent(APP) : ""))).json()).length; } catch (_) { drafts = 0; }
     draw();
   };
   addEventListener("hashchange", load);           // single-page apps: each #route has its own pins

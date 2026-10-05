@@ -101,11 +101,17 @@ def findings():
 
     fb = HOME / "vault" / "raw" / "feedback"
     if fb.is_dir():
-        waiting = []
+        waiting, batches = [], []
         for p in fb.glob("*.md"):
             t = p.read_text(errors="replace")
             if re.search(r"^status:\s*open", t, re.M) and re.search(r"^card:\s*none", t, re.M):
-                waiting.append(p.stem)
+                if p.stem.endswith("-batch"):
+                    batches.append(p.stem)
+                elif not re.search(r"^batch:", t, re.M):   # notes in a batch are handled through their batch page
+                    waiting.append(p.stem)
+        for b in sorted(batches):
+            f["feedback-batch:" + b] = (f"the owner sent a batch of feedback: raw/feedback/{b}.md (one review pass: "
+                                         "card it as one round for the bot that owns it)")
         if waiting:
             waiting.sort()
             f["feedback:" + waiting[-1]] = (f"{len(waiting)} owner note(s) from the Mark overlay without a card "

@@ -21,6 +21,11 @@ CONF="$HOME/.hermes/scripts/review-mirrors.conf"
 if [ -n "$APP" ]; then PORT=$(grep -v '^\s*#' "$CONF" | grep -i -- "$APP" | awk 'NR==1{print $1}')
 else PORT=$(grep -v '^\s*#' "$CONF" | grep -vi 'design' | awk 'NF>=2 && $1 ~ /^[0-9]+$/ {print $1; exit}'); fi
 [ -n "${PORT:-}" ] || { echo "no review link matches ${APP:-an app} in $CONF" >&2; exit 1; }
+SB="$HOME/.hermes/scripts/sandboxes.conf"     # shoot the design sandbox when there is one (same code snapshot the owner sees)
+if [ -f "$SB" ]; then
+  SPORT=$(grep -v '^\s*#' "$SB" | grep -i -- "${APP:-}" | awk -F'|' 'NR==1{print $2}')
+  [ -n "${SPORT:-}" ] && PORT=$((SPORT + 50))
+fi
 CHROME=$(ls -d "$HOME"/.hermes/tools/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -1)
 [ -x "${CHROME:-}" ] || { echo "no headless Chromium under ~/.hermes/tools (the browser tool installs it on first use)" >&2; exit 1; }
 
