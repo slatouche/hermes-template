@@ -63,6 +63,8 @@ set_env "$ENV" API_SERVER_ENABLED true
 set_env "$ENV" API_SERVER_HOST 127.0.0.1
 set_env "$ENV" API_SERVER_PORT "$API"
 set_env "$ENV" OBSIDIAN_VAULT_PATH "$HOME/vault"
+# The host's shared SearXNG (install-searxng.sh) as web_search, when it answers; else Hermes' keyless fallback.
+if curl -fs -o /dev/null "http://127.0.0.1:8888/search?q=test&format=json"; then set_env "$ENV" SEARXNG_URL "http://127.0.0.1:8888"; fi
 # No WIKI_PATH: Hermes' bundled llm-wiki skill would treat the vault as its own wiki (different rules); it's
 # switched off below. Remove it if an older setup wrote it.
 sed -i '/^WIKI_PATH=/d' "$ENV"
@@ -98,6 +100,7 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
   hermes -p "$p" config set checkpoints.enabled true
   # The vault has its own rules (SCHEMA.md); the bundled llm-wiki skill's conflict with them.
   hermes -p "$p" config set --force skills.disabled '["llm-wiki"]' >/dev/null
+  if grep -q '^SEARXNG_URL=' "$H/.env" 2>/dev/null; then hermes -p "$p" config set web.search_backend searxng >/dev/null; fi
   hermes -p "$p" config set delegation.max_concurrent_children "$DELEGATION_MAX_CHILDREN"
   hermes -p "$p" config set delegation.max_iterations "$DELEGATION_MAX_ITERATIONS"
   hermes -p "$p" config set --force delegation.reasoning_effort "$DELEGATION_EFFORT"
@@ -177,6 +180,7 @@ else
   sed -n '/<!-- user-seed:start -->/,/<!-- user-seed:end -->/p' "$HOME/vault/system/owner-profile.md" \
     | sed '1d;$d' | head -c 1375 > "$P/memories/USER.md"
   sed -i '/^API_SERVER_\(ENABLED\|HOST\|PORT\)=/d' "$P/.env"   # only the default profile serves the API
+  { grep -q '^SEARXNG_URL=' "$ENV" && ! grep -q '^SEARXNG_URL=' "$P/.env" && grep '^SEARXNG_URL=' "$ENV" >> "$P/.env"; } || true
 fi
 # The API reaches the Manager at /p/manager/ with the Manager's own key (one per profile; hires copy it).
 grep -q '^API_SERVER_KEY=.' "$P/.env" 2>/dev/null && ! cmp -s <(grep '^API_SERVER_KEY=' "$P/.env") <(grep '^API_SERVER_KEY=' "$ENV") \

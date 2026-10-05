@@ -92,6 +92,10 @@ else
 fi
 for c in git curl openssl /usr/bin/python3; do command -v "$c" >/dev/null 2>&1 || die "$c is required and could not be installed"; done
 /usr/bin/python3 -c 'import yaml' 2>/dev/null || die "python3-yaml is required and could not be installed"
+if [ "${SEARXNG:-yes}" = yes ]; then
+  step "Web search for the bots (SearXNG, shared by all projects)"
+  bash "$HERE/install-searxng.sh" || echo "warning: SearXNG install failed; bots fall back to Hermes' keyless search"
+fi
 
 # ---------- registry: find or assign the project number ----------
 step "Registry"
