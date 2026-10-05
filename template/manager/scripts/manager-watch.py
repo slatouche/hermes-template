@@ -127,7 +127,9 @@ def findings():
     ws = HOME / "workspace"
     if (ws / ".git").is_dir():
         live = {t.get("branch_name") for t in tasks if t.get("status") not in ("done", "archived")}
-        out = sh("git", "-C", str(ws), "for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/", "--no-merged", "main")
+        main = "main" if sh("git", "-C", str(ws), "show-ref", "--verify", "refs/heads/main") else \
+               (sh("git", "-C", str(ws), "symbolic-ref", "--short", "HEAD").strip() or "master")
+        out = sh("git", "-C", str(ws), "for-each-ref", "--format=%(refname:short) %(committerdate:unix)", "refs/heads/", "--no-merged", main)
         for line in out.splitlines():
             br, _, ts = line.rpartition(" ")
             if re.match(r"^[^/]+/t_[0-9a-f]+", br) and br not in live and ts.isdigit() and NOW - int(ts) > 7 * DAY:
