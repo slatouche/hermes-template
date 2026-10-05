@@ -39,7 +39,7 @@ Context: <vault links, one line>      Review: tester | none
 - **The builder never edits Verification.** Couldn't run a check? Say so and why. Spotted another problem? A `noticed:` line in the handoff, not a fix.
 - **Patch, don't rewrite** files. Nobody is watching: finish every reversible step the card asks for.
 - **Tests stay true:** behaviour changes come with updated or new tests in the same card; tests for removed behaviour are removed. Run the suite with `scripts/run-tests.sh` (failures only).
-- **Need the owner?** `kanban_block(kind="needs_input")` with one question, the options and your recommendation, then stop. It waits as long as it takes; never wait in a loop or ask in a chat nobody is reading.
+- **Need the owner?** Only for what's theirs: product scope or taste, money or risk, something only a person can do, or a gap the vault doesn't settle. Technical and testing calls are the team's: ask the bot that owns it, or decide and record it. Then `kanban_block(kind="needs_input")` with one question, the options and your recommendation, then stop. It waits as long as it takes; never wait in a loop or ask in a chat nobody is reading.
 - **Same check failing three times:** stop, revert to the last good state, and block with what you tried. Never patch over an earlier failed attempt.
 
 ## Card handoff (required on every kanban completion)

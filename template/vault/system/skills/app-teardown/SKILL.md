@@ -16,6 +16,7 @@ metadata:
 Use when a card asks you to study an existing app (a website or tool) so the owner can pick which of its features to build. The output is specs in our own words plus a catalogue the owner picks from, never copied code or assets.
 
 ## The chain (the Manager cards each step; one card per area keeps context small)
+0. **Recon first** (`deep-research` §0): the app's repo, forks and similar tools, and the ways in. If the goal is its assets or engine rather than its features, the probes may be all you need: skip to step 3.
 1. **Inventory.** Tour every screen, panel, menu and option list in the browser. Keep a coverage list in `research/<app>/coverage.md` (area, sub-items, status: to do / done / blocked) and tick items off as you go. Screenshots of each screen. Output: the feature tree.
 2. **Probe each area** (one card each). Try normal and edge inputs; measure outputs (sizes, resolutions, timings, text fitting, layers) with the browser's DOM and computed styles, not by eye. Output: behaviour notes with evidence.
 3. **How it works.** Saved and exported files, the data model, asset declarations, network calls, the public code if there is any. Mark everything **observed** or **inferred**.

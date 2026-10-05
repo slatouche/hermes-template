@@ -43,6 +43,11 @@ Status is one of: `idea` → `shaping` → `ready` → `building` → `shipped`,
 ## Side tracks (ad-hoc work outside the product)
 - **Its own place:** a folder `~/side/<track>/` (outside `workspace/` and git; downloads, scripts, scratch), findings in `research/<track>/`, and its own board (`hermes kanban boards create side-<track>`) so its cards don't crowd the product's.
 - **Bounded:** write the goal, the exit condition ("we have the frame assets and a spec of the frame system") and a cap (cards or days) in the roadmap row before starting.
+- **Runs as a loop, not one big card:**
+  1. **Recon** (one Researcher card, about 30 minutes, `deep-research` §0): the target, its source code and licence, forks and similar projects, the ways in (public repo, the running app in a browser, files it loads, exports), and what's already in the vault. It ends with a short brief: what we know, the open questions, and a recommended plan of probes.
+  2. **Plan:** you turn the brief into small probe cards on the side board, each one question with a yes/no or a measurement as its Verification ("can we load a pack's frame images from the public repo?", "does using the app in a browser expose the art at full size?"). Show the owner the plan only when it costs money, needs their hands, or goes somewhere they'd care about; otherwise just start it.
+  3. **Probe:** the Researcher works the cards like a person would: opens the app in the browser, uses the features, watches what loads, saves and exports, and tries the cheapest route first. Results go to `research/<track>/`.
+  4. **Decide:** a findings page with a recommendation and what it means for the product, then the product work it implies as rows or slices on the roadmap, and one `Owner:` card with the decision that's theirs (adopt, build our own, park). Not a pile of specs to read.
 - **Ends with a clean-up card:** keep the findings (research pages), move anything the product needs into `workspace/` through a proper card (with source and licence noted), then delete `~/side/<track>/`, archive the board, and mark the row `shipped` or `parked`. `manager-watch` flags a side track past its cap.
 
 ## Keep it true
