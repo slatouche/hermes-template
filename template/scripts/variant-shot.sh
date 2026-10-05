@@ -33,6 +33,7 @@ mkdir -p "$DIR"
 base="${PAGE%%#*}"; hash=""; [[ "$PAGE" == *"#"* ]] && hash="#${PAGE#*#}"
 [[ "$base" == *"?"* ]] && sep="&" || sep="?"
 URL="http://127.0.0.1:$PORT${base:-/}${sep}__variant=$SW&__shot=1$hash"
+printf '%s\n' "$PAGE" > "$DIR/page.txt"   # the variants page opens "try it live" on this screen
 slug=$(printf '%s' "$PAGE" | tr -c 'A-Za-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'); slug="${slug:-home}"
 for wh in $WIDTHS; do
   out="$DIR/$slug-${wh%x*}.png"

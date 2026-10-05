@@ -119,8 +119,12 @@ def variant_list():
             note = d / "note.md"
             lines = [ln.strip("# ").strip() for ln in note.read_text(encoding="utf-8", errors="replace").splitlines()
                      if ln.strip() and not ln.startswith("---")] if note.exists() else []
-            out.append({"name": d.name, "title": lines[0] if lines else d.name, "why": " ".join(lines[1:3]),
-                        "shots": sorted(p.name for p in d.glob("*.png"))})
+            pf = d / "page.txt"                        # the screen variant-shot.sh shot, so "try it live" opens there
+            page = pf.read_text(encoding="utf-8").strip() if pf.exists() else "/"
+            out.append({"name": d.name, "title": lines[0] if lines else d.name, "why": " ".join(lines[1:3]), "page": page or "/",
+                        "shots": sorted((p.name for p in d.glob("*.png")),
+                                        key=lambda n: -int(m.group(1)) if (m := re.search(r"-(\d+)\.png$", n)) else 0)})
+    out.sort(key=lambda v: v["name"] != "current")      # today's look first, to compare against
     return out
 
 
@@ -129,15 +133,17 @@ def variants_page():
     cards = ""
     for v in variant_list():
         n = v["name"]
+        path, _, frag = v["page"].partition("#")
+        live = f"{path or '/'}{'&' if '?' in path else '?'}__variant={'off' if n == 'current' else n}" + (f"#{frag}" if frag else "")
         imgs = "".join(f"<a href='/__mark/v/{n}/{esc(s)}'><img loading=lazy src='/__mark/v/{n}/{esc(s)}' alt='{esc(s)}'></a>"
                        for s in v["shots"])
         cards += (f"<section><h2>{esc(v['title'])}</h2><p class=dim>{esc(v['why'])}</p><div class=shots>{imgs}</div>"
-                  f"<a class=bm href='/?__variant={n}'>Try it live</a> <code>{n}</code></section>")
+                  f"<a class=bm href='{esc(live, quote=True)}'>Try it live</a> <code>{n}</code></section>")
     return f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
 <title>Design variants</title><style>body{{font:15px/1.5 system-ui;background:#111214;color:#e8e8ea;margin:0 auto;max-width:90rem;padding:1.5rem 1rem}}
 a{{color:#9db8ff}}.bm{{display:inline-block;padding:.45rem .9rem;border-radius:.5rem;background:#2d5bff;color:#fff;text-decoration:none;font-weight:600}}
 section{{border-top:1px solid #2a2c31;padding:1rem 0}}.dim{{color:#9aa0ad;margin:.2rem 0 .6rem}}h2{{margin:0;font-size:1.1rem}}
-.shots{{display:flex;gap:.6rem;overflow-x:auto;margin-bottom:.7rem}}.shots img{{height:16rem;border:1px solid #2a2c31;border-radius:.4rem}}</style>
+.shots{{display:flex;gap:.6rem;overflow-x:auto;margin-bottom:.7rem}}.shots a{{flex:none}}.shots img{{display:block;height:min(24rem,62vw);width:auto;border:1px solid #2a2c31;border-radius:.4rem}}</style>
 <h1>Design variants</h1><p class=dim>Each is the live app with a different look. Try one, click around, Mark what you think.
 <a href="/?__variant=off">Back to the current look</a></p>{cards or '<p class=dim>No variants yet.</p>'}"""
 
