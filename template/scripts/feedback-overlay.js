@@ -29,6 +29,10 @@
     .toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:#1e7d4f;
       color:#fff;display:none}
     .layer{position:absolute;left:0;top:0}
+    .fold{position:fixed;right:16px;bottom:16px;width:36px;height:36px;border-radius:50%;background:#3d6bff;color:#fff;
+      font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
+      box-shadow:0 6px 20px rgba(0,0,0,.45)}
+    :host(.folded) .bar{display:none}:host(.folded) .fold{display:flex}:host(.folded) .layer{display:none}
   </style>
   <div class="hl"></div><div class="area"></div><div class="layer"></div>
   <div class="pop"><div class="what"></div><textarea placeholder="What's wrong, or what should change?"></textarea>
@@ -36,7 +40,8 @@
   <div class="toast">Saved. The team will pick it up.</div>
   <div class="bar"><button class="mark" title="Click an element to mark it">Mark</button>
     <button class="areab" title="Drag a box over an area">Area</button><span class="count"></span>
-    <button class="pins" title="Show or hide the numbered notes">Pins</button><button class="close" title="Close">×</button></div>`;
+    <button class="pins" title="Show or hide the numbered notes">Pins</button><button class="close" title="Fold away (click M to bring it back)">×</button></div>
+  <div class="fold" title="Open the Mark toolbar">M</div>`;
   const $ = (s) => root.querySelector(s);
   const hl = $(".hl"), area = $(".area"), pop = $(".pop"), layer = $(".layer"), toast = $(".toast");
   let mode = null, target = null, rect = null, start = null, open = [], showPins = true;
@@ -126,7 +131,15 @@
   $(".mark").onclick = () => setMode("mark");
   $(".areab").onclick = () => setMode("area");
   $(".pins").onclick = () => { showPins = !showPins; draw(); };
-  $(".close").onclick = () => { setMode(null); closePop(); host.remove(); window.__markLoaded = false; };
+  // × folds the toolbar into a small "M" button (remembered for this tab); M opens it again. Nothing is lost.
+  const fold = (on) => {
+    if (on) { setMode(null); closePop(); }
+    host.classList.toggle("folded", on);
+    try { sessionStorage.setItem("markFolded", on ? "1" : ""); } catch (_) {}
+  };
+  $(".close").onclick = () => fold(true);
+  $(".fold").onclick = () => fold(false);
+  try { if (sessionStorage.getItem("markFolded")) fold(true); } catch (_) {}
   addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); if (mode) setMode(mode); } }, true);
 
   const draw = () => {
