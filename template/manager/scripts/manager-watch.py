@@ -119,6 +119,11 @@ def findings():
         for d in live:
             if NOW - max((p.stat().st_mtime for p in d.rglob("*")), default=d.stat().st_mtime) > 14 * DAY:
                 f[f"playground-stale:{d.name}"] = f"design playground {d.name} untouched for 14+ days: archive it or ask the owner to pick"
+    va = HOME / "vault" / "design" / "variants"
+    if va.is_dir():
+        for d in va.iterdir():
+            if d.is_dir() and d.name != "current" and NOW - max((p.stat().st_mtime for p in d.rglob("*")), default=d.stat().st_mtime) > 14 * DAY:
+                f[f"variant-stale:{d.name}"] = f"design variant {d.name} unpicked for 14+ days: archive it or ask the owner to pick"
     side = HOME / "side"
     if side.is_dir():
         for d in side.iterdir():

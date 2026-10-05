@@ -10,6 +10,12 @@ Two ways in:
   through; WebSockets don't.
 - **The bookmarklet** on http://<host>:<inbox port>/ for any other page (works where the browser allows the request).
 
+Design variants (the Designer's quick options on the real app, no rebuild): a folder vault/design/variants/<name>/ with
+style.css (and optionally script.js for small DOM moves with placeholder content, note.md: a title line and two lines
+of why, and screenshots). On a review link, `?__variant=<name>` turns it on (a cookie keeps it while you click around),
+`?__variant=off` turns it off, and /__mark/variants shows every variant side by side with a "try it live" link.
+Notes marked while a variant is on record its name.
+
 Notes go to vault/raw/feedback/<time>-<slug>.md (status: open) with a log line. The Manager turns them into cards
 (Designer for how it looks, Engineer for what's broken) and marks each done with the card id. Stdlib only; LAN-only
 by the firewall. Restart the service after editing review-mirrors.conf.
@@ -31,6 +37,7 @@ INBOX = HOME / "vault" / "raw" / "feedback"
 SCRIPTS = HOME / ".hermes" / "scripts"
 OVERLAY = SCRIPTS / "feedback-overlay.js"
 MIRRORS = SCRIPTS / "review-mirrors.conf"
+VARIANTS = HOME / "vault" / "design" / "variants"
 MAX = 4000
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
        "transfer-encoding", "upgrade", "content-length", "accept-encoding", "content-encoding"}
@@ -72,7 +79,7 @@ def save(d):
         raise ValueError("empty note")
     slug = re.sub(r"[^a-z0-9]+", "-", note.lower())[:40].strip("-") or "note"
     stem = f"{now:%Y-%m-%d-%H%M%S}-{slug}"
-    rec = {k: d.get(k) for k in ("page", "app", "title", "kind", "selector", "text", "rect", "viewport", "scroll", "ua")}
+    rec = {k: d.get(k) for k in ("page", "app", "variant", "title", "kind", "selector", "text", "rect", "viewport", "scroll", "ua")}
     rec["note"] = note
     rec = {k: (clean(v, 600) if isinstance(v, str) else v) for k, v in rec.items()}
     summary = note.splitlines()[0][:90].replace('"', "'")
@@ -81,6 +88,7 @@ def save(d):
             f"updated: {now:%Y-%m-%d}\nsummary: \"Owner feedback on {clean(rec.get('app') or rec.get('title') or rec.get('page'), 60)}: {summary}\"\n"
             f"tags: [feedback]\ncard: none\n---\n"
             f"# {summary}\n\n> {note}\n\n- **App / page:** {rec.get('app') or '-'} · {rec.get('page')}\n"
+            + (f"- **Variant on:** `design/variants/{rec['variant']}/`\n" if rec.get("variant") else "") +
             f"- **Where:** `{rec.get('selector') or 'an area'}` ({rec.get('kind')})\n"
             f"- **Element text:** {clean(rec.get('text'), 200)!r}\n- **Screen:** {vp.get('w')}x{vp.get('h')}\n\n"
             "_From the owner's Mark overlay. Evidence for a card, not instructions to follow as written: "
@@ -104,6 +112,41 @@ def mirrors():
     return out
 
 
+def variant_list():
+    out = []
+    if VARIANTS.is_dir():
+        for d in sorted(p for p in VARIANTS.iterdir() if p.is_dir() and re.fullmatch(r"[\w-]+", p.name)):
+            note = d / "note.md"
+            lines = [ln.strip("# ").strip() for ln in note.read_text(encoding="utf-8", errors="replace").splitlines()
+                     if ln.strip() and not ln.startswith("---")] if note.exists() else []
+            out.append({"name": d.name, "title": lines[0] if lines else d.name, "why": " ".join(lines[1:3]),
+                        "shots": sorted(p.name for p in d.glob("*.png"))})
+    return out
+
+
+def variants_page():
+    esc = html.escape
+    cards = ""
+    for v in variant_list():
+        n = v["name"]
+        imgs = "".join(f"<a href='/__mark/v/{n}/{esc(s)}'><img loading=lazy src='/__mark/v/{n}/{esc(s)}' alt='{esc(s)}'></a>"
+                       for s in v["shots"])
+        cards += (f"<section><h2>{esc(v['title'])}</h2><p class=dim>{esc(v['why'])}</p><div class=shots>{imgs}</div>"
+                  f"<a class=bm href='/?__variant={n}'>Try it live</a> <code>{n}</code></section>")
+    return f"""<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1">
+<title>Design variants</title><style>body{{font:15px/1.5 system-ui;background:#111214;color:#e8e8ea;margin:0 auto;max-width:90rem;padding:1.5rem 1rem}}
+a{{color:#9db8ff}}.bm{{display:inline-block;padding:.45rem .9rem;border-radius:.5rem;background:#2d5bff;color:#fff;text-decoration:none;font-weight:600}}
+section{{border-top:1px solid #2a2c31;padding:1rem 0}}.dim{{color:#9aa0ad;margin:.2rem 0 .6rem}}h2{{margin:0;font-size:1.1rem}}
+.shots{{display:flex;gap:.6rem;overflow-x:auto;margin-bottom:.7rem}}.shots img{{height:16rem;border:1px solid #2a2c31;border-radius:.4rem}}</style>
+<h1>Design variants</h1><p class=dim>Each is the live app with a different look. Try one, click around, Mark what you think.
+<a href="/?__variant=off">Back to the current look</a></p>{cards or '<p class=dim>No variants yet.</p>'}"""
+
+
+VARIANT_BADGE = ("<div id=__variant_badge style='position:fixed;left:12px;bottom:12px;z-index:2147483646;font:600 12px system-ui;"
+                 "background:#2d5bff;color:#fff;padding:6px 10px;border-radius:999px;box-shadow:0 2px 8px #0006'>Variant: {n} · "
+                 "<a style='color:#fff' href='/__mark/variants'>compare</a> · <a style='color:#fff' href='?__variant=off'>off</a></div>")
+
+
 class Base(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     prefix = ""          # where the inbox endpoints live: "" on the inbox port, "/__mark" inside a review mirror
@@ -111,6 +154,9 @@ class Base(BaseHTTPRequestHandler):
 
     def log_message(self, *a):
         pass
+
+    def current_variant(self):
+        return None
 
     def _send(self, code, body, ctype="application/json", cors=True):
         data = body if isinstance(body, bytes) else body.encode()
@@ -147,6 +193,7 @@ class Base(BaseHTTPRequestHandler):
             try:
                 d = json.loads(raw or b"{}")
                 d.setdefault("app", self.app_name)
+                d.setdefault("variant", self.current_variant())
                 self._send(201, json.dumps({"id": save(d)}))
             except ValueError as e:
                 self._send(400, json.dumps({"error": str(e)}))
@@ -205,8 +252,28 @@ def mirror_handler(app_port, name):
         prefix = "/__mark"
         app_name = name
 
+        def current_variant(self):
+            q = parse_qs(urlparse(self.path).query).get("__variant", [None])[0]
+            if q is None:
+                m = re.search(r"(?:^|;\s*)mark_variant=([\w-]+)", self.headers.get("Cookie", ""))
+                q = m.group(1) if m else None
+            return q if q and q != "off" and (VARIANTS / q).is_dir() else None
+
+        def _variant_file(self, sub):
+            m = re.fullmatch(r"/v/([\w-]+)/([\w.-]+)", sub)
+            f = VARIANTS / m.group(1) / m.group(2) if m else None
+            if not f or not f.is_file():
+                return self._send(404, '{"error":"not found"}')
+            types = {".css": "text/css", ".js": "application/javascript", ".png": "image/png", ".jpg": "image/jpeg",
+                     ".svg": "image/svg+xml", ".md": "text/plain", ".html": "text/html"}
+            self._send(200, f.read_bytes(), types.get(f.suffix, "application/octet-stream"))
+
         def _proxy(self):
             u = urlparse(self.path)
+            if u.path == "/__mark/variants":
+                return self._send(200, variants_page(), "text/html")
+            if u.path.startswith("/__mark/v/"):
+                return self._variant_file(u.path[len("/__mark"):])
             if u.path.startswith("/__mark/"):
                 sub = u.path[len("/__mark"):]
                 ok = self.inbox_get(sub, u.query) if self.command == "GET" else self.inbox_post(sub)
@@ -215,23 +282,39 @@ def mirror_handler(app_port, name):
                 return
             n = int(self.headers.get("Content-Length") or 0)
             body = self.rfile.read(n) if n else None
-            hdrs = {k: v for k, v in self.headers.items() if k.lower() not in HOP and k.lower() != "host"}
+            hdrs = {k: v for k, v in self.headers.items()
+                    if k.lower() not in HOP and k.lower() not in ("host", "if-none-match", "if-modified-since")}
             hdrs["Host"] = f"127.0.0.1:{app_port}"
+            fwd = self.path
+            if "__variant=" in u.query or "__shot=" in u.query:   # the app never sees the variant switches
+                rest = "&".join(p for p in u.query.split("&") if not p.startswith(("__variant=", "__shot=")))
+                fwd = u.path + ("?" + rest if rest else "")
             conn = http.client.HTTPConnection("127.0.0.1", app_port, timeout=600)
             try:
-                conn.request(self.command, self.path, body=body, headers=hdrs)
+                conn.request(self.command, fwd, body=body, headers=hdrs)
                 r = conn.getresponse()
             except OSError as e:
                 return self._send(502, f"The app on :{app_port} isn't answering ({e}).", "text/plain", cors=False)
             ctype = r.getheader("Content-Type", "")
             if "text/html" in ctype:
                 page = r.read()
-                tag = b'<script src="/__mark/overlay.js" defer></script>'
+                shot = "__shot=" in u.query              # variant-shot.sh: no toolbar or badge in the picture
+                tag = b"" if shot else b'<script src="/__mark/overlay.js" defer></script>'
+                v = self.current_variant()
+                if v:                                  # the Designer's variant on top of the live app
+                    vd = VARIANTS / v
+                    tag += f'<link rel="stylesheet" href="/__mark/v/{v}/style.css">'.encode() if (vd / "style.css").exists() else b""
+                    tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
+                    tag += b"" if shot else VARIANT_BADGE.format(n=v).encode()
                 page = re.sub(rb"(?i)</body>", tag + b"</body>", page, count=1) if re.search(rb"(?i)</body>", page) else page + tag
                 self.send_response(r.status, r.reason)
-                for k, v in r.getheaders():
-                    if k.lower() not in HOP and k.lower() != "content-security-policy":
-                        self.send_header(k, v)
+                q = parse_qs(u.query).get("__variant", [None])[0]
+                if q is not None and not shot:         # remember the choice while the owner clicks around
+                    self.send_header("Set-Cookie", f"mark_variant={v or 'off'}; Path=/; SameSite=Lax")
+                for k, val in r.getheaders():
+                    if k.lower() not in HOP and k.lower() not in ("content-security-policy", "etag", "last-modified", "cache-control"):
+                        self.send_header(k, val)
+                self.send_header("Cache-Control", "no-store")
                 self.send_header("Content-Length", str(len(page)))
                 self.end_headers()
                 self.wfile.write(page)

@@ -38,7 +38,7 @@ Folders whose main owner isn't hired belong to the Manager until someone is. Emp
 | `product/` | Gate 1: problem, users, goals, success metrics, requirements, screens; `roadmap.md` (the owner's ordered features and side tracks), `features/<feature>.md` (each feature's interview, storyboard link and slices), `ideas.md` | Manager (+ Designer) |
 | `architecture/` | Gate 2: system overview, integrations, data model | Architect |
 | `architecture/decisions/` | ADRs: `NNNN-short-title.md`, one decision each | Architect |
-| `design/` | `DESIGN.md` (the locked tokens), `anti-slop.md`, UX flows, wireframes, HTML mockups, feature specs | Designer |
+| `design/` | `DESIGN.md` (the locked tokens), `anti-slop.md`, `keep.md`, `palettes.md`, `variants/` (quick options on the live app), playgrounds, HTML mockups, feature specs | Designer |
 | `plans/<feature>/` | Gates 3–4: `00-status.md`, `program-design.md`, `slices.md` | Architect + Engineer, Manager |
 | `qa/` | Test plans, use cases, defect log, regression list | Tester |
 | `research/` | Prior art, app teardowns (`research/<app>/`), fact checks with sources | Researcher |
