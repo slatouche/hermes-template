@@ -143,6 +143,7 @@ EOF
   hermes -p "$ROLE" config set --force skills.disabled '["llm-wiki"]' >/dev/null   # the vault has its own rules
   hermes -p "$ROLE" tools enable kanban >/dev/null
   hermes -p "$ROLE" tools enable --platform discord kanban >/dev/null
+  hermes -p "$ROLE" tools enable --platform api_server kanban >/dev/null
   hermes -p "$ROLE" project create "$PROJECT" "$HOME/workspace" --use >/dev/null
 
   echo "==> Adding $DNAME to the team table"

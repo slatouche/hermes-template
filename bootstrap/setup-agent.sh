@@ -104,6 +104,7 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
   # Every bot needs the board tools in chats (CLI/Desktop and Discord); story-maker's Manager had them off.
   hermes -p "$p" tools enable kanban >/dev/null
   hermes -p "$p" tools enable --platform discord kanban >/dev/null
+  hermes -p "$p" tools enable --platform api_server kanban >/dev/null   # chats through the local API
 }
 apply_learning_settings default "$COMPRESSION_MANAGER_TOKENS"
 

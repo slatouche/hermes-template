@@ -50,6 +50,9 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 - Review: `kanban_request_review(reviewer="<bot>")` names the reviewer; without it the card stays with its builder.
 - After a crash or reboot, cards whose worker died go back to ready and re-run.
 
+## Apps the owner uses
+Anything the owner opens (an app, a page, an API) runs as a systemd user service in `~/.config/systemd/user/<name>.service` (`Restart=always`, enabled; it starts at boot without anyone logged in, because linger is on), on a port in the project's block, reachable from the LAN. The unit file is tracked in the memory repo. Restart it after a change: `systemctl --user restart <name>`.
+
 ## Cron jobs (default profile, no model tokens)
 | Job | When | Does |
 |---|---|---|

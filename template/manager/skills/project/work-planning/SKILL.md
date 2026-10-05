@@ -20,8 +20,9 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
 2. **Verification comes from the test plan** (`qa/<feature>/test-plan.md` when there's a Tester), copied verbatim. The owner approves the plan's checks once, in plain words, **before** the build starts: create the build card with `initial_status="blocked"` (or a parent the approval unblocks), show the owner the checks as a short list, then set the plan to `status: approved` and unblock. Without a Tester, write 2–5 checks yourself: a command and its exact expected output, plus one "reachable from the running app" check.
 3. **Title at most 50 characters, no trailing punctuation** (the branch name is built from it; a long one can end in "." and git refuses it).
 4. **Settings:** `idempotency_key` (so a retry doesn't duplicate), `max_runtime_seconds` 3600 for code, 1800 for research and docs; workspace `worktree` for code, `dir` on `~/workspace` for docs and vault work; `skills=[...]` only for task-specific skills. Don't pin a model on a card that goes to review (the pin applies to the review run too).
-5. **Order with parents, not hope.** No two cards that can run at once own the same paths.
-6. **Review by rule** (put `Review:` in the card's Context line):
+5. **Things the owner opens stay up.** When a card builds or changes something the owner uses (an app, a web page, an API), its Verification includes reaching it from the owner's network (`http://<host address>:<port in the project's block>`), and it runs as a systemd user service (`~/.config/systemd/user/<name>.service`, `Restart=always`, enabled, so it survives crashes and reboots; no sudo needed). After a change lands, the service is restarted. A process started in a terminal is gone when the card ends.
+6. **Order with parents, not hope.** No two cards that can run at once own the same paths.
+7. **Review by rule** (put `Review:` in the card's Context line):
 
    | Work | Review |
    |---|---|
@@ -29,7 +30,7 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
    | docs, research, vault-only | `none`: you read the handoff |
 
    With a Tester, the builder calls `kanban_request_review(reviewer="tester")`; the Tester's approval completes the build card, so also create a **land card** (parent: the build card, assignee: the Engineer): merge to main, run `scripts/run-tests.sh`, update docs, complete.
-7. **Goal mode is the exception.** Only when it repeats, the budget allows, a command decides it, and the worker can run what it built; then `goal_max_turns: 6`, never on slice 1. Its judge reads only 2,000 characters of the card, so keep the card short.
+8. **Goal mode is the exception.** Only when it repeats, the budget allows, a command decides it, and the worker can run what it built; then `goal_max_turns: 6`, never on slice 1. Its judge reads only 2,000 characters of the card, so keep the card short.
 
 ## When work comes back
 - **Done:** read the handoff. Check every `Verified:` line against the card's Verification, and that every output the card promised exists and isn't empty (`ls -l`). Missing, empty or vague: send it back with one line saying which.

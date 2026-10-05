@@ -25,6 +25,13 @@
 !/.hermes/profiles/*/cron/
 /.hermes/profiles/*/cron/*
 !/.hermes/profiles/*/cron/jobs.json
+!/.config/
+/.config/*
+!/.config/systemd/
+/.config/systemd/*
+!/.config/systemd/user/
+/.config/systemd/user/*
+!/.config/systemd/user/*.service
 # never, anywhere
 .env
 *.env
