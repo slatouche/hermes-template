@@ -148,8 +148,11 @@
     try { open = await (await fetch(INBOX + "/notes?page=" + encodeURIComponent(location.href))).json(); } catch (_) { open = []; }
     draw();
   };
+  addEventListener("hashchange", load);           // single-page apps: each #route has its own pins
   addEventListener("scroll", draw, { passive: true });
   addEventListener("resize", draw);
   load();
-  setMode("mark");
+  // From the bookmarklet the owner clicked to mark something: start in Mark mode. On a review link the
+  // toolbar just waits, so the app works normally until the owner presses Mark.
+  if (!INBOX.startsWith("/")) setMode("mark");
 })();

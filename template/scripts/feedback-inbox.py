@@ -52,8 +52,10 @@ def notes(status="open", page=None):
         d["id"] = f.stem
         if status and d["status"] != status:
             continue
-        if page and urlparse(d.get("page", "")).path != urlparse(page).path:
-            continue
+        if page:                                   # same screen: path plus #route (single-page apps), query ignored
+            a, b = urlparse(d.get("page", "")), urlparse(page)
+            if (a.path, a.fragment) != (b.path, b.fragment):
+                continue
         out.append(d)
     return out
 
