@@ -18,7 +18,7 @@ if [ -d "$DIR/.git" ]; then
 elif [ -d "$REPO" ]; then
   rm -rf "$DIR"; cp -r "$REPO" "$DIR"            # a local copy (testing a template change before it's pushed)
 else
-  git clone -q "$REPO" "$DIR"
+  rm -rf "$DIR"; git clone -q "$REPO" "$DIR"   # also replaces a non-git copy left by a test
 fi
 chown -R root:root "$DIR"; chmod -R go-w "$DIR"
 install -d -m 755 /etc/hermes
