@@ -60,7 +60,8 @@ def main() -> int:
         for name, rx in HIDDEN:
             if rx.search(text):
                 found.append(f"{rel}: {name}")
-        for m in COMMENT.finditer(text):
+        # Comments hide text only where a reader sees the rendered page (Markdown); in HTML templates they're normal.
+        for m in (COMMENT.finditer(text) if f.suffix.lower() in (".md", ".txt") else []):
             if len(m.group(1).strip()) > 40:
                 found.append(f"{rel}: HTML comment with text in it (hidden from a reader, not from a bot): {m.group(1).strip()[:80]!r}")
         for n, line in enumerate(text.splitlines(), 1):
