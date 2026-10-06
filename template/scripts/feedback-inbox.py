@@ -226,29 +226,18 @@ Try one, click around, Mark what you think, then Send.</p>{cards or '<p class=di
 
 
 def badge(variant, sandbox):
-    """The pill bottom-left on a review link: every look as a one-click switch (it keeps you on the same screen), and
-    on a sandbox, which snapshot it is. It stays while you click around."""
+    """What the Mark overlay's look badge shows (bottom-left): every look as a one-click switch, and on a sandbox, which
+    snapshot it is. The overlay draws it in its own layer, so the app can't swallow its clicks, and it folds away."""
     names = [v["name"] for v in variant_list() if v["name"] != "current"]
     if not variant and not sandbox and not names:
         return b""
-    esc = html.escape
-    sw = ("(function(v){var u=new window.URL(location.href);u.searchParams.set('__variant',v);location.href=u.pathname+u.search+u.hash;"
-          "return false})")
-    looks = [("off", "current")] + [(n, n) for n in names]
-    look = "Look: " + " ".join(
-        f"<b>{esc(label)}</b>" if (key == variant or (key == "off" and not variant))
-        else f"<button onclick=\"return {sw}('{key}')\">{esc(label)}</button>" for key, label in looks)
-    look += " · <a href='/__mark/variants'>compare</a>"
-    snap = ""
+    info = None
     if sandbox:
         sf = HOME / "sandbox" / sandbox / "SNAPSHOT"
-        info = sf.read_text(encoding="utf-8").strip() if sf.exists() else ""
-        snap = (f"<span title='{esc(info, quote=True)}'>Sandbox</span> · <button onclick=\"if(confirm('Put the sandbox data back to a "
-                f"fresh copy of the real data?'))fetch('/__mark/sandbox/reset',{{method:'POST'}}).then(()=>location.reload());"
-                f"return false\">reset data</button> · ")
-    return (f"<div id=__mark_badge style='position:fixed;left:12px;bottom:12px;z-index:2147483646;font:600 12px system-ui;"
-            f"background:{'#7a3cff' if sandbox else '#2d5bff'};color:#fff;padding:6px 10px;border-radius:999px;"
-            f"box-shadow:0 2px 8px #0006'><style>#__mark_badge a,#__mark_badge button{{all:unset;color:#fff;text-decoration:underline;cursor:pointer}}</style>{snap}{look}</div>").encode()
+        info = sf.read_text(encoding="utf-8").strip() if sf.exists() else "a copy of the app"
+    cfg = {"variant": variant, "looks": names, "sandbox": info}
+    data = json.dumps(cfg).replace("<", "\\u003c")
+    return f"<script>window.__markBadge={data}</script>".encode()
 
 
 class Base(BaseHTTPRequestHandler):
@@ -433,7 +422,7 @@ def mirror_handler(app_port, name):
                     tag += f'<link rel="stylesheet" href="/__mark/v/{v}/style.css">'.encode() if (vd / "style.css").exists() else b""
                     tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
                 tag += b"" if shot else badge(v, sandbox)
-                page = re.sub(rb"(?i)</body>", tag + b"</body>", page, count=1) if re.search(rb"(?i)</body>", page) else page + tag
+                page = re.sub(rb"(?i)</body>", lambda m: tag + m.group(0), page, count=1) if re.search(rb"(?i)</body>", page) else page + tag
                 self.send_response(r.status, r.reason)
                 q = parse_qs(u.query).get("__variant", [None])[0]
                 if q is not None and not shot:         # remember the choice while the owner clicks around

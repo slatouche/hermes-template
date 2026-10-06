@@ -36,7 +36,16 @@
       font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
       box-shadow:0 6px 20px rgba(0,0,0,.45)}
     :host(.folded) .bar{display:none}:host(.folded) .fold{display:flex}:host(.folded) .layer{display:none}
+    .pop{z-index:5}.toast{z-index:6}.bar,.fold,.look{z-index:2;touch-action:none}
+    .look{position:fixed;left:16px;bottom:16px;display:none;align-items:center;gap:6px;flex-wrap:wrap;max-width:calc(100vw - 32px);
+      padding:5px 6px 5px 12px;border-radius:999px;background:#2d5bff;color:#fff;font-weight:600;font-size:12px;
+      box-shadow:0 6px 20px rgba(0,0,0,.45);pointer-events:auto;cursor:grab}
+    .look.sb{background:#7a3cff}.look button{all:unset;cursor:pointer;text-decoration:underline;font:inherit;color:#fff}
+    .look b{font:inherit;text-decoration:none;background:rgba(255,255,255,.22);padding:1px 7px;border-radius:999px}
+    .look .min{text-decoration:none;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.25);text-align:center;line-height:20px}
+    .look.small{padding:0;width:32px;height:32px;justify-content:center}.look.small>*{display:none}.look.small>.min{display:block;background:none;width:32px;height:32px;line-height:32px}
   </style>
+  <div class="look"></div>
   <div class="hl"></div><div class="area"></div><div class="layer"></div>
   <div class="pop"><div class="what"></div><textarea placeholder="What's wrong, or what should change?"></textarea>
     <div class="row"><button class="del">Delete</button><button class="cancel">Cancel</button><button class="save on">Save</button></div></div>
@@ -53,6 +62,60 @@
   const APP = "__APP__";
   const say = (msg) => { toast.textContent = msg; toast.style.display = "block"; setTimeout(() => (toast.style.display = "none"), 2600); };
   const post = (path, body) => fetch(INBOX + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const store = (k, v) => { try { v === undefined ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (_) {} };
+  const recall = (k) => { try { return sessionStorage.getItem(k); } catch (_) { return null; } };
+
+  // Drag the toolbar, the M button and the look badge out of the way of the app's own buttons (remembered for this tab).
+  const draggable = (el, key) => {
+    const put = (x, y) => {
+      x = Math.max(4, Math.min(x, innerWidth - el.offsetWidth - 4)); y = Math.max(4, Math.min(y, innerHeight - el.offsetHeight - 4));
+      Object.assign(el.style, { left: x + "px", top: y + "px", right: "auto", bottom: "auto" });
+    };
+    const saved = recall(key);
+    if (saved) { const [x, y] = saved.split(",").map(Number); requestAnimationFrame(() => put(x, y)); }
+    el.addEventListener("pointerdown", (e) => {
+      if (e.target.closest("button") && !el.classList.contains("small")) return;
+      const r = el.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
+      let moved = false;
+      const move = (m) => { moved = true; put(m.clientX - dx, m.clientY - dy); };
+      const up = () => {
+        removeEventListener("pointermove", move); removeEventListener("pointerup", up);
+        if (moved) { const q = el.getBoundingClientRect(); store(key, `${q.left},${q.top}`); el.dataset.dragged = "1"; setTimeout(() => delete el.dataset.dragged, 0); }
+      };
+      addEventListener("pointermove", move); addEventListener("pointerup", up);
+    });
+  };
+
+  // The look badge: which look is on (one click switches it, on the same screen) and, on a design sandbox, its snapshot.
+  const look = $(".look"), cfg = window.__markBadge;
+  if (cfg) {
+    const sw = (v) => { const u = new URL(location.href); u.searchParams.set("__variant", v); location.href = u.pathname + u.search + u.hash; };
+    const add = (tag, text, fn) => { const n = document.createElement(tag); n.textContent = text; if (fn) n.onclick = fn; look.appendChild(n); return n; };
+    look.classList.toggle("sb", !!cfg.sandbox);
+    if (cfg.sandbox) {
+      add("span", "Sandbox").title = cfg.sandbox + " · a copy: nothing here touches your real data";
+      add("button", "reset data", () => {
+        if (confirm("Put the sandbox data back to a fresh copy of the real data?"))
+          fetch(INBOX + "/sandbox/reset", { method: "POST" }).then(() => location.reload());
+      });
+    }
+    if (cfg.looks.length) {
+      add("span", "Look:");
+      [["off", "current"], ...cfg.looks.map((n) => [n, n])].forEach(([key, label]) =>
+        key === (cfg.variant || "off") ? add("b", label) : add("button", label, () => sw(key)));
+      add("button", "compare", () => (location.href = "/__mark/variants"));
+    }
+    const min = add("button", "–", () => {
+      if (look.dataset.dragged) return;
+      const small = !look.classList.contains("small");
+      look.classList.toggle("small", small); min.textContent = small ? (cfg.sandbox ? "S" : "V") : "–";
+      min.title = small ? "Show the look badge" : "Make it small"; store("markLookSmall", small ? "1" : undefined);
+    });
+    min.className = "min"; min.title = "Make it small";
+    look.style.display = "flex";
+    if (recall("markLookSmall")) min.onclick();
+    draggable(look, "markLookPos");
+  }
 
   const selectorOf = (el) => {
     if (!el || el === document.body) return "body";
@@ -172,7 +235,9 @@
     try { sessionStorage.setItem("markFolded", on ? "1" : ""); } catch (_) {}
   };
   $(".close").onclick = () => fold(true);
-  $(".fold").onclick = () => fold(false);
+  $(".fold").onclick = () => { if (!$(".fold").dataset.dragged) fold(false); };
+  draggable($(".bar"), "markBarPos");
+  draggable($(".fold"), "markFoldPos");
   try { if (sessionStorage.getItem("markFolded")) fold(true); } catch (_) {}
   addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); if (mode) setMode(mode); } }, true);
 
