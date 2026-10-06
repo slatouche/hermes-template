@@ -32,6 +32,7 @@
     .toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:#1e7d4f;
       color:#fff;display:none}
     .layer{position:absolute;left:0;top:0}
+    .box{position:absolute;border:1.5px dashed #ff4d6d;border-radius:4px;pointer-events:none}.box.draft{border-color:#ffb02e}
     .fold{position:fixed;right:16px;bottom:16px;width:36px;height:36px;border-radius:50%;background:#3d6bff;color:#fff;
       font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
       box-shadow:0 6px 20px rgba(0,0,0,.45)}
@@ -159,6 +160,7 @@
   });
   host.addEventListener("mouseup", (e) => {
     if (e.composedPath().some((n) => n === pop || n === $(".bar"))) return;
+    editing = null; sending = false;                 // a new mark is always a new note, never an edit or a Send
     if (mode === "mark") {
       target = underPointer(e.clientX, e.clientY);
       const r = target.getBoundingClientRect();
@@ -169,9 +171,54 @@
       rect = { x: x + scrollX, y: y + scrollY, w: Math.abs(e.clientX - start.x), h: Math.abs(e.clientY - start.y) };
       start = null; target = null;
       if (rect.w < 6 || rect.h < 6) { area.style.display = "none"; return; }
-      ask(`area ${Math.round(rect.w)}×${Math.round(rect.h)}`, e.clientX, e.clientY);
+      boxInfo = describeArea({ left: x, top: y, width: rect.w, height: rect.h });
+      const names = boxInfo.elements.slice(0, 3).map((el) => el.text || el.selector.split(" > ").pop()).join(", ");
+      ask(`area: ${boxInfo.elements.length} element${boxInfo.elements.length === 1 ? "" : "s"}${names ? " (" + names + ")" : ""}`, e.clientX, e.clientY);
     }
   });
+  // An area note keeps what's in it (the elements mostly inside the box) and an anchor: the smallest element that
+  // contains the box, with the box as fractions of it, so the box and its pin follow the page as it scrolls or reflows.
+  let boxInfo = null;
+  const describeArea = (b) => {
+    const inside = [], seen = new Set();
+    host.style.pointerEvents = "none";
+    for (const el of document.body.querySelectorAll("*")) {
+      const r = el.getBoundingClientRect();
+      if (!r.width || !r.height || r.width * r.height < 64) continue;
+      const label = (el.innerText || el.alt || el.getAttribute("aria-label") || el.title || "").trim();
+      if (!label && !/^(IMG|SVG|CANVAS|VIDEO|INPUT|SELECT|TEXTAREA)$/i.test(el.tagName)) continue;   // skip empty wrappers and handles
+      const ix = Math.max(0, Math.min(r.right, b.left + b.width) - Math.max(r.left, b.left));
+      const iy = Math.max(0, Math.min(r.bottom, b.top + b.height) - Math.max(r.top, b.top));
+      if ((ix * iy) / (r.width * r.height) < 0.8) continue;
+      if ([...seen].some((p) => p.contains(el))) continue;       // keep the outermost element of each group
+      seen.add(el);
+      inside.push({ selector: selectorOf(el), text: (el.innerText || el.alt || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 60) });
+      if (inside.length >= 12) break;
+    }
+    let a = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
+    host.style.pointerEvents = "auto";
+    while (a && a !== document.body) {
+      const r = a.getBoundingClientRect();
+      if (r.left <= b.left + 1 && r.top <= b.top + 1 && r.right >= b.left + b.width - 1 && r.bottom >= b.top + b.height - 1) break;
+      a = a.parentElement;
+    }
+    a = a || document.body;
+    const ar = a.getBoundingClientRect();
+    const rel = { x: (b.left - ar.left) / ar.width, y: (b.top - ar.top) / ar.height, w: b.width / ar.width, h: b.height / ar.height };
+    return { elements: inside, anchor: { selector: selectorOf(a), rel } };
+  };
+  // Where a note is on screen now (viewport coordinates), or null if its element isn't on this screen.
+  const placeOf = (n) => {
+    try {
+      if (n.anchor && n.anchor.selector) {
+        const a = document.querySelector(n.anchor.selector);
+        if (a) { const r = a.getBoundingClientRect(), q = n.anchor.rel; return { x: r.left + q.x * r.width, y: r.top + q.y * r.height, w: q.w * r.width, h: q.h * r.height }; }
+      }
+      const el = n.selector && document.querySelector(n.selector);
+      if (el) { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }
+    } catch (_) {}
+    return n.rect ? { x: n.rect.x - scrollX, y: n.rect.y - scrollY, w: n.rect.w, h: n.rect.h } : null;
+  };
   const ask = (what, x, y, text = "", placeholder = "What's wrong, or what should change?") => {
     $(".what").textContent = what;
     pop.style.display = "block";
@@ -191,7 +238,7 @@
         const r = await post("/notes/send", { app: APP || undefined, summary: note });
         if (!r.ok) throw new Error(r.status);
         const d = await r.json();
-        closePop(); say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The Manager has them now.` : "Nothing to send.");
+        closePop(); say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The ${d.to || "Manager"} has them now.` : "Nothing to send.");
       } else if (editing) {
         if (!note) return;
         const r = await post(`/notes/${editing}/edit`, { note });
@@ -203,6 +250,7 @@
           page: location.href, app: APP || undefined, title: document.title, note, draft: true, kind: target ? "element" : "area",
           selector: target ? selectorOf(target) : null, text: target ? (target.innerText || target.alt || "").trim().slice(0, 300) : null,
           rect, viewport: { w: innerWidth, h: innerHeight }, scroll: { x: scrollX, y: scrollY }, ua: navigator.userAgent,
+          ...(target ? {} : boxInfo || {}),
         };
         const r = await post("/notes", body);
         if (!r.ok) throw new Error(r.status);
@@ -243,18 +291,23 @@
 
   const draw = () => {
     layer.innerHTML = "";
-    layer.style.transform = `translate(${-scrollX}px,${-scrollY}px)`;
     const sent = open.filter((n) => n.status === "open").length;
     $(".count").textContent = sent ? `${sent} sent` : "";
     $(".send").textContent = `Send ${drafts}`;
     $(".send").style.display = drafts ? "inline-block" : "none";
     if (!showPins) return;
     open.forEach((n, i) => {
-      let x = n.rect && n.rect.x, y = n.rect && n.rect.y;
-      try { const el = n.selector && document.querySelector(n.selector); if (el) { const r = el.getBoundingClientRect(); x = r.left + scrollX; y = r.top + scrollY; } } catch (_) {}
-      if (x == null) return;
-      const p = document.createElement("div");
+      const at = placeOf(n);
+      if (!at || at.y + at.h < 0 || at.y > innerHeight || at.x + at.w < 0 || at.x > innerWidth) return;
       const draft = n.status === "draft";
+      if (n.kind === "area") {                       // the box the owner drew, following the page
+        const b = document.createElement("div");
+        b.className = "box" + (draft ? " draft" : "");
+        Object.assign(b.style, { left: at.x + "px", top: at.y + "px", width: at.w + "px", height: at.h + "px" });
+        layer.appendChild(b);
+      }
+      const x = at.x, y = at.y;
+      const p = document.createElement("div");
       p.className = "pin" + (draft ? " draft" : ""); p.textContent = i + 1;
       p.title = (draft ? "Draft (click to change): " : "Sent: ") + n.note;
       p.style.left = x + "px"; p.style.top = y + "px";
@@ -268,8 +321,12 @@
     draw();
   };
   addEventListener("hashchange", load);           // single-page apps: each #route has its own pins
-  addEventListener("scroll", draw, { passive: true });
-  addEventListener("resize", draw);
+  // Redraw on any scroll (panels that scroll on their own too), resize, and now and then for layout changes.
+  let queued = false;
+  const redraw = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } };
+  addEventListener("scroll", redraw, { passive: true, capture: true });
+  addEventListener("resize", redraw);
+  setInterval(() => { if (open.length && showPins) redraw(); }, 700);
   load();
   // From the bookmarklet the owner clicked to mark something: start in Mark mode. On a review link the
   // toolbar just waits, so the app works normally until the owner presses Mark.

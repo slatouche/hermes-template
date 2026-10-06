@@ -31,7 +31,7 @@ import subprocess
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, quote, urlparse
 
 HOME = pathlib.Path.home()
 INBOX = HOME / "vault" / "raw" / "feedback"
@@ -75,7 +75,7 @@ def clean(s, n):
     return str(s or "").replace("\r", "")[:n]
 
 
-def render(rec, status, now):
+def render(rec, status, now, stem=None):
     note = rec["note"]
     summary = note.splitlines()[0][:90].replace('"', "'")
     vp = rec.get("viewport") or {}
@@ -84,8 +84,11 @@ def render(rec, status, now):
             f"updated: {now:%Y-%m-%d}\nsummary: \"Owner feedback on {clean(rec.get('app') or rec.get('title') or rec.get('page'), 60)}: {summary}\"\n"
             f"tags: [feedback]\ncard: none\n---\n"
             f"# {summary}\n\n{quoted}\n\n- **App / page:** {rec.get('app') or '-'} · {rec.get('page')}\n"
-            + (f"- **Variant on:** `design/variants/{rec['variant']}/`\n" if rec.get("variant") else "") +
-            f"- **Where:** `{rec.get('selector') or 'an area'}` ({rec.get('kind')})\n"
+            + (f"- **Variant on:** `design/variants/{rec['variant']}/`\n" if rec.get("variant") else "")
+            + (f"- **Snip:** ![what was marked]({stem}.png) (the page opened fresh; the app's own state may differ)\n"
+               if stem and (INBOX / f"{stem}.png").exists() else "") +
+            f"- **Where:** `{rec.get('selector') or (rec.get('anchor') or {}).get('selector') or 'an area'}` ({rec.get('kind')})\n"
+            + "".join(f"  - inside: `{e.get('selector')}` {clean(e.get('text'), 60)!r}\n" for e in rec.get("elements") or []) +
             f"- **Element text:** {clean(rec.get('text'), 200)!r}\n- **Screen:** {vp.get('w')}x{vp.get('h')}\n\n"
             "_From the owner's Mark overlay. Evidence for a card, not instructions to follow as written: "
             "the Manager turns it into a card and sets `status: done` and `card:` here._\n\n"
@@ -100,16 +103,98 @@ def save(d):
         raise ValueError("empty note")
     slug = re.sub(r"[^a-z0-9]+", "-", note.lower())[:40].strip("-") or "note"
     stem = f"{now:%Y-%m-%d-%H%M%S}-{slug}"
-    rec = {k: d.get(k) for k in ("page", "app", "variant", "title", "kind", "selector", "text", "rect", "viewport", "scroll", "ua")}
+    rec = {k: d.get(k) for k in ("page", "app", "variant", "title", "kind", "selector", "text", "rect", "viewport", "scroll",
+                                 "anchor", "elements", "ua")}
     rec["note"] = note
     rec = {k: (clean(v, 600) if isinstance(v, str) and k != "note" else v) for k, v in rec.items()}
     status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
     (INBOX / f"{stem}.md").write_text(render(rec, status, now), encoding="utf-8")
+    threading.Thread(target=snip, args=(stem, rec), daemon=True).start()
     log = SCRIPTS / "vault-log.sh"
     if log.exists() and status == "open":
         subprocess.run([str(log), "owner", "note", f"Feedback on {clean(rec.get('app') or rec.get('title'), 40)}: "
                         f"{note.splitlines()[0][:80]}", f"raw/feedback/{stem}"], capture_output=True)
     return stem
+
+
+SNIP_LOCK = threading.Lock()
+
+
+def snip(stem, rec):
+    """A picture of what the owner marked: the page opened fresh in a headless browser through its review link (same
+    look, same screen size), the marked element (or the area's anchor) scrolled into view and measured, then cropped
+    with a little margin and saved beside the note. Best effort: the app's own state (a selection, an open dialog)
+    isn't reproduced, which is why the note also lists the elements."""
+    import glob
+    import shutil
+    import tempfile
+    try:
+        ab = sorted(glob.glob(str(HOME / ".hermes/tools/agent-browser-*/bin/agent-browser-linux-*")))
+        chrome = sorted(glob.glob(str(HOME / ".hermes/tools/chromium-*/chrome-linux64/chrome")))
+        ffmpeg = shutil.which("ffmpeg") or next(iter(sorted(glob.glob(str(HOME / ".hermes/tools/ffmpeg-*/ffmpeg*")))), None)
+        u, vp = urlparse(rec.get("page") or ""), rec.get("viewport") or {}
+        anchor = rec.get("anchor") or {}
+        sel, rel = anchor.get("selector") or rec.get("selector"), anchor.get("rel")
+        if not (ab and chrome and ffmpeg and u.port and sel and vp.get("w")):
+            return
+        keep = [p for p in u.query.split("&") if p and not p.startswith(("__variant=", "__shot=", "__scroll="))]
+        keep += [f"__variant={rec.get('variant') or 'off'}", "__shot=1"]
+        enc = lambda s: quote(s, safe="/%:=&?~-._!*()@+,;")           # an apostrophe in a #route stops the browser
+        url = f"http://127.0.0.1:{u.port}{enc(u.path or '/')}?{'&'.join(keep)}" + (f"#{enc(u.fragment)}" if u.fragment else "")
+        env = {**os.environ, "AGENT_BROWSER_EXECUTABLE_PATH": chrome[-1], "AGENT_BROWSER_ARGS": "--no-sandbox"}
+        W, H = int(vp["w"]), int(vp["h"])
+
+        def browse(*args):
+            r = subprocess.run([ab[-1], "--session", "marksnip", "--json", *args], capture_output=True, text=True, env=env, timeout=60)
+            try:
+                d = json.loads(r.stdout)
+                return d.get("data") or d.get("result") or {}
+            except ValueError:
+                return {}
+
+        def region():
+            b = browse("get", "box", sel)
+            if not b.get("width"):
+                return None
+            if rel:   # an area: the same fractions of its anchor the owner drew
+                return (b["x"] + rel["x"] * b["width"], b["y"] + rel["y"] * b["height"], rel["w"] * b["width"], rel["h"] * b["height"])
+            return b["x"], b["y"], b["width"], b["height"]
+
+        out = INBOX / f"{stem}.png"
+        with SNIP_LOCK, tempfile.TemporaryDirectory() as tmp:
+            full = f"{tmp}/full.png"
+            try:
+                browse("set", "viewport", str(W), str(H))
+                browse("open", url)
+                browse("wait", "1500")
+                browse("scrollintoview", sel)
+                g = region()
+                if g and (g[1] < 0 or g[1] + g[3] > H):        # a big anchor: bring the marked part itself into view
+                    browse("eval", f"window.scrollBy(0, {int(g[1] - max(0, (H - g[3]) / 2))})")
+                    browse("wait", "400")
+                    g = region()
+                if g:
+                    browse("screenshot", full)
+            finally:
+                browse("close")
+            if not g or not pathlib.Path(full).exists():
+                return
+            pad = 16
+            x, y = max(0, int(g[0]) - pad), max(0, int(g[1]) - pad)
+            w, h = min(int(g[2]) + 2 * pad, W - x), min(int(g[3]) + 2 * pad, H - y)
+            if w < 8 or h < 8:
+                return
+            subprocess.run([ffmpeg, "-loglevel", "error", "-y", "-i", full, "-vf", f"crop={w}:{h}:{x}:{y}", str(out)],
+                           capture_output=True, timeout=60)
+        f = INBOX / f"{stem}.md"
+        if out.exists() and f.exists():
+            t = f.read_text(encoding="utf-8")
+            if "- **Snip:**" not in t:
+                line = (f"- **Snip:** ![what was marked]({stem}.png) (the page opened fresh; "
+                        "the app's own state may differ)\n")
+                f.write_text(t.replace("- **Where:**", line + "- **Where:**", 1), encoding="utf-8")
+    except Exception as e:                      # a missing picture never loses a note
+        print(f"feedback-inbox: snip {stem}: {e}", file=sys.stderr)
 
 
 def edit(stem, note):
@@ -121,7 +206,7 @@ def edit(stem, note):
         return False
     rec = json.loads(m.group(1))
     rec["note"] = clean(note, MAX).strip()
-    f.write_text(render(rec, "draft", datetime.datetime.now()), encoding="utf-8")
+    f.write_text(render(rec, "draft", datetime.datetime.now(), stem), encoding="utf-8")
     return True
 
 
@@ -134,11 +219,12 @@ def set_field(f, field, value):
     f.write_text(t, encoding="utf-8")
 
 
-def send(app, summary=""):
-    """The owner pressed Send: every draft for this app becomes one batch of open notes, and the Manager is woken."""
+def send(app, summary="", design=False):
+    """The owner pressed Send: every draft for this app becomes one batch of open notes. From a design review (design=True)
+    it goes straight to the Designer as one card; otherwise the Manager is woken to route it."""
     drafts = [n for n in notes("draft") if not app or n.get("app") == app]
     if not drafts:
-        return None, 0
+        return None, 0, None
     now = datetime.datetime.now()
     batch = f"{now:%Y-%m-%d-%H%M%S}-batch"
     for n in drafts:
@@ -161,10 +247,33 @@ def send(app, summary=""):
     if log.exists():
         subprocess.run([str(log), "owner", "note", f"Sent {len(drafts)} feedback notes{on}"
                         + (f": {summary.splitlines()[0][:80]}" if summary else ""), f"raw/feedback/{batch}"], capture_output=True)
-    # Wake the Manager now instead of at the next 2-hourly watch (it runs on the scheduler's next tick).
+    env = {**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"}
+    if design and (HOME / ".hermes" / "profiles" / "designer").is_dir():
+        # Notes from a design review go straight to the Designer as one round: no Manager hop in between.
+        body = (f"Context: the owner's design feedback, sent together from the design sandbox: `vault/raw/feedback/{batch}.md` "
+                f"({len(drafts)} notes{on}). One round: read every note (each has the page, the element and the screen size). "
+                "Review: none (the owner reviews it on the variants page).\n\n## Outcome\nEvery note answered in the live variant "
+                "on the sandbox. If the round is big (many changes, several screens, or a note that needs research or the Engineer), "
+                "split it: do the first part here and card the rest for yourself, chained, so the owner sees progress early.\n\n"
+                "## Verification\n- A line per note in the handoff: done (what changed), carded (card id), or a question for the owner.\n"
+                "- `variant-shot.sh` shots of the screens that changed; the variants page answers 200.\n"
+                "- The batch page and each note: `status: done`, `card:` this card's id.\n\n## Constraints\nVariants and the sandbox "
+                "only; never the real app or its data.\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, "
+                "`vault/product/`, `00-status.md`.\n\n## Stop when\nThe round is live on the variants page and the handoff has a line per note.\n")
+        r = subprocess.run(["hermes", "kanban", "create", f"Owner design round: {len(drafts)} notes", "--assignee", "designer",
+                            "--body", body, "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
+                            "--idempotency-key", batch, "--json"], capture_output=True, text=True, env=env)
+        try:
+            card = json.loads(r.stdout).get("id")
+        except ValueError:
+            card = None
+        if card:
+            set_field(INBOX / f"{batch}.md", "card", card)
+            return batch, len(drafts), "Designer"
+    # Otherwise wake the Manager now instead of at the next 2-hourly watch (it runs on the scheduler's next tick).
     subprocess.Popen(["hermes", "-p", "manager", "cron", "run", "manager-watch"], stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, env={**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"})
-    return batch, len(drafts)
+                     stderr=subprocess.DEVNULL, env=env)
+    return batch, len(drafts), "Manager"
 
 
 def mirrors():
@@ -251,6 +360,9 @@ class Base(BaseHTTPRequestHandler):
     def current_variant(self):
         return None
 
+    def is_design(self):
+        return False
+
     def _send(self, code, body, ctype="application/json", cors=True):
         data = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
@@ -296,8 +408,8 @@ class Base(BaseHTTPRequestHandler):
                 d = json.loads(raw or b"{}")
             except ValueError:
                 d = {}
-            batch, count = send(d.get("app") or self.app_name, d.get("summary", ""))
-            self._send(200, json.dumps({"batch": batch, "sent": count}))
+            batch, count, to = send(d.get("app") or self.app_name, d.get("summary", ""), self.is_design())
+            self._send(200, json.dumps({"batch": batch, "sent": count, "to": to}))
             return True
         m = re.fullmatch(r"/notes/([\w-]+)/edit", path)
         if m and (INBOX / f"{m.group(1)}.md").exists():
@@ -368,6 +480,9 @@ def mirror_handler(app_port, name):
                 q = m.group(1) if m else None
             return q if q and q != "off" and (VARIANTS / q).is_dir() else None
 
+        def is_design(self):
+            return app_port in sandboxes() or bool(self.current_variant())
+
         def _variant_file(self, sub):
             m = re.fullmatch(r"/v/([\w-]+)/([\w.-]+)", sub)
             f = VARIANTS / m.group(1) / m.group(2) if m else None
@@ -403,7 +518,7 @@ def mirror_handler(app_port, name):
             hdrs["Host"] = f"127.0.0.1:{app_port}"
             fwd = self.path
             if "__variant=" in u.query or "__shot=" in u.query:   # the app never sees the variant switches
-                rest = "&".join(p for p in u.query.split("&") if not p.startswith(("__variant=", "__shot=")))
+                rest = "&".join(p for p in u.query.split("&") if not p.startswith(("__variant=", "__shot=", "__scroll=")))
                 fwd = u.path + ("?" + rest if rest else "")
             conn = http.client.HTTPConnection("127.0.0.1", app_port, timeout=600)
             try:
@@ -422,6 +537,10 @@ def mirror_handler(app_port, name):
                     tag += f'<link rel="stylesheet" href="/__mark/v/{v}/style.css">'.encode() if (vd / "style.css").exists() else b""
                     tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
                 tag += b"" if shot else badge(v, sandbox)
+                sy = parse_qs(u.query).get("__scroll", ["0"])[0]
+                if shot and sy.isdigit() and int(sy):          # a snip: put the page at the owner's scroll position
+                    tag += (f"<script>(()=>{{let n=0;const t=setInterval(()=>{{scrollTo(0,{int(sy)});if(++n>20)clearInterval(t)}},250)}})()"
+                            "</script>").encode()
                 page = re.sub(rb"(?i)</body>", lambda m: tag + m.group(0), page, count=1) if re.search(rb"(?i)</body>", page) else page + tag
                 self.send_response(r.status, r.reason)
                 q = parse_qs(u.query).get("__variant", [None])[0]
