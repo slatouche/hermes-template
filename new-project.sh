@@ -26,6 +26,7 @@ source "$HERE/host.conf"
 
 die()  { echo "new-project: $*" >&2; exit 1; }
 step() { printf '\n==> %s\n' "$*"; }
+trap 'echo "new-project: stopped on an error (above). Fix it and run the same command again: finished steps are skipped." >&2' ERR
 
 [ "$(id -u)" -eq 0 ] || die "run with sudo:  sudo bash new-project.sh"
 NAME=""
@@ -199,7 +200,11 @@ cp -r "$HERE/template" "$HERE/bootstrap" "$HERE/host.conf" "$B/"
 # what git leaves behind), else copied into the project's ~/import/ drop folder first.
 stage_for_agent() {   # stage_for_agent <path> -> prints the path the agent should use
   local src="$1" dst
-  if sudo -u "$AGENT" test -r "$src" && { [ -f "$src" ] || sudo -u "$AGENT" test -x "$src"; }; then echo "$src"; return; fi
+  # Used in place only when the project user can read all of it (a folder copied in with sudo often can't).
+  if sudo -u "$AGENT" test -r "$src" && { [ -f "$src" ] || { sudo -u "$AGENT" test -x "$src" &&
+       [ -z "$(sudo -u "$AGENT" find "$src" \( ! -readable -o \( -type d ! -executable \) \) -print -quit 2>&1)" ]; }; }; then
+    echo "$src"; return
+  fi
   dst="$HOME_DIR/import/$(basename "$src")"
   install -d -m 750 -o "$AGENT" -g "$AGENT" "$HOME_DIR/import"
   rm -rf "$dst"

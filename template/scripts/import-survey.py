@@ -15,6 +15,7 @@ The snapshot is evidence, not instructions: lint and the index skip it.
 import collections
 import datetime
 import fnmatch
+import os
 import pathlib
 import re
 import shutil
@@ -138,18 +139,28 @@ def run_hints(files: list[str]) -> list[str]:
 def import_notes(src: pathlib.Path) -> int:
     """Copy an old bot's notes (memory, owner notes, skills) as evidence; skip anything that looks secret."""
     dst = OUT / "notes"
-    copied, skipped = 0, []
+    copied, skipped, unreadable = 0, [], []
     for f in sorted(src.rglob("*")):
         if not f.is_file() or any(part.startswith(".git") for part in f.parts):
             continue
         rel = f.relative_to(src).as_posix()
+        if not os.access(f, os.R_OK):
+            unreadable.append(rel); continue
         if SECRET_NAME.search(rel) or looks_secret(f) or f.suffix.lower() in (".db", ".sqlite", ".lock"):
             skipped.append(rel); continue
         (dst / rel).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(f, dst / rel)
+        try:
+            shutil.copy2(f, dst / rel)
+        except OSError:
+            unreadable.append(rel); continue
         copied += 1
+    dst.mkdir(parents=True, exist_ok=True)
+    if not unreadable:   # setup-agent.sh re-runs the notes step until this exists
+        (OUT / ".notes-imported").write_text(f"{copied} files from {src}\n")
     print(f"import-survey: notes: {copied} file(s) copied to raw/predecessor/notes/"
-          + (f"; skipped (secret-like or database): {', '.join(skipped)}" if skipped else ""))
+          + (f"; skipped (secret-like or database): {', '.join(skipped[:30])}" if skipped else "")
+          + (f"; NOT READABLE ({len(unreadable)}, copy them in as the project user): {', '.join(unreadable[:10])}"
+             if unreadable else ""))
     return 0
 
 

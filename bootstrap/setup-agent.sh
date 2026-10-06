@@ -308,6 +308,9 @@ if [ -n "${IMPORT_SRC:-}" ] && [ "$(git -C "$HOME/workspace" rev-list --count HE
   ARGS=("$IMPORT_SRC" --interactive)
   [ -z "${IMPORT_NOTES:-}" ] || ARGS+=(--notes "$IMPORT_NOTES")
   "$H/scripts/import-project.sh" "${ARGS[@]}"
+elif [ -n "${IMPORT_NOTES:-}" ] && [ ! -f "$HOME/vault/raw/predecessor/.notes-imported" ]; then
+  step "Import notes $IMPORT_NOTES"            # a re-run after the notes step failed: the code is already in
+  /usr/bin/python3 "$H/scripts/import-survey.py" --notes "$IMPORT_NOTES"
 fi
 
 # ---------- the gateway (messaging, cron, kanban dispatcher, API) ----------
