@@ -5,7 +5,8 @@
 # yet are shown first on a demo slot (demo.sh), then brought into the mockup once the owner likes them.
 #
 #   mockup.sh add <name> <app port> <data path> -- <command>   once per app (the Engineer, when the app is first served)
-#   mockup.sh refresh <name>    take a new snapshot: the code on `main` and a fresh copy of the data, then (re)start
+#   mockup.sh refresh <name> [--ref <branch>]   take a new snapshot: the code on `main` (or a prototype branch, so the
+#                               owner can try it; the badge says so) and a fresh copy of the data, then (re)start
 #   mockup.sh reset <name>      a fresh copy of the data only (the owner's "reset data" on the badge)
 #   mockup.sh list
 #
@@ -42,9 +43,12 @@ case "${1:-}" in
     dir="$HOME/mockup/$name"; mkdir -p "$dir"
     if [ "$1" = refresh ]; then
       main=$(git -C "$REPO" rev-parse --verify -q main >/dev/null && echo main || echo master)
-      if [ -d "$dir/code" ]; then git -C "$dir/code" checkout -q --detach "$main"
-      else git -C "$REPO" worktree add -q --detach "$dir/code" "$main"; fi
-      printf '%s · snapshot %s' "$(git -C "$dir/code" log -1 --format='%h %s' | cut -c1-70)" "$(date '+%-d %b %H:%M')" > "$dir/SNAPSHOT"
+      ref="$main"; [ "${3:-}" = "--ref" ] && ref="${4:?branch}"
+      git -C "$REPO" rev-parse --verify -q "$ref" >/dev/null || die "no branch $ref in ~/workspace"
+      if [ -d "$dir/code" ]; then git -C "$dir/code" checkout -q --detach "$ref"
+      else git -C "$REPO" worktree add -q --detach "$dir/code" "$ref"; fi
+      label=""; [ "$ref" != "$main" ] && label="prototype $ref: "
+      printf '%s%s · snapshot %s' "$label" "$(git -C "$dir/code" log -1 --format='%h %s' | cut -c1-70)" "$(date '+%-d %b %H:%M')" > "$dir/SNAPSHOT"
     fi
     systemctl --user stop "$name-mockup" 2>/dev/null || true
     copy_data "$data" "$dir"

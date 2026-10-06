@@ -97,7 +97,8 @@
     look.classList.toggle("sb", !!(cfg.mockup || cfg.demo));
     if (cfg.demo) add("span", cfg.demo.replace(/^demo/i, "Demo")).title = "A demo of something new: nothing here touches your real data";
     if (cfg.mockup) {
-      add("span", "Mockup").title = cfg.mockup + " · a copy of the app: nothing here touches your real data";
+      const proto = /^prototype /.test(cfg.mockup);
+      add("span", proto ? "Mockup · " + cfg.mockup.split(":")[0] : "Mockup").title = cfg.mockup + " · a copy of the app: nothing here touches your real data";
       add("button", "reset data", () => {
         if (confirm("Put the mockup's data back to a fresh copy of the real data?"))
           fetch(INBOX + "/mockup/reset", { method: "POST" }).then(() => location.reload());
