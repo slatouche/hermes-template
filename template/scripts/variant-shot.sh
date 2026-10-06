@@ -1,18 +1,19 @@
 #!/bin/bash
 # Screenshots of the live app with a design variant on, in seconds (headless Chromium through the review link).
 #
-#   variant-shot.sh <variant|current> [page path, e.g. "/#/deck/cidding"] [--app <name>] [--all]
+#   variant-shot.sh <variant|current> [page path, e.g. "/#/deck/cidding"] [--app <name>] [--size WxH] [--all]
 #
 # <variant> is a folder in ~/vault/design/variants/ (style.css, optional script.js and note.md); "current" shoots the
-# app as it is today into variants/current/ for side-by-side comparison. Writes <page>-390.png and <page>-1440.png
-# (--all adds 834) into the variant's folder; the owner sees them at http://<host>:<review port>/__mark/variants.
+# app as it is today into variants/current/ for side-by-side comparison. Writes <page>-1440.png (desktop; --size WxH for
+# the owner's size, --all for phone, tablet and desktop in the responsive pass) into the variant's folder; the owner sees them at http://<host>:<review port>/__mark/variants.
 set -euo pipefail
-V="${1:?usage: variant-shot.sh <variant|current> [path] [--app <name>] [--all]}"; shift
-PAGE="/"; APP=""; WIDTHS="390x844 1440x900"
+V="${1:?usage: variant-shot.sh <variant|current> [path] [--app <name>] [--size WxH] [--all]}"; shift
+PAGE="/"; APP=""; WIDTHS="1440x900"   # desktop while designing; --all for the responsive pass
 while [ $# -gt 0 ]; do
   case "$1" in
     --app) APP="$2"; shift 2 ;;
     --all) WIDTHS="390x844 834x1112 1440x900"; shift ;;
+    --size) WIDTHS="$2"; shift 2 ;;
     *) PAGE="$1"; shift ;;
   esac
 done
@@ -38,12 +39,22 @@ mkdir -p "$DIR"
 base="${PAGE%%#*}"; hash=""; [[ "$PAGE" == *"#"* ]] && hash="#${PAGE#*#}"
 [[ "$base" == *"?"* ]] && sep="&" || sep="?"
 URL="http://127.0.0.1:$PORT${base:-/}${sep}__variant=$SW&__shot=1$hash"
+URL="${URL//\'/%27}"                         # an apostrophe in a #route stops the browser
 printf '%s\n' "$PAGE" > "$DIR/page.txt"   # the variants page opens "try it live" on this screen
-slug=$(printf '%s' "$PAGE" | tr -c 'A-Za-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//'); slug="${slug:-home}"
+slug=$(printf '%s' "${PAGE//%[0-9A-Fa-f][0-9A-Fa-f]/-}" | tr -c 'A-Za-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//' | cut -c1-40)
+slug="${slug:-home}"
+# The bots' browser (agent-browser) first: plain headless Chrome can crash inside a bot's terminal sandbox.
+AB=$(ls -d "$HOME"/.hermes/tools/agent-browser-*/bin/agent-browser-linux-* 2>/dev/null | tail -1)
+export AGENT_BROWSER_EXECUTABLE_PATH="$CHROME" AGENT_BROWSER_ARGS="--no-sandbox"
 for wh in $WIDTHS; do
-  out="$DIR/$slug-${wh%x*}.png"
-  timeout 60 "$CHROME" --headless=new --no-sandbox --disable-gpu --hide-scrollbars --virtual-time-budget=6000 \
-    --window-size="${wh/x/,}" --screenshot="$out" "$URL" >/dev/null 2>&1 || true
+  out="$DIR/$slug-${wh%x*}.png"; rm -f "$out"
+  if [ -n "$AB" ]; then
+    { "$AB" --session variantshot set viewport "${wh%x*}" "${wh#*x}" && "$AB" --session variantshot open "$URL" \
+      && "$AB" --session variantshot wait 1500 && "$AB" --session variantshot screenshot "$out"; } >/dev/null 2>&1 || true
+  fi
+  [ -s "$out" ] || timeout 60 "$CHROME" --headless=new --no-sandbox --disable-gpu --disable-dev-shm-usage --hide-scrollbars \
+    --virtual-time-budget=6000 --window-size="${wh/x/,}" --screenshot="$out" "$URL" >/dev/null 2>&1 || true
   [ -s "$out" ] && echo "$out" || echo "failed: $out" >&2
 done
+[ -n "$AB" ] && "$AB" --session variantshot close >/dev/null 2>&1 || true
 echo "compare: http://<host>:$PORT/__mark/variants"
