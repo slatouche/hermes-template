@@ -14,6 +14,7 @@ compression_tokens: 150000  # optional settings (see _guide.md)
 max_turns: 90
 effort: medium
 verify_on_stop: false
+skill_categories_on: "productivity"   # PDFs, documents and spreadsheets are sources
 tags: [role]
 ---
 # Researcher

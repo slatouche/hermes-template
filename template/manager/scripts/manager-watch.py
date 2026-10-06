@@ -142,6 +142,10 @@ def findings():
         for d in va.iterdir():
             if d.is_dir() and d.name != "current" and NOW - max((p.stat().st_mtime for p in d.rglob("*")), default=d.stat().st_mtime) > 14 * DAY:
                 f[f"variant-stale:{d.name}"] = f"design variant {d.name} unpicked for 14+ days: archive it or ask the owner to pick"
+            size = sum(p.stat().st_size for p in d.glob("*.js")) + sum(p.stat().st_size for p in d.glob("*.css"))
+            if d.is_dir() and size > 40_000:   # a look should be styles and a short script; a patch layer re-learned every round
+                f[f"look-size:{d.name}:{size // 20_000}"] = (f"design look {d.name} is {size // 1000} KB of CSS and script: too big to stay "
+                                                           "quick. Card the Designer: fold built parts out, prototype the structural ones")
     side = HOME / "side"
     if side.is_dir():
         for d in side.iterdir():

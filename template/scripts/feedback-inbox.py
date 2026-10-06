@@ -222,6 +222,199 @@ def set_field(f, field, value):
     f.write_text(t, encoding="utf-8")
 
 
+def browser_tools():
+    """The bots' own headless browser (agent-browser), run from this service where it doesn't crash. Returns
+    browse(session, *args) -> the command's data, or None when the tools aren't installed yet."""
+    import glob
+    ab = sorted(glob.glob(str(HOME / ".hermes/tools/agent-browser-*/bin/agent-browser-linux-*")))
+    chrome = sorted(glob.glob(str(HOME / ".hermes/tools/chromium-*/chrome-linux64/chrome")))
+    if not (ab and chrome):
+        return None
+    env = {**os.environ, "AGENT_BROWSER_EXECUTABLE_PATH": chrome[-1], "AGENT_BROWSER_ARGS": "--no-sandbox"}
+
+    def browse(session, *args):
+        r = subprocess.run([ab[-1], "--session", session, "--json", *args], capture_output=True, text=True, env=env, timeout=90)
+        try:
+            d = json.loads(r.stdout)
+        except ValueError:
+            return None
+        return d.get("data") if d.get("data") is not None else d.get("result")
+    return browse
+
+
+CHECK_LOCK = threading.Lock()
+
+
+def look_check(url, width, height, exprs, shot=None):
+    """One step for the Designer instead of five: open a page (a look on the mockup, or a demo) at a size, wait for
+    it, evaluate each JavaScript expression, take a screenshot. Returns {"results": [...], "shot": path}."""
+    browse = browser_tools()
+    if not browse:
+        return {"error": "the browser tools aren't installed yet (they arrive with the bots' first browser use)"}
+    results = []
+    with CHECK_LOCK:
+        try:
+            browse("lookcheck", "set", "viewport", str(width), str(height))
+            browse("lookcheck", "open", url)
+            browse("lookcheck", "wait", "1500")
+            for e in exprs:
+                v = browse("lookcheck", "eval", e)
+                results.append({"js": e, "value": v.get("result", v) if isinstance(v, dict) else v})
+            if shot:
+                browse("lookcheck", "screenshot", shot)
+        finally:
+            browse("lookcheck", "close")
+    return {"results": results, "shot": shot if shot and pathlib.Path(shot).exists() else None}
+
+
+# ---- The warm design session ------------------------------------------------------------------------------------
+# A kanban card is always a fresh session, so every round used to re-learn the page (about 20 steps before the first
+# change). Instead, feedback rounds go to one long-running chat session per bot through the local Hermes API: the
+# bot keeps what it learned between rounds, and Hermes compacts the session when it grows. A tracking card (blocked,
+# completed from the session) keeps each round on the board. If the session can't be reached, the card is released
+# to an ordinary kanban worker, so nothing is lost.
+WARM = SCRIPTS / "warm-sessions.json"
+WARM_LOCK = threading.Lock()
+WARM_QUEUE = {}          # profile -> [{"cards": [...], "text": str}] waiting while that bot is busy in a round
+WARM_BUSY = set()
+WARM_MAX_AGE = 24 * 3600   # a fresh session each day, so stale context doesn't pile up
+WARM_MAX_ROUNDS = 25
+
+
+def _readenv(path):
+    try:
+        return dict(ln.split("=", 1) for ln in path.read_text().splitlines() if "=" in ln and not ln.startswith("#"))
+    except OSError:
+        return {}
+
+
+def _api(profile, method, path, body=None, timeout=120):
+    import urllib.request
+    env = _readenv(HOME / ".hermes" / ".env")
+    key = _readenv(HOME / ".hermes" / "profiles" / profile / ".env").get("API_SERVER_KEY") or env.get("API_SERVER_KEY")
+    port = (env.get("API_SERVER_PORT") or "").strip()
+    if not (key and port):
+        raise OSError("no API server settings")
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/p/{profile}{path}", method=method,
+                                 data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Authorization": "Bearer " + key.strip(), "Content-Type": "application/json"})
+    return urllib.request.urlopen(req, timeout=timeout)
+
+
+def _warm_session(profile, fresh=False):
+    state = {}
+    try:
+        state = json.loads(WARM.read_text())
+    except (OSError, ValueError):
+        pass
+    s = state.get(profile) or {}
+    now = datetime.datetime.now().timestamp()
+    if fresh or not s.get("id") or now - s.get("since", 0) > WARM_MAX_AGE or s.get("rounds", 0) >= WARM_MAX_ROUNDS:
+        out = json.loads(_api(profile, "POST", "/api/sessions", {"title": f"{profile}: owner rounds {datetime.date.today()}"}).read() or b"{}")
+        sid = out.get("id") or out.get("session_id") or (out.get("session") or {}).get("id")
+        if not sid:
+            raise OSError("the API didn't return a session id")
+        s = {"id": sid, "since": now, "rounds": 0}
+    s["rounds"] = s.get("rounds", 0) + 1
+    state[profile] = s
+    WARM.write_text(json.dumps(state, indent=1))
+    return s["id"]
+
+
+def _warm_turn(profile, text):
+    """One chat turn in the warm session; returns when the bot has finished. Approval prompts are declined (a
+    feedback round never needs one)."""
+    sid = _warm_session(profile)
+    r = _api(profile, "POST", f"/api/sessions/{sid}/chat/stream", {"message": text}, timeout=3600)
+    ev = None
+    for raw in r:
+        line = raw.decode("utf-8", "replace").rstrip("\n")
+        if line.startswith("event:"):
+            ev = line[6:].strip()
+            continue
+        if not line.startswith("data:"):
+            continue
+        try:
+            data = json.loads(line[5:].strip())
+        except ValueError:
+            continue
+        name = ev or data.get("event") or data.get("type")
+        if name == "approval.request" and data.get("run_id"):
+            try:
+                _api(profile, "POST", f"/v1/runs/{data['run_id']}/approval", {"choice": "deny"}).read()
+            except OSError:
+                pass
+        elif name in ("error", "run.failed"):
+            raise OSError(f"{name}: {json.dumps(data)[:300]}")
+        elif name == "done":
+            break
+
+
+def _warm_worker(profile):
+    while True:
+        with WARM_LOCK:
+            items = WARM_QUEUE.pop(profile, [])
+            if not items:
+                WARM_BUSY.discard(profile)
+                return
+        cards = [c for it in items for c in it["cards"]]
+        text = "\n\n---\n\n".join(it["text"] for it in items)
+        try:
+            _warm_turn(profile, text)
+        except Exception as e:     # the session failed: hand the cards to ordinary kanban workers, start fresh next time
+            print(f"feedback-inbox: warm session for {profile}: {e}; releasing {cards} to the board", file=sys.stderr)
+            try:
+                _warm_session(profile, fresh=True)
+            except Exception:
+                pass
+            env = {**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"}
+            for c in cards:
+                subprocess.run(["hermes", "kanban", "comment", c, "The warm design session couldn't take this round; "
+                                "a fresh worker picks it up from this card."], capture_output=True, env=env)
+                subprocess.run(["hermes", "kanban", "unblock", c], capture_output=True, env=env)
+
+
+def warm_round(profile, card, text):
+    """Queue a round for the bot's warm session; a round already waiting (not started) takes this one too."""
+    with WARM_LOCK:
+        q = WARM_QUEUE.setdefault(profile, [])
+        q.append({"cards": [card], "text": text})
+        if profile in WARM_BUSY:
+            return "queued"
+        WARM_BUSY.add(profile)
+    threading.Thread(target=_warm_worker, args=(profile,), daemon=True).start()
+    return "started"
+
+
+def round_text(batch, drafts, where, card, summary=""):
+    """Everything a round needs, in the message itself: each note (words, place, element, size, picture) and the
+    look's map, so the bot starts working instead of fetching and reading."""
+    looks = sorted({n["variant"] for n in drafts if n.get("variant")})
+    out = [f"Owner design round, card `{card}` (batch `vault/raw/feedback/{batch}.md`), {len(drafts)} notes from {where}."]
+    if summary:
+        out.append(f"Their overall comment: {summary}")
+    for i, n in enumerate(drafts, 1):
+        anchor = (n.get("anchor") or {}).get("selector")
+        inside = ", ".join(f"`{e.get('selector')}` {e.get('text')!r}" for e in (n.get("elements") or [])[:6])
+        pic = INBOX / f"{n['id']}.png"
+        vp = n.get("viewport") or {}
+        out.append(f"{i}. \"{clean(n.get('note'), 1500)}\"\n   on {n.get('page')} ({source_label(n)}), screen {vp.get('w')}x{vp.get('h')}\n"
+                   f"   element `{n.get('selector') or anchor or 'an area'}`" + (f"; inside: {inside}" if inside else "")
+                   + (f"\n   picture: `{pic}`" if pic.exists() else ""))
+    for look in looks:
+        m = VARIANTS / look / "map.md"
+        if m.exists():
+            out.append(f"The map of look `{look}` (`{m}`):\n" + m.read_text(encoding="utf-8", errors="replace")[:8000])
+    out.append(
+        "How: a quick round. Change only what the notes touch, at the owner's screen size; the picture is your 'before'. "
+        "Check with one `look-check.sh` call per screen (the checks and the screenshot in one step). A note that repeats an "
+        "earlier one: say so. Something needing new app behaviour: design it, card the Engineer a `Prototype:` if seeing it "
+        "work needs real code, never start a build. Update the map with what you learned. When done, "
+        f"`kanban_complete` card `{card}` with a line per note (done / repeat of / carded / question); the notes close "
+        "themselves. Keep the reply to the owner to a line per note.")
+    return "\n\n".join(out)
+
+
 def in_scope(n, scope):
     """Which drafts one Send covers: only those left on the link it's pressed on (the mockup, demo 1, demo 2 or an
     app), matched by the link's port so a demo slot that gets a new label keeps its drafts. scope = (kind, port, name);
@@ -284,41 +477,45 @@ def send(scope, summary=""):
     if scope[0] in ("mockup", "demo") and (HOME / ".hermes" / "profiles" / "designer").is_dir():
         card = None
         try:
-            # A round that hasn't started yet takes this batch too: one round, not a queue of them.
-            waiting = [t for t in json.loads(hermes("kanban", "list", "--json") or "[]")
-                       if t.get("assignee") == "designer" and t.get("status") in ("ready", "todo")
-                       and str(t.get("title", "")).startswith(DESIGN_ROUND)]
-            if waiting:
-                card = waiting[0]["id"]
+            # A round queued for the warm session but not started yet takes this batch too: one round, not a queue.
+            with WARM_LOCK:
+                q = WARM_QUEUE.get("designer") or []
+                if q:
+                    card = q[-1]["cards"][0]
+                    q[-1]["text"] += ("\n\n---\n\nMore from the owner for the same round:\n\n"
+                                      + round_text(batch, drafts, where, card, summary))
+            if card:
                 hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}): "
-                       f"`vault/raw/feedback/{batch}.md`, {len(drafts)} notes from {where}. Do them in the same round; "
-                       "if one repeats an earlier note, say so and treat them as one.")
+                       f"`vault/raw/feedback/{batch}.md`, {len(drafts)} notes from {where}.")
             else:
-                body = (f"Context: the owner's design feedback, sent together: `vault/raw/feedback/{batch}.md` ({len(drafts)} notes "
-                        f"from {where}). Each note says where it was left (the mockup, a demo slot and what it shows), the "
-                        "element, the screen size, and often a picture. Review: none (the owner reviews it on the mockup).\n\n"
-                        "**Start from the map:** read `map.md` in the look's folder (`design/variants/<look>/`) or the demo's "
-                        "folder first: where each part of the page lives in the app and in the look, and the gotchas. Explore "
-                        "only what it doesn't cover, and add what you learned to it before you finish.\n\n"
-                        "## Outcome\nEvery note answered where it belongs: mockup notes in the mockup's look; demo notes in that "
-                        "demo. Keep it to what the notes touch, on what works today, at the owner's screen size (on each note). "
-                        "Small notes are a quick round, about 5 minutes each: the note's picture is your 'before' (no extra "
-                        "screenshots or zooming), change it, one check. Other widths wait for the responsive pass, later. A note "
-                        "that repeats an earlier one (sent before, or done already): say so and treat them as one. "
-                        "If the round is big (many changes, several screens, or a note that needs research or the Engineer), do "
-                        "the first part here and card the rest for yourself, chained, so the owner sees progress early.\n\n"
-                        "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
-                        "(card id), or a question for the owner.\n- `variant-shot.sh` shots of the mockup screens that changed (desktop); "
-                        "the variants page and any demo answer 200.\n- `map.md` updated. Don't edit the note files: they "
-                        "close themselves when this card is done.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
-                        "data. Never start a build: a note that needs new app behaviour gets designed (on a demo or the "
-                        "mockup) and waits for the owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input)."
-                        "\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, `vault/product/`, "
-                        "`00-status.md`.\n\n## Stop when\nThe round is live on the mockup (and demos) and the handoff has a line "
-                        "per note.\n")
-                card = json.loads(hermes("kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer",
-                                         "--body", body, "--workspace", f"dir:{HOME}", "--max-runtime", "30m",
-                                         "--created-by", "owner", "--idempotency-key", batch, "--json")).get("id")
+                waiting = [t for t in json.loads(hermes("kanban", "list", "--json") or "[]")
+                           if t.get("assignee") == "designer" and t.get("status") in ("ready", "todo")
+                           and str(t.get("title", "")).startswith(DESIGN_ROUND)]
+                if waiting:                      # a round released to an ordinary worker and still waiting
+                    card = waiting[0]["id"]
+                    hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}):\n\n"
+                           + round_text(batch, drafts, where, card, summary))
+                else:
+                    warm = bool(_readenv(HOME / ".hermes" / ".env").get("API_SERVER_PORT"))
+                    body = (f"Context: the owner's design feedback, sent together (batch `vault/raw/feedback/{batch}.md`). "
+                            + ("Worked in the Designer's warm session (this card tracks it; if the session can't take it, "
+                               "the card is released to a worker). " if warm else "")
+                            + "Review: none (the owner reviews it on the mockup).\n\n"
+                            + round_text(batch, drafts, where, "this card", summary)
+                            + "\n\n## Outcome\nEvery note answered in the mockup's look, or in the demo it was left on.\n\n"
+                            "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
+                            "(card id), or a question for the owner.\n- `look-check.sh` evidence for each screen that changed; "
+                            "`map.md` updated.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
+                            "data. Never start a build: new app behaviour is designed, prototyped if needed, and waits for the "
+                            "owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input).\n\n## Boundaries\nOwns: "
+                            "`vault/design/`. Do not touch: `workspace/`, `vault/product/`, `00-status.md`.\n\n## Stop when\nThe "
+                            "round is live and the handoff has a line per note.\n")
+                    args = ["kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer", "--body", body,
+                            "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
+                            "--idempotency-key", batch, "--json"] + (["--initial-status", "blocked"] if warm else [])
+                    card = json.loads(hermes(*args)).get("id")
+                    if card and warm:
+                        warm_round("designer", card, round_text(batch, drafts, where, card, summary))
         except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
             card = None                          # no card: the Manager routes it instead (the batch page is saved either way)
         if card:
@@ -543,6 +740,15 @@ li{{margin:.6rem 0}}.dim{{color:#9aa0ad}}code{{background:#1d1f23;padding:.1rem 
         path = urlparse(self.path).path
         if path == "/shoot":
             return self.shoot()
+        if path == "/check":
+            if self.client_address[0] != "127.0.0.1":
+                return self._send(403, '{"error":"localhost only"}')
+            try:
+                d = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                out = look_check(d["url"], int(d.get("width", 1440)), int(d.get("height", 900)), list(d.get("js", [])), d.get("shot"))
+            except (ValueError, KeyError) as e:
+                return self._send(400, json.dumps({"error": str(e)}))
+            return self._send(200, json.dumps(out))
         if not self.inbox_post(path):
             self._send(404, '{"error":"not found"}')
 

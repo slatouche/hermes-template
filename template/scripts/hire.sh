@@ -51,6 +51,7 @@ COMMIT="$HOME/.hermes/scripts/vault-commit.sh"
 DEFAULTS="$HOME/.hermes/scripts/hire-defaults.conf"
 COMPRESSION_ROLE_TOKENS=150000; ROLE_MAX_TURNS=90; ROLE_BUDGET_WARNING=0.8; EFFORT=medium
 ROLE_DISABLED_TOOLSETS='["image_gen","video_gen","computer_use","tts","cronjob","connections","clarify"]'
+ROLE_SKILL_CATEGORIES_OFF="apple autonomous-ai-agents email media note-taking social-media productivity"
 # shellcheck disable=SC1090
 [ -f "$DEFAULTS" ] && source "$DEFAULTS"
 
@@ -141,7 +142,15 @@ EOF
   hermes -p "$ROLE" config set agent.budget_warning_ratio "$ROLE_BUDGET_WARNING" >/dev/null
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null
   hermes -p "$ROLE" config set agent.verify_on_stop "$R_VERIFY" >/dev/null
-  hermes -p "$ROLE" config set --force skills.disabled '["llm-wiki"]' >/dev/null   # the vault has its own rules
+  # Skills: every skill's name and summary rides along on every model call, so a hired bot loads only what its
+  # work can use: whole bundled categories are switched off (a role file can keep some: skill_categories_on), and
+  # llm-wiki always (the vault has its own rules).
+  off=(llm-wiki); on=" $(fmv skill_categories_on | tr ',' ' ') "
+  for cat in $ROLE_SKILL_CATEGORIES_OFF; do
+    [[ "$on" == *" $cat "* ]] && continue
+    for d in "$P/skills/$cat"/*/; do [ -f "$d/SKILL.md" ] && off+=("$(basename "$d")"); done
+  done
+  hermes -p "$ROLE" config set --force skills.disabled "$(python3 -c 'import json,sys; print(json.dumps(sys.argv[1:]))' "${off[@]}")" >/dev/null
   hermes -p "$ROLE" config set --force agent.disabled_toolsets "$ROLE_DISABLED_TOOLSETS" >/dev/null
   hermes -p "$ROLE" tools enable kanban >/dev/null
   hermes -p "$ROLE" tools enable --platform discord kanban >/dev/null
