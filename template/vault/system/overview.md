@@ -61,7 +61,7 @@ Anything the owner opens (an app, a page, an API) runs as a systemd user service
 |---|---|---|
 | `vault-sweep` | every 15 min | Regenerates `index.md`, commits leftover vault changes |
 | `vault-lint` | 02:15 daily | Checks the vault; silent when clean, fails loudly on problems |
-| `host-facts` | 03:05 daily | Rewrites `system/host.md`: OS, hardware, LAN address, port block, running app services, tools |
+| `host-facts` | 03:05 daily | Rewrites [[system/host]] (`system/host.md`): OS, hardware, LAN address, port block, running app services, tools |
 | `workspace-tidy` | hourly at :40 | Removes finished card worktrees and card branches already merged into main; never touches unmerged work |
 
 **The Manager's jobs** (Manager profile; a script runs first and wakes the Manager only when it finds something, so quiet runs cost no tokens; scripts in `~/.hermes/profiles/manager/scripts/`):
