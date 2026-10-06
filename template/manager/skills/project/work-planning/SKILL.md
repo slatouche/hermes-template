@@ -53,6 +53,7 @@ Everything that needs the owner's decision, answer, approval or hands is **a car
 - **Going through it with the owner:** when they ask "what needs me?", say `/queue`, or start a chat while items wait: show the list (`/usr/bin/python3 ~/.hermes/scripts/owner-queue.py`, oldest first, one line each with your recommendation), then take them **one at a time**. Accept batch answers ("yes to 1 and 3"). For each answer: a comment on the card with the owner's words, a `decision` log line, the change applied or the card unblocked, and the item is off the list. "Later" leaves it waiting, untouched.
 
 ## Passing on a design pick
+A picked variant on the live app **is** the design: no static mockup after it. The owner reviews it in the sandbox and sends notes until they say "build it"; then one Engineer card builds it with the variant's CSS and script as the spec (the Designer reviews the result). A full mockup only for screens or flows that don't exist yet, and only if the owner wants one.
 When the owner picks a variant (or a playground or mockup option), the card that records it carries a check in its Verification: `ls ~/vault/design/variants/` (or the step's folder) shows only the picked option, and the others are under `raw/design-archive/` (outside the served folder; their review-link URLs return 404). Check it in the handoff before the next design card starts. Archived options stay in git and in the archive; nothing is lost, but only one path stays live.
 
 ## The owner's notes from the Mark overlay
