@@ -50,6 +50,7 @@ LOG="$HOME/.hermes/scripts/vault-log.sh"
 COMMIT="$HOME/.hermes/scripts/vault-commit.sh"
 DEFAULTS="$HOME/.hermes/scripts/hire-defaults.conf"
 COMPRESSION_ROLE_TOKENS=150000; ROLE_MAX_TURNS=90; ROLE_BUDGET_WARNING=0.8; EFFORT=medium
+ROLE_DISABLED_TOOLSETS='["image_gen","video_gen","computer_use","tts","cronjob","connections","clarify"]'
 # shellcheck disable=SC1090
 [ -f "$DEFAULTS" ] && source "$DEFAULTS"
 
@@ -141,6 +142,7 @@ EOF
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null
   hermes -p "$ROLE" config set agent.verify_on_stop "$R_VERIFY" >/dev/null
   hermes -p "$ROLE" config set --force skills.disabled '["llm-wiki"]' >/dev/null   # the vault has its own rules
+  hermes -p "$ROLE" config set --force agent.disabled_toolsets "$ROLE_DISABLED_TOOLSETS" >/dev/null
   hermes -p "$ROLE" tools enable kanban >/dev/null
   hermes -p "$ROLE" tools enable --platform discord kanban >/dev/null
   hermes -p "$ROLE" tools enable --platform api_server kanban >/dev/null
