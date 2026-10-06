@@ -1,7 +1,7 @@
 /* Mark overlay: the owner marks things on a page and the notes go to the project's feedback inbox.
    Loaded by the "Mark" bookmarklet from the inbox (__INBOX__ is filled in when it's served).
    Mark = click an element; Area = drag a box. Type what's wrong, Save (Ctrl+Enter). Esc stops.
-   Saved notes are drafts (amber pins: click one to change or delete it) until Send hands them all to the team at once;
+   Saved notes are drafts (amber pins: click one to change or delete it) until Send hands this link's drafts to the team;
    sent notes leave no pins. Works with a mouse, a pen or a finger.
    Everything lives in a shadow root so the page's styles can't touch it, and it never changes the page. */
 (() => {
@@ -292,8 +292,8 @@
   $(".send").onclick = () => {
     if (!drafts) return;
     setMode(null); closePop(); sending = true;
-    const across = cfg && (cfg.mockup || cfg.demo) ? " (from the mockup and the demos)" : "";
-    ask(`Send ${drafts} note${drafts === 1 ? "" : "s"}${across} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
+    const from = cfg && cfg.demo ? ` from ${cfg.demo.replace(/^demo/i, "demo")}` : cfg && cfg.mockup ? " from the mockup" : "";
+    ask(`Send ${drafts} note${drafts === 1 ? "" : "s"}${from} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
         "", "Anything to say about them overall? (optional)");
   };
   // Keys typed in a note never reach the app (its own shortcuts would fire).

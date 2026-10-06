@@ -223,13 +223,16 @@ def set_field(f, field, value):
 
 
 def in_scope(n, scope):
-    """Which drafts one Send covers. ("design", None): every draft from the design links (the mockup and the demo
-    slots), so one review pass across them is one batch. ("app", name): the drafts left on that one app's review link."""
-    kind, name = scope
-    src = (n.get("source") or {}).get("kind")
-    if kind == "design":
-        return src in ("mockup", "demo")
-    return src not in ("mockup", "demo") and (not name or n.get("app") == name)
+    """Which drafts one Send covers: only those left on the link it's pressed on (the mockup, demo 1, demo 2 or an
+    app), matched by the link's port so a demo slot that gets a new label keeps its drafts. scope = (kind, port, name);
+    the bookmarklet (no review link) matches by app name instead."""
+    kind, port, name = scope
+    if port:
+        try:
+            return urlparse(n.get("page") or "").port == port
+        except ValueError:
+            return False
+    return not name or n.get("app") == name
 
 
 def source_label(n):
@@ -242,8 +245,8 @@ DESIGN_ROUND = "Owner design round"
 
 
 def send(scope, summary=""):
-    """The owner pressed Send: every draft in scope becomes one batch of open notes, listed by where each was left
-    (the mockup, demo 1 or 2 and what it shows, or the app). Design batches go straight to the Designer as one card (or
+    """The owner pressed Send: the drafts left on this link (the mockup, demo 1 or 2, or an app) become one batch of
+    open notes, listed by where they were left. Design batches go straight to the Designer as one card (or
     join the round already waiting for it); the rest wake the Manager to route them."""
     drafts = [n for n in notes("draft") if in_scope(n, scope)]
     if not drafts:
@@ -278,7 +281,7 @@ def send(scope, summary=""):
         r = subprocess.run(["hermes", *args], capture_output=True, text=True, env=env, timeout=60)
         return r.stdout
 
-    if scope[0] == "design" and (HOME / ".hermes" / "profiles" / "designer").is_dir():
+    if scope[0] in ("mockup", "demo") and (HOME / ".hermes" / "profiles" / "designer").is_dir():
         card = None
         try:
             # A round that hasn't started yet takes this batch too: one round, not a queue of them.
@@ -414,7 +417,7 @@ class Base(BaseHTTPRequestHandler):
         return False
 
     def scope(self):                 # which drafts a Send from here covers (see in_scope)
-        return ("app", self.app_name)
+        return ("app", None, self.app_name)
 
     def source(self):                # where a note was left, recorded on it
         return {"kind": "app", "label": self.app_name or "a page (bookmarklet)"}
@@ -533,7 +536,7 @@ li{{margin:.6rem 0}}.dim{{color:#9aa0ad}}code{{background:#1d1f23;padding:.1rem 
             self._send(404, '{"error":"not found"}')
 
 
-def mirror_handler(app_port, name):
+def mirror_handler(app_port, name, review_port=None):
     class Mirror(Base):
         prefix = "/__mark"
         app_name = name
@@ -559,7 +562,7 @@ def mirror_handler(app_port, name):
             return self.kind() != "app" or "design" in name.lower()
 
         def scope(self):
-            return ("design", None) if self.kind() != "app" else ("app", name)
+            return (self.kind(), review_port, name)
 
         def source(self):
             k = self.kind()
@@ -674,7 +677,7 @@ if __name__ == "__main__":
     servers = [ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1])), Inbox)]
     for rp, ap, name in mirrors():
         try:
-            servers.append(ThreadingHTTPServer(("0.0.0.0", rp), mirror_handler(ap, name)))
+            servers.append(ThreadingHTTPServer(("0.0.0.0", rp), mirror_handler(ap, name, rp)))
         except OSError as e:
             print(f"feedback-inbox: review port {rp} for {name}: {e}", file=sys.stderr)
     for s in servers[1:]:
