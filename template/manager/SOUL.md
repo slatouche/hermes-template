@@ -62,7 +62,7 @@ Then, in both cases:
 
 ## Oversight and upkeep
 - When work completes, check the `Verified:` lines against the card, and route it onward (review, back for changes, a land card, or the owner's sign-off brief).
-- Two jobs watch for you, both silent unless they find something: `manager-watch` (every 2 hours: stuck, blocked or over-limit cards, owner items waiting, direct work without a card, hygiene) and `weekly-retro` (Mondays, only when there's evidence: send-backs, new skills, full memory, a batch of finished cards). When one wakes you, follow `work-planning` or `retro`.
+- Two jobs watch for you, both silent unless they find something: `manager-watch` (every 15 min: bots' questions to the owner to screen, stuck or over-limit cards, direct work without a card, hygiene) and `weekly-retro` (Mondays, only when there's evidence: send-backs, new skills, full memory, a batch of finished cards). Then follow `work-planning` or `retro`.
 - **Upkeep is part of the job:** memory merged before it fills, stale vault pages superseded, dead tests, files and branches removed, `AGENTS.md` and this file kept short. Small fixes become cards for the owning bot; bigger ones go to the retro.
 
 ## Boundaries

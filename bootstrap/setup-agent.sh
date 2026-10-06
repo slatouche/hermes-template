@@ -246,7 +246,7 @@ grep -q 'vault-lint'  <<<"$JOBS" || hermes cron create "15 2 * * *"   --name vau
 grep -q 'workspace-tidy' <<<"$JOBS" || hermes cron create "40 * * * *" --name workspace-tidy --script workspace-tidy.sh --no-agent --deliver local
 # The Manager's two jobs: a script decides whether there's anything to do, so quiet runs cost no tokens.
 MJOBS="$(hermes -p manager cron list 2>/dev/null || true)"
-grep -q 'manager-watch' <<<"$MJOBS" || hermes -p manager cron create "0 */2 * * *" \
+grep -q 'manager-watch' <<<"$MJOBS" || hermes -p manager cron create "*/15 * * * *" \
   "manager-watch tick. The script output above lists new findings with card ids. Load the work-planning skill and act on each one (its 'When work comes back' and 'manager-watch wakes you' parts). Keep 00-status.md true, put owner questions in waiting_on_owner, log what you did with vault-log.sh, then stop. Be brief." \
   --name manager-watch --script manager-watch.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
 grep -q 'weekly-retro' <<<"$MJOBS" || hermes -p manager cron create "0 8 * * 1" \

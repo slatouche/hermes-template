@@ -521,12 +521,12 @@ def send(scope, summary=""):
         if card:
             set_field(INBOX / f"{batch}.md", "card", card)
             return batch, len(drafts), "Designer"
-    # Otherwise wake the Manager now instead of at the next 2-hourly watch (it runs on the scheduler's next tick).
+    # Otherwise wake the Manager now instead of at the next 15-minute watch (it runs on the scheduler's next tick).
     try:
         subprocess.Popen(["hermes", "-p", "manager", "cron", "run", "manager-watch"], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, env=env)
     except OSError:
-        pass                                     # the 2-hourly watch still picks the batch up
+        pass                                     # the 15-minute watch still picks the batch up
     return batch, len(drafts), "Manager"
 
 

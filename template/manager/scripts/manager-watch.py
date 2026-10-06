@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""manager-watch: the Manager's zero-token sweep (Hermes cron, every 2 hours, Manager profile).
+"""manager-watch: the Manager's zero-token sweep (Hermes cron, every 15 minutes, Manager profile; no model call unless it finds something).
 
 Reads the board, the status page, the log and a few hygiene signals, with no model. Prints only NEW findings
 (or ones still open a day later) and lets the Manager wake for those; otherwise its last line is
@@ -66,6 +66,14 @@ def findings():
         if st in ("blocked", "triage") and not owners and NOW - last > DAY:
             reason = last_block.get("reason") or ""
             f[f"stuck:{tid}"] = f"{tid} '{title}' has been {st} for {int((NOW - last) // 3600)} h: {reason[:150]}"
+        # A bot asked the owner something: screen it once, fast. Most such questions are the team's to settle (a
+        # technical or testing call, a conflict between a card's own constraints, something the lessons already
+        # answer), and the work behind it waits until someone answers.
+        if st == "blocked" and last_block.get("kind") == "needs_input" and t.get("assignee") not in ("manager", None) \
+                and not title.startswith("Owner:"):
+            f[f"ask:{tid}:{int(last)}"] = (f"{t.get('assignee')} blocked {tid} '{title}' for the owner: "
+                                           f"{(last_block.get('reason') or '')[:300]} -- is it really the owner's? If not, "
+                                           "answer it yourself, comment why and unblock (work-planning: What needs the owner)")
         if sendbacks >= 2:
             f[f"sendback:{tid}:{sendbacks}"] = f"{tid} '{title}' was sent back {sendbacks} times"
         if st == "running" and t.get("started_at"):
