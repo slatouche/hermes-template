@@ -88,17 +88,19 @@
     });
   };
 
-  // The look badge: which look is on (one click switches it, on the same screen) and, on a design sandbox, its snapshot.
+  // The badge: on the mockup, its snapshot and which look is on (one click switches it, on the same screen); on a
+  // demo slot, which demo this is.
   const look = $(".look"), cfg = window.__markBadge;
   if (cfg) {
     const sw = (v) => { const u = new URL(location.href); u.searchParams.set("__variant", v); location.href = u.pathname + u.search + u.hash; };
     const add = (tag, text, fn) => { const n = document.createElement(tag); n.textContent = text; if (fn) n.onclick = fn; look.appendChild(n); return n; };
-    look.classList.toggle("sb", !!cfg.sandbox);
-    if (cfg.sandbox) {
-      add("span", "Sandbox").title = cfg.sandbox + " · a copy: nothing here touches your real data";
+    look.classList.toggle("sb", !!(cfg.mockup || cfg.demo));
+    if (cfg.demo) add("span", cfg.demo.replace(/^demo/i, "Demo")).title = "A demo of something new: nothing here touches your real data";
+    if (cfg.mockup) {
+      add("span", "Mockup").title = cfg.mockup + " · a copy of the app: nothing here touches your real data";
       add("button", "reset data", () => {
-        if (confirm("Put the sandbox data back to a fresh copy of the real data?"))
-          fetch(INBOX + "/sandbox/reset", { method: "POST" }).then(() => location.reload());
+        if (confirm("Put the mockup's data back to a fresh copy of the real data?"))
+          fetch(INBOX + "/mockup/reset", { method: "POST" }).then(() => location.reload());
       });
     }
     if (cfg.looks.length) {
@@ -110,7 +112,7 @@
     const min = add("button", "–", () => {
       if (look.dataset.dragged) return;
       const small = !look.classList.contains("small");
-      look.classList.toggle("small", small); min.textContent = small ? (cfg.sandbox ? "S" : "V") : "–";
+      look.classList.toggle("small", small); min.textContent = small ? (cfg.demo ? "D" + (cfg.demo.match(/\d/) || [""])[0] : cfg.mockup ? "Mo" : "V") : "–";
       min.title = small ? "Show the look badge" : "Make it small"; store("markLookSmall", small ? "1" : undefined);
     });
     min.className = "min"; min.title = "Make it small";
@@ -290,7 +292,8 @@
   $(".send").onclick = () => {
     if (!drafts) return;
     setMode(null); closePop(); sending = true;
-    ask(`Send ${drafts} note${drafts === 1 ? "" : "s"} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
+    const across = cfg && (cfg.mockup || cfg.demo) ? " (from the mockup and the demos)" : "";
+    ask(`Send ${drafts} note${drafts === 1 ? "" : "s"}${across} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
         "", "Anything to say about them overall? (optional)");
   };
   // Keys typed in a note never reach the app (its own shortcuts would fire).
@@ -341,7 +344,7 @@
     // Only your unsent drafts have pins: once sent, a note is the team's and leaves the page.
     try { open = await (await fetch(INBOX + "/notes?status=draft&page=" + encodeURIComponent(location.href))).json(); } catch (_) { open = []; }
     drawn = null;                                    // always redraw after a load, even down to no pins
-    try { drafts = (await (await fetch(INBOX + "/notes?status=draft" + (APP ? "&app=" + encodeURIComponent(APP) : ""))).json()).length; } catch (_) { drafts = 0; }
+    try { drafts = (await (await fetch(INBOX + "/notes?status=draft&scope=mine")).json()).length; } catch (_) { drafts = 0; }
     draw();
   };
   addEventListener("hashchange", load);           // single-page apps: each #route has its own pins

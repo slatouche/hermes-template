@@ -10,7 +10,8 @@ Two ways in:
   through; WebSockets don't.
 - **The bookmarklet** on http://<host>:<inbox port>/ for any other page (works where the browser allows the request).
 
-Design variants (the Designer's quick options on the real app, no rebuild): a folder vault/design/variants/<name>/ with
+Design links: the mockup (a copy of an app, mockup.sh) and two demo slots for new things (demo.sh), each with the
+Mark tool; every note records which one it was left on. Design variants (the Designer's looks on the mockup): a folder vault/design/variants/<name>/ with
 style.css (and optionally script.js for small DOM moves with placeholder content, note.md: a title line and two lines
 of why, and screenshots). On a review link, `?__variant=<name>` turns it on (a cookie keeps it while you click around),
 `?__variant=off` turns it off, and /__mark/variants shows every variant side by side with a "try it live" link.
@@ -39,7 +40,7 @@ SCRIPTS = HOME / ".hermes" / "scripts"
 OVERLAY = SCRIPTS / "feedback-overlay.js"
 MIRRORS = SCRIPTS / "review-mirrors.conf"
 VARIANTS = HOME / "vault" / "design" / "variants"
-SANDBOXES = SCRIPTS / "sandboxes.conf"
+MOCKUPS = SCRIPTS / "mockups.conf"
 MAX = 4000
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
        "transfer-encoding", "upgrade", "content-length", "accept-encoding", "content-encoding"}
@@ -84,6 +85,7 @@ def render(rec, status, now, stem=None):
             f"updated: {now:%Y-%m-%d}\nsummary: \"Owner feedback on {clean(rec.get('app') or rec.get('title') or rec.get('page'), 60)}: {summary}\"\n"
             f"tags: [feedback]\ncard: none\n---\n"
             f"# {summary}\n\n{quoted}\n\n- **App / page:** {rec.get('app') or '-'} · {rec.get('page')}\n"
+            + (f"- **Left on:** {(rec.get('source') or {}).get('label')}\n" if (rec.get("source") or {}).get("label") else "")
             + (f"- **Variant on:** `design/variants/{rec['variant']}/`\n" if rec.get("variant") else "")
             + (f"- **Snip:** ![what was marked]({stem}.png) (the page opened fresh; the app's own state may differ)\n"
                if stem and (INBOX / f"{stem}.png").exists() else "") +
@@ -103,13 +105,13 @@ def save(d):
         raise ValueError("empty note")
     slug = re.sub(r"[^a-z0-9]+", "-", note.lower())[:40].strip("-") or "note"
     stem = f"{now:%Y-%m-%d-%H%M%S}-{slug}"
-    rec = {k: d.get(k) for k in ("page", "app", "variant", "title", "kind", "selector", "text", "rect", "viewport", "scroll",
-                                 "anchor", "elements", "ua")}
+    rec = {k: d.get(k) for k in ("page", "app", "source", "variant", "title", "kind", "selector", "text", "rect", "viewport",
+                                 "scroll", "anchor", "elements", "ua")}
     rec["note"] = note
     rec = {k: (clean(v, 600) if isinstance(v, str) and k != "note" else v) for k, v in rec.items()}
     status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
     (INBOX / f"{stem}.md").write_text(render(rec, status, now), encoding="utf-8")
-    if d.get("_snip"):      # only where opening the page can't touch real data (a sandbox or a design link)
+    if d.get("_snip"):      # only where opening the page can't touch real data (the mockup or a demo)
         threading.Thread(target=snip, args=(stem, rec), daemon=True).start()
     log = SCRIPTS / "vault-log.sh"
     if log.exists() and status == "open":
@@ -220,10 +222,30 @@ def set_field(f, field, value):
     f.write_text(t, encoding="utf-8")
 
 
-def send(app, summary="", design=False):
-    """The owner pressed Send: every draft for this app becomes one batch of open notes. From a design review (design=True)
-    it goes straight to the Designer as one card; otherwise the Manager is woken to route it."""
-    drafts = [n for n in notes("draft") if not app or n.get("app") == app]
+def in_scope(n, scope):
+    """Which drafts one Send covers. ("design", None): every draft from the design links (the mockup and the demo
+    slots), so one review pass across them is one batch. ("app", name): the drafts left on that one app's review link."""
+    kind, name = scope
+    src = (n.get("source") or {}).get("kind")
+    if kind == "design":
+        return src in ("mockup", "demo")
+    return src not in ("mockup", "demo") and (not name or n.get("app") == name)
+
+
+def source_label(n):
+    src = n.get("source") or {}
+    label = src.get("label") or n.get("app") or "the app"
+    return label + (f", look `{n['variant']}`" if n.get("variant") else "")
+
+
+DESIGN_ROUND = "Owner design round"
+
+
+def send(scope, summary=""):
+    """The owner pressed Send: every draft in scope becomes one batch of open notes, listed by where each was left
+    (the mockup, demo 1 or 2 and what it shows, or the app). Design batches go straight to the Designer as one card (or
+    join the round already waiting for it); the rest wake the Manager to route them."""
+    drafts = [n for n in notes("draft") if in_scope(n, scope)]
     if not drafts:
         return None, 0, None
     now = datetime.datetime.now()
@@ -232,41 +254,61 @@ def send(app, summary="", design=False):
         f = INBOX / f"{n['id']}.md"
         set_field(f, "status", "open")
         set_field(f, "batch", batch)
-    variants = sorted({n["variant"] for n in drafts if n.get("variant")})
-    lines = "".join(f"- [[raw/feedback/{n['id']}]]" + (f" (variant `{n['variant']}`)" if n.get("variant") else "")
-                    + f": {clean(n.get('note'), 200).splitlines()[0]}\n" for n in drafts)
+    groups = {}
+    for n in drafts:
+        groups.setdefault(source_label(n), []).append(n)
+    lines = "".join(f"\n**{label}**\n" + "".join(f"- [[raw/feedback/{n['id']}]]: {clean(n.get('note'), 200).splitlines()[0]}\n"
+                                                  for n in ns) for label, ns in groups.items())
+    where = ", ".join(groups)
     summary = clean(summary, MAX).strip()
-    on = f" on variant {', '.join(variants)}" if variants else ""
     (INBOX / f"{batch}.md").write_text(
-        f"---\ntitle: \"Owner feedback batch: {len(drafts)} notes{on}\"\ntype: research\nstatus: open\nowner: manager\n"
-        f"updated: {now:%Y-%m-%d}\nsummary: \"{len(drafts)} notes the owner sent together{on}\"\ntags: [feedback, batch]\n"
-        f"card: none\n---\n# Owner feedback: {len(drafts)} notes, sent together\n\n"
-        + ("\n".join("> " + ln for ln in summary.splitlines()) + "\n\n" if summary else "")
-        + lines + "\n_One review pass: card it as one round for the bot that owns it (the Designer when a variant was on), "
-        "then set `status: done` and `card:` here and on each note._\n", encoding="utf-8")
+        f"---\ntitle: \"Owner feedback batch: {len(drafts)} notes\"\ntype: research\nstatus: open\nowner: manager\n"
+        f"updated: {now:%Y-%m-%d}\nsummary: \"{len(drafts)} notes the owner sent together, from {where[:120]}\"\n"
+        f"tags: [feedback, batch]\ncard: none\n---\n# Owner feedback: {len(drafts)} notes, sent together\n\n"
+        + ("\n".join("> " + ln for ln in summary.splitlines()) + "\n" if summary else "")
+        + lines + "\n_One review pass: card it as one round for the bot that owns it (the Designer for the mockup and the "
+        "demos), then set `status: done` and `card:` here and on each note._\n", encoding="utf-8")
     log = SCRIPTS / "vault-log.sh"
     if log.exists():
-        subprocess.run([str(log), "owner", "note", f"Sent {len(drafts)} feedback notes{on}"
+        subprocess.run([str(log), "owner", "note", f"Sent {len(drafts)} feedback notes ({where[:80]})"
                         + (f": {summary.splitlines()[0][:80]}" if summary else ""), f"raw/feedback/{batch}"], capture_output=True)
     env = {**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"}
-    if design and (HOME / ".hermes" / "profiles" / "designer").is_dir():
-        # Notes from a design review go straight to the Designer as one round: no Manager hop in between.
-        body = (f"Context: the owner's design feedback, sent together from the design sandbox: `vault/raw/feedback/{batch}.md` "
-                f"({len(drafts)} notes{on}). One round: read every note (each has the page, the element and the screen size). "
-                "Review: none (the owner reviews it on the variants page).\n\n## Outcome\nEvery note answered in the live variant "
-                "on the sandbox. If the round is big (many changes, several screens, or a note that needs research or the Engineer), "
-                "split it: do the first part here and card the rest for yourself, chained, so the owner sees progress early.\n\n"
-                "## Verification\n- A line per note in the handoff: done (what changed), carded (card id), or a question for the owner.\n"
-                "- `variant-shot.sh` shots of the screens that changed; the variants page answers 200.\n"
-                "- The batch page and each note: `status: done`, `card:` this card's id.\n\n## Constraints\nVariants and the sandbox "
-                "only; never the real app or its data.\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, "
-                "`vault/product/`, `00-status.md`.\n\n## Stop when\nThe round is live on the variants page and the handoff has a line per note.\n")
+
+    def hermes(*args):
+        r = subprocess.run(["hermes", *args], capture_output=True, text=True, env=env, timeout=60)
+        return r.stdout
+
+    if scope[0] == "design" and (HOME / ".hermes" / "profiles" / "designer").is_dir():
+        card = None
         try:
-            r = subprocess.run(["hermes", "kanban", "create", f"Owner design round: {len(drafts)} notes", "--assignee", "designer",
-                                "--body", body, "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
-                                "--idempotency-key", batch, "--json"], capture_output=True, text=True, env=env, timeout=60)
-            card = json.loads(r.stdout).get("id")
-        except (OSError, ValueError, subprocess.SubprocessError):
+            # A round that hasn't started yet takes this batch too: one round, not a queue of them.
+            waiting = [t for t in json.loads(hermes("kanban", "list", "--json") or "[]")
+                       if t.get("assignee") == "designer" and t.get("status") in ("ready", "todo")
+                       and str(t.get("title", "")).startswith(DESIGN_ROUND)]
+            if waiting:
+                card = waiting[0]["id"]
+                hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}): "
+                       f"`vault/raw/feedback/{batch}.md`, {len(drafts)} notes from {where}. Do them in the same round; "
+                       "if one repeats an earlier note, say so and treat them as one.")
+            else:
+                body = (f"Context: the owner's design feedback, sent together: `vault/raw/feedback/{batch}.md` ({len(drafts)} notes "
+                        f"from {where}). Each note says where it was left (the mockup, a demo slot and what it shows), the "
+                        "element, the screen size, and often a picture. Review: none (the owner reviews it on the mockup).\n\n"
+                        "## Outcome\nEvery note answered where it belongs: mockup notes in the mockup's look; demo notes in that "
+                        "demo. A note that repeats an earlier one (sent before, or done already): say so and treat them as one. "
+                        "If the round is big (many changes, several screens, or a note that needs research or the Engineer), do "
+                        "the first part here and card the rest for yourself, chained, so the owner sees progress early.\n\n"
+                        "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
+                        "(card id), or a question for the owner.\n- `variant-shot.sh` shots of the mockup screens that changed; "
+                        "the variants page and any demo answer 200.\n- The batch page and each note: `status: done`, `card:` "
+                        "this card's id.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
+                        "data.\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, `vault/product/`, "
+                        "`00-status.md`.\n\n## Stop when\nThe round is live on the mockup (and demos) and the handoff has a line "
+                        "per note.\n")
+                card = json.loads(hermes("kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer",
+                                         "--body", body, "--workspace", f"dir:{HOME}", "--max-runtime", "30m",
+                                         "--created-by", "owner", "--idempotency-key", batch, "--json")).get("id")
+        except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
             card = None                          # no card: the Manager routes it instead (the batch page is saved either way)
         if card:
             set_field(INBOX / f"{batch}.md", "card", card)
@@ -306,11 +348,11 @@ def variant_list():
     return out
 
 
-def sandboxes():
-    """{sandbox port: name} from sandbox.sh's list: copies of an app, safe to click around in."""
+def mockups():
+    """{mockup port: name} from mockup.sh's list: copies of an app, safe to click around in."""
     out = {}
-    if SANDBOXES.exists():
-        for line in SANDBOXES.read_text().splitlines():
+    if MOCKUPS.exists():
+        for line in MOCKUPS.read_text().splitlines():
             p = line.split("|")
             if len(p) >= 2 and p[1].strip().isdigit() and not line.lstrip().startswith("#"):
                 out[int(p[1])] = p[0].strip()
@@ -318,7 +360,7 @@ def sandboxes():
 
 
 def variants_page(base=""):
-    """base: where "try it live" opens, "" for this link or "//host:port" for the design sandbox's link."""
+    """base: where "try it live" opens, "" for this link or "//host:port" for the mockup's link."""
     esc = html.escape
     cards = ""
     for v in variant_list():
@@ -334,21 +376,22 @@ def variants_page(base=""):
 a{{color:#9db8ff}}.bm{{display:inline-block;padding:.45rem .9rem;border-radius:.5rem;background:#2d5bff;color:#fff;text-decoration:none;font-weight:600}}
 section{{border-top:1px solid #2a2c31;padding:1rem 0}}.dim{{color:#9aa0ad;margin:.2rem 0 .6rem}}h2{{margin:0;font-size:1.1rem}}
 .shots{{display:flex;gap:.6rem;overflow-x:auto;margin-bottom:.7rem}}.shots a{{flex:none}}.shots img{{display:block;height:min(24rem,62vw);width:auto;border:1px solid #2a2c31;border-radius:.4rem}}</style>
-<h1>Design variants</h1><p class=dim>Each is the app with a different look{' (a sandbox copy: nothing you do touches your real data)' if base else ''}.
+<h1>Design variants</h1><p class=dim>Each is the app with a different look{' (on the mockup: a copy, so nothing you do touches your real data)' if base else ''}.
 Try one, click around, Mark what you think, then Send.</p>{cards or '<p class=dim>No variants yet.</p>'}"""
 
 
-def badge(variant, sandbox):
-    """What the Mark overlay's look badge shows (bottom-left): every look as a one-click switch, and on a sandbox, which
-    snapshot it is. The overlay draws it in its own layer, so the app can't swallow its clicks, and it folds away."""
-    names = [v["name"] for v in variant_list() if v["name"] != "current"]
-    if not variant and not sandbox and not names:
+def badge(variant, mockup, demo=None, looks=True):
+    """What the Mark overlay's badge shows (bottom-left): on the mockup, its snapshot and every look as a one-click
+    switch; on a demo slot, which demo it is. The overlay draws it in its own layer, so the app can't swallow its
+    clicks, and it folds away."""
+    names = [v["name"] for v in variant_list() if v["name"] != "current"] if looks and not demo else []
+    if not variant and not mockup and not names and not demo:
         return b""
     info = None
-    if sandbox:
-        sf = HOME / "sandbox" / sandbox / "SNAPSHOT"
+    if mockup:
+        sf = HOME / "mockup" / mockup / "SNAPSHOT"
         info = sf.read_text(encoding="utf-8").strip() if sf.exists() else "a copy of the app"
-    cfg = {"variant": variant, "looks": names, "sandbox": info}
+    cfg = {"variant": variant, "looks": names, "mockup": info, "demo": demo}
     data = json.dumps(cfg).replace("<", "\\u003c")
     return f"<script>window.__markBadge={data}</script>".encode()
 
@@ -369,6 +412,12 @@ class Base(BaseHTTPRequestHandler):
 
     def safe_to_open(self):
         return False
+
+    def scope(self):                 # which drafts a Send from here covers (see in_scope)
+        return ("app", self.app_name)
+
+    def source(self):                # where a note was left, recorded on it
+        return {"kind": "app", "label": self.app_name or "a page (bookmarklet)"}
 
     def _send(self, code, body, ctype="application/json", cors=True):
         data = body if isinstance(body, bytes) else body.encode()
@@ -391,7 +440,10 @@ class Base(BaseHTTPRequestHandler):
             return True
         if path == "/notes":
             q = parse_qs(query)
-            self._send(200, json.dumps(notes(q.get("status", ["open"])[0], q.get("page", [None])[0], q.get("app", [None])[0])))
+            found = notes(q.get("status", ["open"])[0], q.get("page", [None])[0], q.get("app", [None])[0])
+            if q.get("scope") == ["mine"]:        # the drafts a Send from this link would cover
+                found = [n for n in found if in_scope(n, self.scope())]
+            self._send(200, json.dumps(found))
             return True
         return False
 
@@ -405,6 +457,7 @@ class Base(BaseHTTPRequestHandler):
             try:
                 d = json.loads(raw or b"{}")
                 d.setdefault("app", self.app_name)
+                d["source"] = self.source()
                 d.setdefault("variant", self.current_variant())
                 d["_snip"] = self.safe_to_open()
                 self._send(201, json.dumps({"id": save(d)}))
@@ -416,7 +469,7 @@ class Base(BaseHTTPRequestHandler):
                 d = json.loads(raw or b"{}")
             except ValueError:
                 d = {}
-            batch, count, to = send(d.get("app") or self.app_name, d.get("summary", ""), self.is_design())
+            batch, count, to = send(self.scope(), d.get("summary", ""))
             self._send(200, json.dumps({"batch": batch, "sent": count, "to": to}))
             return True
         m = re.fullmatch(r"/notes/([\w-]+)/edit", path)
@@ -487,16 +540,32 @@ def mirror_handler(app_port, name):
 
         def current_variant(self):
             q = parse_qs(urlparse(self.path).query).get("__variant", [None])[0]
-            if q is None:
+            # Cookies are shared by every port on the host, so the look picked on the mockup would follow the owner onto
+            # the real app's link; there, only an explicit ?__variant= counts while a mockup exists.
+            if q is None and not (self.kind() == "app" and mockups()):
                 m = re.search(r"(?:^|;\s*)mark_variant=([\w-]+)", self.headers.get("Cookie", ""))
                 q = m.group(1) if m else None
             return q if q and q != "off" and (VARIANTS / q).is_dir() else None
 
-        def is_design(self):
-            return app_port in sandboxes() or bool(self.current_variant())
+        def kind(self):
+            if app_port in mockups():
+                return "mockup"
+            return "demo" if name.lower().startswith("demo") else "app"
 
-        def safe_to_open(self):      # a sandbox or a static design link: a headless visit can't change real data
-            return app_port in sandboxes() or "design" in name.lower()
+        def is_design(self):
+            return self.kind() != "app" or bool(self.current_variant())
+
+        def safe_to_open(self):      # the mockup or a demo (static pages): a headless visit can't change real data
+            return self.kind() != "app" or "design" in name.lower()
+
+        def scope(self):
+            return ("design", None) if self.kind() != "app" else ("app", name)
+
+        def source(self):
+            k = self.kind()
+            if k == "mockup":
+                return {"kind": k, "label": f"the mockup ({mockups()[app_port]})"}
+            return {"kind": k, "label": name if k == "demo" else f"{name} (the real app)"}
 
         def _variant_file(self, sub):
             m = re.fullmatch(r"/v/([\w-]+)/([\w.-]+)", sub)
@@ -509,14 +578,14 @@ def mirror_handler(app_port, name):
 
         def _proxy(self):
             u = urlparse(self.path)
-            sandbox = sandboxes().get(app_port)
+            mockup = mockups().get(app_port)
             if u.path == "/__mark/variants":
-                # "Try it live" goes to the design sandbox when there is one, so trying a look never touches real data.
-                sb = next(iter(sandboxes()), None)
-                base = "" if sandbox or not sb else f"//{(self.headers.get('Host') or '').split(':')[0]}:{sb + 50}"
+                # "Try it live" goes to the mockup when there is one, so trying a look never touches real data.
+                mk = next(iter(mockups()), None)
+                base = "" if mockup or not mk else f"//{(self.headers.get('Host') or '').split(':')[0]}:{mk + 50}"
                 return self._send(200, variants_page(base), "text/html")
-            if u.path == "/__mark/sandbox/reset" and self.command == "POST" and sandbox:
-                r = subprocess.run([str(SCRIPTS / "sandbox.sh"), "reset", sandbox], capture_output=True, text=True)
+            if u.path == "/__mark/mockup/reset" and self.command == "POST" and mockup:
+                r = subprocess.run([str(SCRIPTS / "mockup.sh"), "reset", mockup], capture_output=True, text=True)
                 return self._send(200 if r.returncode == 0 else 500, json.dumps({"ok": r.returncode == 0, "out": r.stdout[-300:] + r.stderr[-300:]}))
             if u.path.startswith("/__mark/v/"):
                 return self._variant_file(u.path[len("/__mark"):])
@@ -551,7 +620,9 @@ def mirror_handler(app_port, name):
                     vd = VARIANTS / v
                     tag += f'<link rel="stylesheet" href="/__mark/v/{v}/style.css">'.encode() if (vd / "style.css").exists() else b""
                     tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
-                tag += b"" if shot else badge(v, sandbox)
+                # Looks are tried on the mockup; the real app's link offers them only when there is no mockup.
+                tag += b"" if shot else badge(v, mockup, name if self.kind() == "demo" else None,
+                                              looks=self.kind() != "app" or not mockups())
                 sy = parse_qs(u.query).get("__scroll", ["0"])[0]
                 if shot and sy.isdigit() and int(sy):          # a snip: put the page at the owner's scroll position
                     tag += (f"<script>(()=>{{let n=0;const t=setInterval(()=>{{scrollTo(0,{int(sy)});if(++n>20)clearInterval(t)}},250)}})()"
