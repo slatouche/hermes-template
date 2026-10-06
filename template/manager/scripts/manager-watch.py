@@ -137,14 +137,12 @@ def findings():
             f["feedback:" + waiting[-1]] = (f"{len(waiting)} owner note(s) from the Mark overlay without a card "
                                             f"(raw/feedback/): " + ", ".join(waiting[:5]))
 
-    pg = HOME / "vault" / "design" / "playground"
-    if pg.is_dir():
-        live = [d for d in pg.iterdir() if d.is_dir()]
-        if len(live) > 2:
-            f[f"playgrounds:{len(live)}"] = f"{len(live)} design playgrounds open (cap 2): archive the unpicked ones"
-        for d in live:
-            if NOW - max((p.stat().st_mtime for p in d.rglob("*")), default=d.stat().st_mtime) > 14 * DAY:
-                f[f"playground-stale:{d.name}"] = f"design playground {d.name} untouched for 14+ days: archive it or ask the owner to pick"
+    for n in (1, 2):   # a demo slot left showing the same thing for two weeks: pick, move it into the mockup, or clear it
+        unit = HOME / ".config" / "systemd" / "user" / f"design-demo-{n}.service"
+        if unit.exists() and NOW - unit.stat().st_mtime > 14 * DAY:
+            what = next((ln.split(":", 1)[1].strip() for ln in unit.read_text().splitlines() if ln.startswith("Description=")), "")
+            f[f"demo-stale:{n}:{int(unit.stat().st_mtime)}"] = (f"demo {n} has shown '{what}' for 14+ days: ask the owner to pick, "
+                                                              "or bring it into the mockup, then demo.sh clear")
     va = HOME / "vault" / "design" / "variants"
     if va.is_dir():
         for d in va.iterdir():

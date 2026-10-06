@@ -31,7 +31,7 @@ Status is one of: `idea` → `shaping` → `ready` → `building` → `shipped`,
 ## Shaping a feature (the one at the top)
 1. **Interview just this feature** (`intake-interview`, about 3-8 questions): who uses it, what they do step by step, what "done" means, what's out. Write `product/features/<feature>.md`.
 2. **Research what's unknown** (a Researcher card: prior art, assets, licences, formats). Only what the next decision needs.
-3. **Storyboard** (a Designer card): the user's journey as 4-8 rough frames in the design playground, on the design review link. The owner marks it up; that's the cheapest place to change their mind.
+3. **Storyboard** (a Designer card): the user's journey as 4-8 rough frames, shown on a demo slot (`demo.sh`). The owner marks it up; that's the cheapest place to change their mind.
 4. **Slices:** cut the feature into thin end-to-end increments, each one usable on its own and visible on the app's review link (slice 1 is the smallest thing worth trying: often the happy path with one option). Write them in the feature page; the owner approves the list once.
 5. Status → `ready`, then `building` when its first slice is carded (and nothing else is `building`).
 
