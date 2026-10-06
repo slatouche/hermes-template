@@ -254,7 +254,7 @@ grep -q 'weekly-retro' <<<"$MJOBS" || hermes -p manager cron create "0 8 * * 1" 
   "weekly-retro. The script output above is the evidence pack since the last retro. Load the retro skill and follow it: causes, upkeep cards, and at most 5 proposed changes in system/changes/, then add one line to waiting_on_owner and stop." \
   --name weekly-retro --script retro-gate.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
 /usr/bin/python3 "$H/profiles/manager/scripts/retro-gate.py" --baseline    # today's skills are the starting point
-echo "Manager jobs: manager-watch (every 2 h), weekly-retro (Mondays 08:00); both silent unless their script finds something"
+echo "Manager jobs: manager-watch (every 15 min), weekly-retro (Mondays 08:00); both silent unless their script finds something"
 grep -q 'host-facts' <<<"$JOBS" || hermes cron create "5 3 * * *" --name host-facts --script host-facts.sh --no-agent --deliver local
 bash "$H/scripts/host-facts.sh" >/dev/null || true      # vault/system/host.md: where this runs, how apps are served
 
@@ -265,7 +265,7 @@ touch "$H/scripts/review-mirrors.conf"
 mkdir -p "$HOME/.config/systemd/user"
 # Card workers resume their topic session: the gateway launches workers through $HERMES_BIN (hermes-worker.py),
 # which adds `--resume` for a card with a `Session:` topic and runs everything else unchanged.
-GW_REAL="$(grep -o 'ExecStart="[^"]*"' "$HOME/.config/systemd/user/hermes-gateway.service" 2>/dev/null | cut -d'"' -f2)"
+GW_REAL="$(grep -o 'ExecStart="[^"]*"' "$HOME/.config/systemd/user/hermes-gateway.service" 2>/dev/null | cut -d'"' -f2 || true)"   # the unit is created later on a first install
 GW_REAL="${GW_REAL:-$HOME/.local/bin/hermes}"
 mkdir -p "$HOME/.config/systemd/user/hermes-gateway.service.d"
 cat > "$HOME/.config/systemd/user/hermes-gateway.service.d/topic-sessions.conf" <<EOF

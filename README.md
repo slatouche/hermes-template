@@ -80,6 +80,13 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 - **`~/.hermes/scripts/run-eval.sh <bot>`:** a bot's fixed eval (`vault/system/evals/<bot>.md`), run before and after changing its SOUL or skills.
 - Skills kept from an imported project are rewritten and checked (`skill-check.py`) before any bot gets them; `hire.sh` refuses one that fails.
 
+## Working with your team
+- **Talk to the Manager** for anything: ideas, status ("where are we?"), "build it". You can also chat with a specialist directly (the Designer for design rounds); what's decided lands on the board and in the vault.
+- **What needs you** is a card blocked for you, and it waits as long as it takes. `/queue` in a Manager chat lists them; the Manager screens every new one within 15 minutes and answers the ones that aren't really yours.
+- **Mark it up:** every app the team serves has a review link with the Mark toolbar (click an element or drag an area, type, Save). Notes are drafts until you press **Send**, which hands that link's notes to the team as one round; each note records where it was left, what was inside the box and a cropped picture.
+- **Design:** the **mockup** is a copy of the app (your real data is never touched) with the Designer's looks on it; the badge switches looks. **Demo 1 and 2** show things the app doesn't have yet. When you're happy, say **"build it"**: the Engineer builds from the look, the Designer checks the app against the mockup.
+- **Cards remember:** a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
+
 ## Adding Discord later
 ```bash
 ssh p330-<name> "nano ~/.hermes/profiles/manager/.env"
@@ -100,14 +107,16 @@ Stops its services and deletes the user, folder, registry entry and firewall rul
 | `remove-project.sh` | Delete a project (run with sudo) |
 | `bootstrap/setup-agent.sh` | Part 2, run automatically as the agent user |
 | `template/manager/SOUL.md` | The Manager |
-| `template/manager/skills/` | The Manager's template skills: `intake-interview`, `project-takeover`, `work-planning`, `retro` |
+| `template/manager/skills/` | The Manager's template skills: `intake-interview`, `project-takeover`, `work-planning`, `roadmap`, `retro` |
 | `template/manager/scripts/` | The Manager's job scripts: `manager-watch.py`, `retro-gate.py` (zero-token gates) |
 | `template/workspace/scripts/run-tests.sh` | The one failures-only test command every bot runs |
 | `template/import/` | Files used only for an imported project (the onboarding status page) |
 | `template/workspace/` | The product repo's starting `AGENTS.md` (team table) and README |
 | `template/root-AGENTS.md` | Guardrails for the stock default profile |
 | `template/vault/` | The vault skeleton: SCHEMA, status, log, `system/` (overview, role catalogue, change proposals) |
-| `template/scripts/` | `vault-log`, `vault-commit`, `vault-index`, `vault-sweep`, `vault-lint`, `hire.sh`, `import-survey.py` |
+| `template/scripts/` | The project's tools: the vault (`vault-log`, `vault-commit`, `vault-index`, `vault-sweep`, `vault-lint`), hiring (`hire.sh`, `skill-check.py`), imports (`import-project.sh`, `import-survey.py`), the owner queue (`owner-queue.py`), the Mark tool and design links (`feedback-inbox.py`, `feedback-overlay.js`, `mockup.sh`, `demo.sh`, `variant-shot.sh`, `look-check.sh`), card sessions (`hermes-worker.py`), research (`cite-check.py`, `raw-stamp.py`), upkeep (`host-facts.sh`, `workspace-tidy.sh`, `run-eval.sh`) |
+| `install-searxng.sh` | One shared self-hosted web search for the bots (run by `new-project.sh`) |
+| `tests/` | `test_feedback_inbox.py` (the Mark tool's server), `test_hermes_worker.py` (session resume), `mark_demo.py` (a page to try the toolbar on) |
 | `template/memory.gitignore` | The allowlist for the project memory repo (never secrets or databases) |
 
 Improvements found in a project get copied back here, so the next project starts better. Updating this repo doesn't change existing projects.
