@@ -306,7 +306,9 @@ def send(scope, summary=""):
                         "(card id), or a question for the owner.\n- `variant-shot.sh` shots of the mockup screens that changed (desktop); "
                         "the variants page and any demo answer 200.\n- The batch page and each note: `status: done`, `card:` "
                         "this card's id.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
-                        "data.\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, `vault/product/`, "
+                        "data. Never start a build: a note that needs new app behaviour gets designed (on a demo or the "
+                        "mockup) and waits for the owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input)."
+                        "\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, `vault/product/`, "
                         "`00-status.md`.\n\n## Stop when\nThe round is live on the mockup (and demos) and the handoff has a line "
                         "per note.\n")
                 card = json.loads(hermes("kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer",
@@ -533,8 +535,27 @@ li{{margin:.6rem 0}}.dim{{color:#9aa0ad}}code{{background:#1d1f23;padding:.1rem 
         self._send(404, '{"error":"not found"}')
 
     def do_POST(self):
-        if not self.inbox_post(urlparse(self.path).path):
+        path = urlparse(self.path).path
+        if path == "/shoot":
+            return self.shoot()
+        if not self.inbox_post(path):
             self._send(404, '{"error":"not found"}')
+
+    def shoot(self):
+        """variant-shot.sh hands its screenshots to this service: a browser can crash inside a bot's terminal, but runs
+        fine from here (the same place the Mark snips are taken). Localhost only."""
+        if self.client_address[0] != "127.0.0.1":
+            return self._send(403, '{"error":"localhost only"}')
+        try:
+            d = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+            args = [str(SCRIPTS / "variant-shot.sh"), str(d["variant"]), *[str(a) for a in d.get("args", [])]]
+        except (ValueError, KeyError):
+            return self._send(400, '{"error":"variant missing"}')
+        if not re.fullmatch(r"[\w-]+", args[1]):
+            return self._send(400, '{"error":"bad variant name"}')
+        r = subprocess.run(args, capture_output=True, text=True, timeout=300,
+                           env={**os.environ, "VARIANT_SHOT_LOCAL": "1", "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"})
+        self._send(200, json.dumps({"code": r.returncode, "out": r.stdout, "err": r.stderr[-2000:]}))
 
 
 def mirror_handler(app_port, name, review_port=None):

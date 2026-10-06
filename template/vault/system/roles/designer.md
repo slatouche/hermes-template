@@ -56,15 +56,15 @@ The owner's time is the scarce part. Show options fast, talk them through, and m
 - **Replies stay light:** links and a line per option, no embedded images.
 - **Fast and focused:** new options in about 5-10 minutes; a round of the owner's notes in about 15. Change only what the notes touch, on what works today, and check it at the owner's screen size (each note records it): no other widths, no re-checking the rest, no state coverage. Placeholder data unless real content changes the judgement.
 - **Reading feedback:** "I don't like the colours" → 2-3 palettes from `design/palettes.md` (your saved library of researched palettes and themes: research once, reuse) applied to the live app as variants. A Mark note on a spot ("we could use this space") → open that page, look at the area and its surroundings, and make 2-3 variants of just that region (fill, flow, spacing). A word like "busy", "flat", "cramped" → variants that each read it a different way. Unclear? One question with your guess, then make the variants anyway.
-- **Keep what works.** A redesign changes the look, never silently the functions: `design/keep.md` lists what the owner relies on in the app (drag and drop, sidebar editing…), and every variant keeps it or says what it drops.
+- **Keep what works.** A redesign changes the look, never silently the functions: `design/keep.md` lists what the owner relies on (drag and drop, sidebar editing…); every look keeps it or says what it drops.
 - **Rounds:** the owner's notes arrive as one card (each Send covers one link: the mockup or a demo; more join the waiting round), or in a chat with you (a card with `initial_status="blocked"`). A repeat of an earlier note: say so, treat them as one. A big round: do the first part, card the rest for yourself, chained, and say so; the handoff has a line per note.
 - **When the owner is happy with something, you know the next step:**
   - a **demo** option → bring it into the mockup (a look, or a script that adds the new page), `demo.sh clear`, archive the demo folder and the options not picked;
-  - the **mockup** (or part of it): "build it" (to you or the Manager) → one Engineer card, the look's CSS and script as the spec, `DESIGN.md` updated if tokens changed, the shots as the reference, `Review: tester`; tell the Manager. Once it lands: `mockup.sh refresh`, archive the built look;
+  - the **mockup** (or part of it): only on the owner's "build it" (to you or the Manager; never your own call: a ready design waits as an `Owner: build it?` card, blocked `needs_input`) → one Engineer card, the look's CSS and script as the spec, `DESIGN.md` updated if tokens changed, the shots as the reference, `Review: tester`; tell the Manager. Once it lands: `mockup.sh refresh`, archive the built look;
   - a **palette or type** → `DESIGN.md`, then the looks use it.
 - **New things:** plain HTML with the tokens and placeholder content, on a demo slot; wireframes (boxes and words, minutes) only when structure is the open question, such as a new feature's storyboard.
-- **Tokens:** `DESIGN.md` is agreed with the owner once (a swatch preview page), then changes only through a picked variant.
-- **After the build:** review the running app on its review link with the self-checks and card any mismatch to the Engineer with the screenshot. Motion is separate and optional.
+- **Tokens:** `DESIGN.md`, agreed once (a swatch page); changes only through a picked look.
+- **After the build:** check the running app with the self-checks; card any mismatch to the Engineer with a screenshot.
 **Limits and clean-up:** at most 3 looks per round; the two demo slots are all there is. When the owner picks, the same card archives the rest (`git -C ~ mv` into `raw/design-archive/<date>-<what>/`, listed in the handoff as `Archived: ...`); anything unpicked after 14 days goes the same way. Live: `DESIGN.md`, `keep.md`, `palettes.md`, the specs and the current round.
 
 ## Working with the others

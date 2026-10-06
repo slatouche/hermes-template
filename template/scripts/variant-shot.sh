@@ -7,6 +7,17 @@
 # app as it is today into variants/current/ for side-by-side comparison. Writes <page>-1440.png (desktop; --size WxH for
 # the owner's size, --all for phone, tablet and desktop in the responsive pass) into the variant's folder; the owner sees them at http://<host>:<review port>/__mark/variants.
 set -euo pipefail
+# From a bot's terminal, hand the job to the feedback-inbox service (a browser can crash inside the terminal's limits);
+# the service runs this same script with VARIANT_SHOT_LOCAL=1. If the service isn't there, shoot here.
+if [ -z "${VARIANT_SHOT_LOCAL:-}" ] && [ $# -ge 1 ]; then
+  api=$(grep -m1 '^API_SERVER_PORT=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2 || true)
+  if [ -n "$api" ]; then
+    req=$(python3 -c 'import json,sys; print(json.dumps({"variant": sys.argv[1], "args": sys.argv[2:]}))' "$@")
+    if res=$(curl -fs -m 300 -H 'Content-Type: application/json' -d "$req" "http://127.0.0.1:$((api + 99))/shoot"); then
+      exec python3 -c 'import json,sys; d=json.loads(sys.argv[1]); sys.stdout.write(d["out"]); sys.stderr.write(d["err"]); sys.exit(d["code"])' "$res"
+    fi
+  fi
+fi
 V="${1:?usage: variant-shot.sh <variant|current> [path] [--app <name>] [--size WxH] [--all]}"; shift
 PAGE="/"; APP=""; WIDTHS="1440x900"   # desktop while designing; --all for the responsive pass
 while [ $# -gt 0 ]; do
@@ -31,10 +42,10 @@ CHROME=$(ls -d "$HOME"/.hermes/tools/chromium-*/chrome-linux64/chrome 2>/dev/nul
 [ -x "${CHROME:-}" ] || { echo "no headless Chromium under ~/.hermes/tools (the browser tool installs it on first use)" >&2; exit 1; }
 
 DIR="$HOME/vault/design/variants/$V"
+[ "$V" = current ] || [ -f "$DIR/style.css" ] || [ -f "$DIR/script.js" ] || { echo "$DIR has no style.css or script.js" >&2; exit 1; }
 mkdir -p "$DIR"
 [ "$V" = current ] && [ ! -f "$DIR/note.md" ] && printf '# The current look\nThe app as it is today, for comparison.\n' > "$DIR/note.md"
 [ "$V" = current ] && SW=off || SW="$V"
-[ "$V" = current ] || [ -f "$DIR/style.css" ] || [ -f "$DIR/script.js" ] || { echo "$DIR has no style.css or script.js" >&2; exit 1; }
 
 base="${PAGE%%#*}"; hash=""; [[ "$PAGE" == *"#"* ]] && hash="#${PAGE#*#}"
 [[ "$base" == *"?"* ]] && sep="&" || sep="?"
