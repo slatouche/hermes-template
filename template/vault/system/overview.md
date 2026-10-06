@@ -106,3 +106,6 @@ Anything the owner opens (an app, a page, an API) runs as a systemd user service
 
 ## Change process (summary)
 Propose in `system/changes/YYYY-MM-DD-<slug>.md` → owner says yes → apply while affected bots are idle → log a `decision`, checkpoint, notify the bots → say if a gateway restart is needed. Never touch `.env` or secrets; the owner edits those.
+
+## Cards resume their topic session
+Hermes runs every card as a fresh worker. The gateway launches workers through `$HERMES_BIN` = `~/.hermes/scripts/hermes-worker.py` (a systemd drop-in, `hermes-gateway.service.d/topic-sessions.conf`): a card with `Session: <topic>` resumes that bot's last session for the topic (`chat --resume`), following Hermes's compression chain, so the bot carries on with what it knows. Per bot: `<profile>/topic-sessions.json` (topic -> session), `<profile>/topic-locks/` (one live worker per topic), `<profile>/logs/topic-sessions.log`; every decision is also a comment on the card. Fresh instead when: no topic, `Session: new <topic>`, the card's last run by that bot failed, the session is gone, idle over 3 days or past 40 cards, or the topic is held by a live worker. `hermes-worker.py --topics [list|reset <topic>]` with `HERMES_HOME` set to the bot's profile. The dispatcher checks for ready cards every 10 s; a resumed session idle over an hour is condensed first.

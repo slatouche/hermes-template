@@ -138,6 +138,8 @@ EOF
   echo "==> Settings: context $R_CTX tokens, $R_TURNS turns, effort $R_EFFORT, verify-on-stop $R_VERIFY"
   hermes -p "$ROLE" config set terminal.cwd "$HOME/workspace" >/dev/null
   hermes -p "$ROLE" config set compression.threshold_tokens "$R_CTX" >/dev/null
+  # Cards resume a topic session (hermes-worker.py); one resumed after an hour idle is condensed first.
+  hermes -p "$ROLE" config set compression.idle_compact_after_seconds 3600 >/dev/null
   hermes -p "$ROLE" config set agent.max_turns "$R_TURNS" >/dev/null
   hermes -p "$ROLE" config set agent.budget_warning_ratio "$ROLE_BUDGET_WARNING" >/dev/null
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null

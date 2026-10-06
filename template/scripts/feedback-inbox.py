@@ -267,125 +267,6 @@ def look_check(url, width, height, exprs, shot=None):
     return {"results": results, "shot": shot if shot and pathlib.Path(shot).exists() else None}
 
 
-# ---- The warm design session ------------------------------------------------------------------------------------
-# A kanban card is always a fresh session, so every round used to re-learn the page (about 20 steps before the first
-# change). Instead, feedback rounds go to one long-running chat session per bot through the local Hermes API: the
-# bot keeps what it learned between rounds, and Hermes compacts the session when it grows. A tracking card (blocked,
-# completed from the session) keeps each round on the board. If the session can't be reached, the card is released
-# to an ordinary kanban worker, so nothing is lost.
-WARM = SCRIPTS / "warm-sessions.json"
-WARM_LOCK = threading.Lock()
-WARM_QUEUE = {}          # profile -> [{"cards": [...], "text": str}] waiting while that bot is busy in a round
-WARM_BUSY = set()
-WARM_MAX_AGE = 24 * 3600   # a fresh session each day, so stale context doesn't pile up
-WARM_MAX_ROUNDS = 25
-
-
-def _readenv(path):
-    try:
-        return dict(ln.split("=", 1) for ln in path.read_text().splitlines() if "=" in ln and not ln.startswith("#"))
-    except OSError:
-        return {}
-
-
-def _api(profile, method, path, body=None, timeout=120):
-    import urllib.request
-    env = _readenv(HOME / ".hermes" / ".env")
-    key = _readenv(HOME / ".hermes" / "profiles" / profile / ".env").get("API_SERVER_KEY") or env.get("API_SERVER_KEY")
-    port = (env.get("API_SERVER_PORT") or "").strip()
-    if not (key and port):
-        raise OSError("no API server settings")
-    req = urllib.request.Request(f"http://127.0.0.1:{port}/p/{profile}{path}", method=method,
-                                 data=json.dumps(body).encode() if body is not None else None,
-                                 headers={"Authorization": "Bearer " + key.strip(), "Content-Type": "application/json"})
-    return urllib.request.urlopen(req, timeout=timeout)
-
-
-def _warm_session(profile, fresh=False):
-    state = {}
-    try:
-        state = json.loads(WARM.read_text())
-    except (OSError, ValueError):
-        pass
-    s = state.get(profile) or {}
-    now = datetime.datetime.now().timestamp()
-    if fresh or not s.get("id") or now - s.get("since", 0) > WARM_MAX_AGE or s.get("rounds", 0) >= WARM_MAX_ROUNDS:
-        out = json.loads(_api(profile, "POST", "/api/sessions", {"title": f"{profile}: owner rounds {datetime.date.today()}"}).read() or b"{}")
-        sid = out.get("id") or out.get("session_id") or (out.get("session") or {}).get("id")
-        if not sid:
-            raise OSError("the API didn't return a session id")
-        s = {"id": sid, "since": now, "rounds": 0}
-    s["rounds"] = s.get("rounds", 0) + 1
-    state[profile] = s
-    WARM.write_text(json.dumps(state, indent=1))
-    return s["id"]
-
-
-def _warm_turn(profile, text):
-    """One chat turn in the warm session; returns when the bot has finished. Approval prompts are declined (a
-    feedback round never needs one)."""
-    sid = _warm_session(profile)
-    r = _api(profile, "POST", f"/api/sessions/{sid}/chat/stream", {"message": text}, timeout=3600)
-    ev = None
-    for raw in r:
-        line = raw.decode("utf-8", "replace").rstrip("\n")
-        if line.startswith("event:"):
-            ev = line[6:].strip()
-            continue
-        if not line.startswith("data:"):
-            continue
-        try:
-            data = json.loads(line[5:].strip())
-        except ValueError:
-            continue
-        name = ev or data.get("event") or data.get("type")
-        if name == "approval.request" and data.get("run_id"):
-            try:
-                _api(profile, "POST", f"/v1/runs/{data['run_id']}/approval", {"choice": "deny"}).read()
-            except OSError:
-                pass
-        elif name in ("error", "run.failed"):
-            raise OSError(f"{name}: {json.dumps(data)[:300]}")
-        elif name == "done":
-            break
-
-
-def _warm_worker(profile):
-    while True:
-        with WARM_LOCK:
-            items = WARM_QUEUE.pop(profile, [])
-            if not items:
-                WARM_BUSY.discard(profile)
-                return
-        cards = [c for it in items for c in it["cards"]]
-        text = "\n\n---\n\n".join(it["text"] for it in items)
-        try:
-            _warm_turn(profile, text)
-        except Exception as e:     # the session failed: hand the cards to ordinary kanban workers, start fresh next time
-            print(f"feedback-inbox: warm session for {profile}: {e}; releasing {cards} to the board", file=sys.stderr)
-            try:
-                _warm_session(profile, fresh=True)
-            except Exception:
-                pass
-            env = {**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"}
-            for c in cards:
-                subprocess.run(["hermes", "kanban", "comment", c, "The warm design session couldn't take this round; "
-                                "a fresh worker picks it up from this card."], capture_output=True, env=env)
-                subprocess.run(["hermes", "kanban", "unblock", c], capture_output=True, env=env)
-
-
-def warm_round(profile, card, text):
-    """Queue a round for the bot's warm session; a round already waiting (not started) takes this one too."""
-    with WARM_LOCK:
-        q = WARM_QUEUE.setdefault(profile, [])
-        q.append({"cards": [card], "text": text})
-        if profile in WARM_BUSY:
-            return "queued"
-        WARM_BUSY.add(profile)
-    threading.Thread(target=_warm_worker, args=(profile,), daemon=True).start()
-    return "started"
-
-
 def round_text(batch, drafts, where, card, summary=""):
     """Everything a round needs, in the message itself: each note (words, place, element, size, picture) and the
     look's map, so the bot starts working instead of fetching and reading."""
@@ -477,45 +358,35 @@ def send(scope, summary=""):
     if scope[0] in ("mockup", "demo") and (HOME / ".hermes" / "profiles" / "designer").is_dir():
         card = None
         try:
-            # A round queued for the warm session but not started yet takes this batch too: one round, not a queue.
-            with WARM_LOCK:
-                q = WARM_QUEUE.get("designer") or []
-                if q:
-                    card = q[-1]["cards"][0]
-                    q[-1]["text"] += ("\n\n---\n\nMore from the owner for the same round:\n\n"
-                                      + round_text(batch, drafts, where, card, summary))
-            if card:
-                hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}): "
-                       f"`vault/raw/feedback/{batch}.md`, {len(drafts)} notes from {where}.")
+            waiting = [t for t in json.loads(hermes("kanban", "list", "--json") or "[]")
+                       if t.get("assignee") == "designer" and t.get("status") in ("ready", "todo")
+                       and str(t.get("title", "")).startswith(DESIGN_ROUND)]
+            if waiting:                          # a round that hasn't started yet takes this batch too
+                card = waiting[0]["id"]
+                hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}):\n\n"
+                       + round_text(batch, drafts, where, card, summary))
             else:
-                waiting = [t for t in json.loads(hermes("kanban", "list", "--json") or "[]")
-                           if t.get("assignee") == "designer" and t.get("status") in ("ready", "todo")
-                           and str(t.get("title", "")).startswith(DESIGN_ROUND)]
-                if waiting:                      # a round released to an ordinary worker and still waiting
-                    card = waiting[0]["id"]
-                    hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}):\n\n"
-                           + round_text(batch, drafts, where, card, summary))
-                else:
-                    warm = bool(_readenv(HOME / ".hermes" / ".env").get("API_SERVER_PORT"))
-                    body = (f"Context: the owner's design feedback, sent together (batch `vault/raw/feedback/{batch}.md`). "
-                            + ("Worked in the Designer's warm session (this card tracks it; if the session can't take it, "
-                               "the card is released to a worker). " if warm else "")
-                            + "Review: none (the owner reviews it on the mockup).\n\n"
-                            + round_text(batch, drafts, where, "this card", summary)
-                            + "\n\n## Outcome\nEvery note answered in the mockup's look, or in the demo it was left on.\n\n"
-                            "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
-                            "(card id), or a question for the owner.\n- `look-check.sh` evidence for each screen that changed; "
-                            "`map.md` updated.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
-                            "data. Never start a build: new app behaviour is designed, prototyped if needed, and waits for the "
-                            "owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input).\n\n## Boundaries\nOwns: "
-                            "`vault/design/`. Do not touch: `workspace/`, `vault/product/`, `00-status.md`.\n\n## Stop when\nThe "
-                            "round is live and the handoff has a line per note.\n")
-                    args = ["kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer", "--body", body,
-                            "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
-                            "--idempotency-key", batch, "--json"] + (["--initial-status", "blocked"] if warm else [])
-                    card = json.loads(hermes(*args)).get("id")
-                    if card and warm:
-                        warm_round("designer", card, round_text(batch, drafts, where, card, summary))
+                # The round resumes the Designer's session for this look or demo (hermes-worker.py), so it starts
+                # knowing the page, the look and the last round instead of re-learning them.
+                looks = sorted({n["variant"] for n in drafts if n.get("variant")})
+                place = looks[0] if looks else ("mockup" if scope[0] == "mockup" else (scope[2] or "demo").split(":")[0])
+                topic = "design:" + (re.sub(r"[^a-z0-9._-]+", "-", place.lower()).strip("-")[:60] or "mockup")
+                body = (f"Context: the owner's design feedback, sent together (batch `vault/raw/feedback/{batch}.md`). "
+                        "Review: none (the owner reviews it on the mockup).\n"
+                        f"Session: {topic}\n\n"
+                        + round_text(batch, drafts, where, "this card", summary)
+                        + "\n\n## Outcome\nEvery note answered in the mockup's look, or in the demo it was left on.\n\n"
+                        "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
+                        "(card id), or a question for the owner.\n- `look-check.sh` evidence for each screen that changed; "
+                        "`map.md` updated.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
+                        "data. Never start a build: new app behaviour is designed, prototyped if needed, and waits for the "
+                        "owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input).\n\n## Boundaries\nOwns: "
+                        "`vault/design/`. Do not touch: `workspace/`, `vault/product/`, `00-status.md`.\n\n## Stop when\nThe "
+                        "round is live and the handoff has a line per note.\n")
+                args = ["kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer", "--body", body,
+                        "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
+                        "--idempotency-key", batch, "--json"]
+                card = json.loads(hermes(*args)).get("id")
         except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
             card = None                          # no card: the Manager routes it instead (the batch page is saved either way)
         if card:

@@ -27,6 +27,7 @@ Think before acting and say your assumptions; ask rather than guess. Build only 
 Every piece of real work is a card, even if it started in a chat. A card is about 150–250 words:
 ```
 Context: <vault links, one line>      Review: tester | none
+Session: <topic>   optional: the same bot on the same area resumes its last session for it
 ## Outcome        the observable result, one or two sentences
 ## Verification   commands + exact expected output; one check that it's reachable from the running app;
                   "Not covered: …" for what checks can't see
@@ -35,6 +36,7 @@ Context: <vault links, one line>      Review: tester | none
 ## Stop when      checks pass and the handoff is written; block with one question for an owner decision,
                   a missing secret or an irreversible step
 ```
+- **Session topics** (`design:atlas-air`, `engineer:deck-view`, `research:frames`): cards on the same area share one, so the bot carries on with what it knows instead of re-learning it. A new area gets a new topic; `Session: new <topic>` starts one over. Carding work for yourself, use your current topic.
 - **Titles: at most 50 characters, no trailing punctuation.** Hermes builds the git branch name from the title.
 - **The builder never edits Verification.** Couldn't run a check? Say so and why. Spotted another problem? A `noticed:` line in the handoff, not a fix.
 - **Patch, don't rewrite** files. Nobody is watching: finish every reversible step the card asks for.

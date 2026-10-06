@@ -81,6 +81,7 @@ hermes config set agent.max_turns "$AGENT_MAX_TURNS"
 hermes config set kanban.orchestrator_profile manager
 hermes config set kanban.max_in_progress "$KANBAN_MAX_IN_PROGRESS"
 hermes config set kanban.max_in_progress_per_profile "$KANBAN_MAX_PER_PROFILE"
+hermes config set kanban.dispatch_interval_seconds 10        # a ready card starts within seconds (a cheap database check)
 hermes config set kanban.failure_limit "$KANBAN_FAILURE_LIMIT"
 hermes config set kanban.review_dispatch true
 hermes config set kanban.auto_subscribe_on_create true
@@ -262,6 +263,18 @@ step "Feedback inbox"
 FEEDBACK_PORT=$((API + 99))
 touch "$H/scripts/review-mirrors.conf"
 mkdir -p "$HOME/.config/systemd/user"
+# Card workers resume their topic session: the gateway launches workers through $HERMES_BIN (hermes-worker.py),
+# which adds `--resume` for a card with a `Session:` topic and runs everything else unchanged.
+GW_REAL="$(grep -o 'ExecStart="[^"]*"' "$HOME/.config/systemd/user/hermes-gateway.service" 2>/dev/null | cut -d'"' -f2)"
+GW_REAL="${GW_REAL:-$HOME/.local/bin/hermes}"
+mkdir -p "$HOME/.config/systemd/user/hermes-gateway.service.d"
+cat > "$HOME/.config/systemd/user/hermes-gateway.service.d/topic-sessions.conf" <<EOF
+[Service]
+Environment="HERMES_BIN=$H/scripts/hermes-worker.py"
+Environment="HERMES_REAL_BIN=$GW_REAL"
+EOF
+systemctl --user daemon-reload 2>/dev/null || true
+hermes -p manager config set compression.idle_compact_after_seconds 3600 >/dev/null 2>&1 || true
 cat > "$HOME/.config/systemd/user/feedback-inbox.service" <<EOF
 [Unit]
 Description=Owner feedback inbox for $NAME (Mark overlay and review links)
