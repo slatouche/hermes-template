@@ -1,14 +1,15 @@
 /* Mark overlay: the owner marks things on a page and the notes go to the project's feedback inbox.
    Loaded by the "Mark" bookmarklet from the inbox (__INBOX__ is filled in when it's served).
    Mark = click an element; Area = drag a box. Type what's wrong, Save (Ctrl+Enter). Esc stops.
-   Saved notes are drafts (amber pins: click one to change or delete it) until Send hands them all to the team at once.
+   Saved notes are drafts (amber pins: click one to change or delete it) until Send hands them all to the team at once;
+   sent notes leave no pins. Works with a mouse, a pen or a finger.
    Everything lives in a shadow root so the page's styles can't touch it, and it never changes the page. */
 (() => {
   if (window.__markLoaded) return;
   window.__markLoaded = true;
   const INBOX = "__INBOX__";
   const host = document.createElement("div");
-  host.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647";
+  host.style.cssText = "all:initial;position:fixed;inset:0;pointer-events:none;z-index:2147483647;touch-action:none";
   document.documentElement.appendChild(host);
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML = `<style>
@@ -16,12 +17,12 @@
     .bar{position:fixed;right:16px;bottom:16px;display:flex;gap:6px;padding:6px;border-radius:12px;background:#15161a;
       border:1px solid #2a2c33;box-shadow:0 8px 30px rgba(0,0,0,.45);pointer-events:auto;color:#e8e8ea;align-items:center}
     button{border:0;border-radius:8px;padding:7px 11px;background:#23252c;color:#e8e8ea;cursor:pointer}
-    button:hover{background:#2d3039}button.on{background:#3d6bff;color:#fff}.count{padding:0 6px;color:#9aa0ad}
+    button:hover{background:#2d3039}button.on{background:#3d6bff;color:#fff}
     .hl{position:fixed;border:2px solid #3d6bff;background:rgba(61,107,255,.12);border-radius:4px;pointer-events:none;display:none}
     .area{position:fixed;border:2px dashed #ffb02e;background:rgba(255,176,46,.10);pointer-events:none;display:none}
-    .pin{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#ff4d6d;color:#fff;
+    .pin{position:absolute;width:22px;height:22px;margin:-11px 0 0 -11px;border-radius:50%;background:#ffb02e;color:#1a1300;
       font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
-      box-shadow:0 2px 8px rgba(0,0,0,.4)}.pin.draft{background:#ffb02e;color:#1a1300}
+      box-shadow:0 2px 8px rgba(0,0,0,.4)}
     button.send{background:#1e7d4f;color:#fff;font-weight:600;display:none}button.send:hover{background:#249760}
     button.del{margin-right:auto;background:transparent;color:#ff8095}
     .pop{position:fixed;width:min(340px,calc(100vw - 24px));padding:10px;border-radius:12px;background:#15161a;
@@ -32,7 +33,7 @@
     .toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:#1e7d4f;
       color:#fff;display:none}
     .layer{position:absolute;left:0;top:0}
-    .box{position:absolute;border:1.5px dashed #ff4d6d;border-radius:4px;pointer-events:none}.box.draft{border-color:#ffb02e}
+    .box{position:absolute;border:1.5px dashed #ffb02e;border-radius:4px;pointer-events:none}
     .fold{position:fixed;right:16px;bottom:16px;width:36px;height:36px;border-radius:50%;background:#3d6bff;color:#fff;
       font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
       box-shadow:0 6px 20px rgba(0,0,0,.45)}
@@ -52,9 +53,9 @@
     <div class="row"><button class="del">Delete</button><button class="cancel">Cancel</button><button class="save on">Save</button></div></div>
   <div class="toast"></div>
   <div class="bar"><button class="mark" title="Click an element to mark it">Mark</button>
-    <button class="areab" title="Drag a box over an area">Area</button><span class="count"></span>
+    <button class="areab" title="Drag a box over an area">Area</button>
     <button class="send" title="Send your draft notes to the team as one piece of feedback"></button>
-    <button class="pins" title="Show or hide the numbered notes">Pins</button><button class="close" title="Fold away (click M to bring it back)">×</button></div>
+    <button class="pins" title="Show or hide your draft pins">Pins</button><button class="close" title="Fold away (click M to bring it back)">×</button></div>
   <div class="fold" title="Open the Mark toolbar">M</div>`;
   const $ = (s) => root.querySelector(s);
   const hl = $(".hl"), area = $(".area"), pop = $(".pop"), layer = $(".layer"), toast = $(".toast");
@@ -145,24 +146,27 @@
   const boxAt = (r) => { hl.style.cssText += `;display:block;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`; };
   const underPointer = (x, y) => { host.style.pointerEvents = "none"; const el = document.elementFromPoint(x, y); host.style.pointerEvents = "auto"; return el; };
 
-  host.addEventListener("mousemove", (e) => {
-    if (pop.style.display === "block") return;
+  const popOpen = () => pop.style.display === "block";
+  host.addEventListener("pointermove", (e) => {
+    if (popOpen()) return;
     if (mode === "mark") { const el = underPointer(e.clientX, e.clientY); if (el && el !== host) boxAt(el.getBoundingClientRect()); }
     if (mode === "area" && start) {
       const x = Math.min(start.x, e.clientX), y = Math.min(start.y, e.clientY);
       area.style.cssText += `;display:block;left:${x}px;top:${y}px;width:${Math.abs(e.clientX - start.x)}px;height:${Math.abs(e.clientY - start.y)}px`;
     }
   });
-  host.addEventListener("mousedown", (e) => {
-    if (e.composedPath().some((n) => n === pop || n === $(".bar"))) return;
+  const onUi = (e) => e.composedPath().some((n) => n === pop || n === $(".bar") || n === look || (n.classList && n.classList.contains("pin")));
+  host.addEventListener("pointerdown", (e) => {
+    if (onUi(e) || popOpen()) return;              // finish or cancel the open note before starting another
     e.preventDefault();
     if (mode === "area") start = { x: e.clientX, y: e.clientY };
   });
-  host.addEventListener("mouseup", (e) => {
-    if (e.composedPath().some((n) => n === pop || n === $(".bar"))) return;
+  host.addEventListener("pointerup", (e) => {
+    if (onUi(e) || popOpen() || !mode) return;
     editing = null; sending = false;                 // a new mark is always a new note, never an edit or a Send
     if (mode === "mark") {
       target = underPointer(e.clientX, e.clientY);
+      if (!target || target === host || target === document.documentElement) return;
       const r = target.getBoundingClientRect();
       rect = { x: r.left + scrollX, y: r.top + scrollY, w: r.width, h: r.height };
       ask(`${target.tagName.toLowerCase()}: ${(target.innerText || target.alt || "").trim().slice(0, 60)}`, e.clientX, e.clientY);
@@ -176,25 +180,35 @@
       ask(`area: ${boxInfo.elements.length} element${boxInfo.elements.length === 1 ? "" : "s"}${names ? " (" + names + ")" : ""}`, e.clientX, e.clientY);
     }
   });
-  // An area note keeps what's in it (the elements mostly inside the box) and an anchor: the smallest element that
-  // contains the box, with the box as fractions of it, so the box and its pin follow the page as it scrolls or reflows.
+  // An area note keeps what's in it (the elements mostly inside the box) and an anchor, so the box and its pin follow
+  // the page as it scrolls or reflows: the first element inside the box (the box kept as a pixel offset from it, so it
+  // moves with content that scrolls inside a panel), or for an empty area the smallest element containing it (the
+  // box kept as fractions of it).
   let boxInfo = null;
   const describeArea = (b) => {
     const inside = [], seen = new Set();
+    let first = null;
     host.style.pointerEvents = "none";
     for (const el of document.body.querySelectorAll("*")) {
-      const r = el.getBoundingClientRect();
+      const r = el.getBoundingClientRect();         // geometry first (cheap); text only for what's inside the box
       if (!r.width || !r.height || r.width * r.height < 64) continue;
-      const label = (el.innerText || el.alt || el.getAttribute("aria-label") || el.title || "").trim();
-      if (!label && !/^(IMG|SVG|CANVAS|VIDEO|INPUT|SELECT|TEXTAREA)$/i.test(el.tagName)) continue;   // skip empty wrappers and handles
       const ix = Math.max(0, Math.min(r.right, b.left + b.width) - Math.max(r.left, b.left));
       const iy = Math.max(0, Math.min(r.bottom, b.top + b.height) - Math.max(r.top, b.top));
       if ((ix * iy) / (r.width * r.height) < 0.8) continue;
       if ([...seen].some((p) => p.contains(el))) continue;       // keep the outermost element of each group
+      const label = (el.innerText || el.alt || el.getAttribute("aria-label") || el.title || "").trim();
+      if (!label && !/^(IMG|SVG|CANVAS|VIDEO|INPUT|SELECT|TEXTAREA)$/i.test(el.tagName)) continue;   // skip empty wrappers and handles
       seen.add(el);
-      inside.push({ selector: selectorOf(el), text: (el.innerText || el.alt || el.getAttribute("aria-label") || "").trim().replace(/\s+/g, " ").slice(0, 60) });
+      first = first || el;
+      inside.push({ selector: selectorOf(el), text: label.replace(/\s+/g, " ").slice(0, 60) });
       if (inside.length >= 12) break;
     }
+    host.style.pointerEvents = "auto";
+    if (first) {
+      const fr = first.getBoundingClientRect();
+      return { elements: inside, anchor: { selector: selectorOf(first), off: { x: b.left - fr.left, y: b.top - fr.top, w: b.width, h: b.height } } };
+    }
+    host.style.pointerEvents = "none";
     let a = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2);
     host.style.pointerEvents = "auto";
     while (a && a !== document.body) {
@@ -212,7 +226,11 @@
     try {
       if (n.anchor && n.anchor.selector) {
         const a = document.querySelector(n.anchor.selector);
-        if (a) { const r = a.getBoundingClientRect(), q = n.anchor.rel; return { x: r.left + q.x * r.width, y: r.top + q.y * r.height, w: q.w * r.width, h: q.h * r.height }; }
+        if (a) {
+          const r = a.getBoundingClientRect(), o = n.anchor.off, q = n.anchor.rel;
+          if (o) return { x: r.left + o.x, y: r.top + o.y, w: o.w, h: o.h };
+          if (q) return { x: r.left + q.x * r.width, y: r.top + q.y * r.height, w: q.w * r.width, h: q.h * r.height };
+        }
       }
       const el = n.selector && document.querySelector(n.selector);
       if (el) { const r = el.getBoundingClientRect(); return { x: r.left, y: r.top, w: r.width, h: r.height }; }
@@ -263,8 +281,11 @@
   $(".cancel").onclick = closePop;
   $(".del").onclick = async () => {
     if (!editing) return;
-    await post(`/notes/${editing}/withdraw`, {});
-    closePop(); say("Draft deleted."); load();
+    try {
+      const r = await post(`/notes/${editing}/withdraw`, {});
+      if (!r.ok) throw new Error(r.status);
+      closePop(); say("Draft deleted."); load();
+    } catch (err) { $(".what").textContent = "Couldn't delete (" + err.message + ")."; }
   };
   $(".send").onclick = () => {
     if (!drafts) return;
@@ -272,7 +293,9 @@
     ask(`Send ${drafts} note${drafts === 1 ? "" : "s"} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
         "", "Anything to say about them overall? (optional)");
   };
-  $("textarea").addEventListener("keydown", (e) => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); });
+  // Keys typed in a note never reach the app (its own shortcuts would fire).
+  $("textarea").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); });
+  ["keyup", "keypress", "input"].forEach((t) => $("textarea").addEventListener(t, (e) => e.stopPropagation()));
   $(".mark").onclick = () => setMode("mark");
   $(".areab").onclick = () => setMode("area");
   $(".pins").onclick = () => { showPins = !showPins; draw(); };
@@ -289,44 +312,53 @@
   try { if (sessionStorage.getItem("markFolded")) fold(true); } catch (_) {}
   addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); if (mode) setMode(mode); } }, true);
 
+  let drawn = "";
   const draw = () => {
-    layer.innerHTML = "";
-    const sent = open.filter((n) => n.status === "open").length;
-    $(".count").textContent = sent ? `${sent} sent` : "";
     $(".send").textContent = `Send ${drafts}`;
     $(".send").style.display = drafts ? "inline-block" : "none";
-    if (!showPins) return;
-    open.forEach((n, i) => {
-      const at = placeOf(n);
-      if (!at || at.y + at.h < 0 || at.y > innerHeight || at.x + at.w < 0 || at.x > innerWidth) return;
-      const draft = n.status === "draft";
+    const spots = showPins ? open.map((n) => [n, placeOf(n)])
+      .filter(([, at]) => at && at.y + at.h >= 0 && at.y <= innerHeight && at.x + at.w >= 0 && at.x <= innerWidth) : [];
+    const sig = spots.map(([n, a]) => `${n.id}:${a.x | 0},${a.y | 0},${a.w | 0},${a.h | 0}`).join("|");
+    if (sig === drawn) return;                       // nothing moved: leave the pins alone
+    drawn = sig;
+    layer.innerHTML = "";
+    spots.forEach(([n, at]) => {
       if (n.kind === "area") {                       // the box the owner drew, following the page
         const b = document.createElement("div");
-        b.className = "box" + (draft ? " draft" : "");
+        b.className = "box";
         Object.assign(b.style, { left: at.x + "px", top: at.y + "px", width: at.w + "px", height: at.h + "px" });
         layer.appendChild(b);
       }
-      const x = at.x, y = at.y;
       const p = document.createElement("div");
-      p.className = "pin" + (draft ? " draft" : ""); p.textContent = i + 1;
-      p.title = (draft ? "Draft (click to change): " : "Sent: ") + n.note;
-      p.style.left = x + "px"; p.style.top = y + "px";
-      if (draft) p.onclick = (e) => { e.stopPropagation(); setMode(null); closePop(); editing = n.id; ask("Your draft note", e.clientX, e.clientY, n.note); };
+      p.className = "pin"; p.textContent = open.indexOf(n) + 1;
+      p.title = "Your draft (click to change or delete): " + n.note;
+      p.style.left = at.x + "px"; p.style.top = at.y + "px";
+      p.onclick = (e) => { e.stopPropagation(); setMode(null); closePop(); editing = n.id; ask("Your draft note", e.clientX, e.clientY, n.note); };
       layer.appendChild(p);
     });
   };
   const load = async () => {
-    try { open = await (await fetch(INBOX + "/notes?status=draft,open&page=" + encodeURIComponent(location.href))).json(); } catch (_) { open = []; }
+    // Only your unsent drafts have pins: once sent, a note is the team's and leaves the page.
+    try { open = await (await fetch(INBOX + "/notes?status=draft&page=" + encodeURIComponent(location.href))).json(); } catch (_) { open = []; }
+    drawn = null;                                    // always redraw after a load, even down to no pins
     try { drafts = (await (await fetch(INBOX + "/notes?status=draft" + (APP ? "&app=" + encodeURIComponent(APP) : ""))).json()).length; } catch (_) { drafts = 0; }
     draw();
   };
   addEventListener("hashchange", load);           // single-page apps: each #route has its own pins
   // Redraw on any scroll (panels that scroll on their own too), resize, and now and then for layout changes.
   let queued = false;
-  const redraw = () => { if (!queued) { queued = true; requestAnimationFrame(() => { queued = false; draw(); }); } };
+  const redraw = () => {
+    if (queued) return;
+    queued = true;
+    (document.hidden ? setTimeout : requestAnimationFrame)(() => { queued = false; draw(); });
+  };
   addEventListener("scroll", redraw, { passive: true, capture: true });
   addEventListener("resize", redraw);
-  setInterval(() => { if (open.length && showPins) redraw(); }, 700);
+  let href = location.href;                        // apps that change screen without a #route change (pushState)
+  setInterval(() => {
+    if (location.href !== href) { href = location.href; load(); } else if (open.length && showPins) redraw();
+  }, 700);
+  addEventListener("popstate", load);
   load();
   // From the bookmarklet the owner clicked to mark something: start in Mark mode. On a review link the
   // toolbar just waits, so the app works normally until the owner presses Mark.

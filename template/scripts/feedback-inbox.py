@@ -109,7 +109,8 @@ def save(d):
     rec = {k: (clean(v, 600) if isinstance(v, str) and k != "note" else v) for k, v in rec.items()}
     status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
     (INBOX / f"{stem}.md").write_text(render(rec, status, now), encoding="utf-8")
-    threading.Thread(target=snip, args=(stem, rec), daemon=True).start()
+    if d.get("_snip"):      # only where opening the page can't touch real data (a sandbox or a design link)
+        threading.Thread(target=snip, args=(stem, rec), daemon=True).start()
     log = SCRIPTS / "vault-log.sh"
     if log.exists() and status == "open":
         subprocess.run([str(log), "owner", "note", f"Feedback on {clean(rec.get('app') or rec.get('title'), 40)}: "
@@ -260,19 +261,22 @@ def send(app, summary="", design=False):
                 "- The batch page and each note: `status: done`, `card:` this card's id.\n\n## Constraints\nVariants and the sandbox "
                 "only; never the real app or its data.\n\n## Boundaries\nOwns: `vault/design/`. Do not touch: `workspace/`, "
                 "`vault/product/`, `00-status.md`.\n\n## Stop when\nThe round is live on the variants page and the handoff has a line per note.\n")
-        r = subprocess.run(["hermes", "kanban", "create", f"Owner design round: {len(drafts)} notes", "--assignee", "designer",
-                            "--body", body, "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
-                            "--idempotency-key", batch, "--json"], capture_output=True, text=True, env=env)
         try:
+            r = subprocess.run(["hermes", "kanban", "create", f"Owner design round: {len(drafts)} notes", "--assignee", "designer",
+                                "--body", body, "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
+                                "--idempotency-key", batch, "--json"], capture_output=True, text=True, env=env, timeout=60)
             card = json.loads(r.stdout).get("id")
-        except ValueError:
-            card = None
+        except (OSError, ValueError, subprocess.SubprocessError):
+            card = None                          # no card: the Manager routes it instead (the batch page is saved either way)
         if card:
             set_field(INBOX / f"{batch}.md", "card", card)
             return batch, len(drafts), "Designer"
     # Otherwise wake the Manager now instead of at the next 2-hourly watch (it runs on the scheduler's next tick).
-    subprocess.Popen(["hermes", "-p", "manager", "cron", "run", "manager-watch"], stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL, env=env)
+    try:
+        subprocess.Popen(["hermes", "-p", "manager", "cron", "run", "manager-watch"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, env=env)
+    except OSError:
+        pass                                     # the 2-hourly watch still picks the batch up
     return batch, len(drafts), "Manager"
 
 
@@ -363,6 +367,9 @@ class Base(BaseHTTPRequestHandler):
     def is_design(self):
         return False
 
+    def safe_to_open(self):
+        return False
+
     def _send(self, code, body, ctype="application/json", cors=True):
         data = body if isinstance(body, bytes) else body.encode()
         self.send_response(code)
@@ -399,6 +406,7 @@ class Base(BaseHTTPRequestHandler):
                 d = json.loads(raw or b"{}")
                 d.setdefault("app", self.app_name)
                 d.setdefault("variant", self.current_variant())
+                d["_snip"] = self.safe_to_open()
                 self._send(201, json.dumps({"id": save(d)}))
             except ValueError as e:
                 self._send(400, json.dumps({"error": str(e)}))
@@ -422,8 +430,12 @@ class Base(BaseHTTPRequestHandler):
         m = re.fullmatch(r"/notes/([\w-]+)/withdraw", path)
         if m and (INBOX / f"{m.group(1)}.md").exists():
             f = INBOX / f"{m.group(1)}.md"
-            f.write_text(re.sub(r"^status:\s*\S+", "status: withdrawn", f.read_text(encoding="utf-8"), count=1, flags=re.M),
-                         encoding="utf-8")
+            t = f.read_text(encoding="utf-8")
+            if not re.search(r"^status:\s*draft", t, re.M):          # a sent note is the team's now
+                self._send(409, '{"error":"only drafts can be deleted"}')
+                return True
+            f.write_text(re.sub(r"^status:\s*\S+", "status: withdrawn", t, count=1, flags=re.M), encoding="utf-8")
+            (INBOX / f"{m.group(1)}.png").unlink(missing_ok=True)
             self._send(200, '{"ok":true}')
             return True
         return False
@@ -482,6 +494,9 @@ def mirror_handler(app_port, name):
 
         def is_design(self):
             return app_port in sandboxes() or bool(self.current_variant())
+
+        def safe_to_open(self):      # a sandbox or a static design link: a headless visit can't change real data
+            return app_port in sandboxes() or "design" in name.lower()
 
         def _variant_file(self, sub):
             m = re.fullmatch(r"/v/([\w-]+)/([\w.-]+)", sub)
