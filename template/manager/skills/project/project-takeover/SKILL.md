@@ -59,6 +59,8 @@ Steps 1 and 2 are quiet work. **Then stop working and talk:** in one message, sa
 The owner may approve parts. Apply only what got a yes.
 
 ## 5. Apply
+**Steps 1-4 in the chat** (the instruction-file write needs the owner on the line); reply as soon as the tests are back, a few minutes. **Steps 5-8 on a card to yourself** (`Takeover: move the know-how`, `Session: manager:takeover`, the approved list in the body): tell the owner it's running and that you'll report when it lands. Never keep the owner waiting through the whole takeover in one reply.
+
 1. Re-read `workspace/` status (`git status` must be clean; if not, stop and ask).
 2. Write the new `AGENTS.md` and make the approved removals. Hermes protects instruction files (`AGENTS.md`, `CLAUDE.md`, `SOUL.md`, `.cursorrules`): the write shows the owner an approval prompt every time, even after their yes. That's expected; say so in one line. **Every write asks again, so write each instruction file once:** draft the whole new `AGENTS.md` (and `CLAUDE.md`) in `~/scratch/`, check it, then write each file in a single `write_file`, never as a series of patches. With no human on the line (a card, a cron job), it's refused: stop and ask the owner to open a chat. Never route around it. Add `.gitignore` lines for removed tool caches so they don't come back.
 3. One commit in `workspace/`: `Takeover: one instructions file, old tool files removed (system/changes/<date>-takeover)`.

@@ -25,7 +25,7 @@ Known exemptions (see the constants below):
 
 Run me with **/usr/bin/python3** (it has PyYAML; the Hermes-toolchain python3 does not).
 
-Usage:  /usr/bin/python3 vault-lint.py [vault_dir] [--stale-days=N]
+Usage:  /usr/bin/python3 vault-lint.py [vault_dir (default ~/vault)] [--stale-days=N]
 """
 import re
 import sys
@@ -110,7 +110,10 @@ def check_status_contract(root: pathlib.Path, problems: list, advisories: list) 
 
 def main() -> int:
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    root = pathlib.Path(args[0] if args else ".")
+    root = pathlib.Path(args[0]) if args else pathlib.Path.home() / "vault"   # not ".": from ~ it would read the whole home
+    if not (root / "SCHEMA.md").is_file():
+        print(f"vault-lint: {root} is not a vault (no SCHEMA.md); give the vault folder", file=sys.stderr)
+        return 2
     stale_days = 30
     for a in sys.argv[1:]:
         if a.startswith("--stale-days"):
@@ -123,9 +126,11 @@ def main() -> int:
     problems, advisories = [], []
     check_status_contract(root, problems, advisories)
 
+    linked = {}                            # page -> the link targets in it (each page is read once)
     for name, path in sorted(pages.items()):
         raw = path.read_text()
         body = strip_code(raw)
+        linked[name] = set(re.findall(r"\[\[([^\]]+?)\]\]", body))
 
         if name not in EXEMPT_FRONTMATTER:
             block, parsed, err = read_frontmatter(path)
@@ -160,11 +165,13 @@ def main() -> int:
                 if target and target not in pages:
                     problems.append(f"{name}: broken link [[{link}]]")
 
+    inbound = set()
+    for name, links in linked.items():
+        inbound |= links - {name}
     for name in sorted(pages):
         if name in EXEMPT_ORPHAN:
             continue
-        inbound = [o for o, p in pages.items() if o != name and name in re.findall(r"\[\[([^\]]+?)\]\]", strip_code(p.read_text()))]
-        if not inbound:
+        if name not in inbound:
             problems.append(f"{name}: orphan (no inbound links)")
 
     print(f"pages: {len(pages)}")
