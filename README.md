@@ -85,7 +85,7 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 - **What needs you** is a card blocked for you, and it waits as long as it takes. `/queue` in a Manager chat lists them; the Manager screens every new one within 15 minutes and answers the ones that aren't really yours.
 - **Mark it up:** every app the team serves has a review link with the Mark toolbar (click an element or drag an area, type, Save). Notes are drafts until you press **Send**, which hands that link's notes to the team as one round; each note records where it was left, what was inside the box and a cropped picture.
 - **Design:** the **mockup** is a copy of the app (your real data is never touched) with the Designer's looks on it; the badge switches looks. **Demo 1 and 2** show things the app doesn't have yet. When you're happy, say **"build it"**: the Engineer builds from the look, the Designer checks the app against the mockup.
-- **Cards remember:** a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
+- **Cards remember:** a bot coming back to a card (sent back, unblocked, out of turns) resumes its session on it, and a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
 
 ## Adding Discord later
 ```bash
