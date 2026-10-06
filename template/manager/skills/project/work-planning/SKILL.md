@@ -26,7 +26,9 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
 
    | Work | Review |
    |---|---|
-   | code, UI, money, files, data migrations, print geometry | `tester` (if hired) |
+   | code that touches data, money, files, migrations, print geometry or security | `tester` (if hired) |
+   | UI built from a look the owner approved | `none`: the Designer compares the app with the mockup (`look-check.sh`, ~10 min), one card after the build |
+   | other code | `none`: the builder runs the tests; one review round at most, never a chain of them |
    | docs, research, vault-only | `none`: you read the handoff |
 
    With a Tester, the builder calls `kanban_request_review(reviewer="tester")`; the Tester's approval completes the build card, so also create a **land card** (parent: the build card, assignee: the Engineer): merge to main, run `scripts/run-tests.sh`, update docs, complete.

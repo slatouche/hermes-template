@@ -2,7 +2,8 @@
 # Check a design change in one step: open a page with a look on (the mockup) or a demo, at a size, evaluate the
 # checks, and take a screenshot. Prints the results as JSON. One call instead of open, measure, re-measure, shoot.
 #
-#   look-check.sh <look|current> [page path] [--size WxH] [--app <name>] [--demo <1|2>] --js '<expression>' [--js ...]
+#   look-check.sh <look|current> [page path] [--size WxH] [--app <name>] [--demo <1|2>] [--port <review port>] --js '<expression>' [--js ...]
+#   (--port: any review link, e.g. the real app's after a build, to compare it with the mockup)
 #
 #   look-check.sh atlas-air "/#/deck/My%20Deck" --size 1278x945 \
 #     --js 'getComputedStyle(document.querySelector(".rail")).width' \
@@ -12,12 +13,13 @@
 # feedback-inbox service (it can crash inside a bot's terminal).
 set -euo pipefail
 V="${1:?usage: look-check.sh <look|current> [path] [--size WxH] [--app <name>] [--demo <1|2>] --js '<expr>' ...}"; shift
-PAGE="/"; APP=""; SIZE="1440x900"; DEMO=""; JS=()
+PAGE="/"; APP=""; SIZE="1440x900"; DEMO=""; FORCE_PORT=""; JS=()
 while [ $# -gt 0 ]; do
   case "$1" in
     --size) SIZE="$2"; shift 2 ;;
     --app) APP="$2"; shift 2 ;;
     --demo) DEMO="$2"; shift 2 ;;
+    --port) FORCE_PORT="$2"; shift 2 ;;
     --js) JS+=("$2"); shift 2 ;;
     *) PAGE="$1"; shift ;;
   esac
@@ -38,6 +40,7 @@ else
   OUTDIR="$HOME/vault/design/variants/$V"
   [ "$V" = current ] || [ -d "$OUTDIR" ] || { echo "no look $V" >&2; exit 1; }
 fi
+[ -n "$FORCE_PORT" ] && PORT="$FORCE_PORT"
 [ -n "${PORT:-}" ] || { echo "no review link found" >&2; exit 1; }
 mkdir -p "$OUTDIR"
 base="${PAGE%%#*}"; hash=""; [[ "$PAGE" == *"#"* ]] && hash="#${PAGE#*#}"
