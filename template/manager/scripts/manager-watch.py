@@ -109,8 +109,20 @@ def findings():
                     batches.append(p.stem)
                 elif not re.search(r"^batch:", t, re.M):   # notes in a batch are handled through their batch page
                     waiting.append(p.stem)
+        # Paperwork nobody should do by hand: a batch whose card is done closes, with every note in it (silent).
+        done_ids = {t.get("id") for t in tasks if t.get("status") == "done"}
+        for p in fb.glob("*-batch.md"):
+            t = p.read_text(errors="replace")
+            m = re.search(r"^card:\s*(t_\w+)", t, re.M)
+            if m and m.group(1) in done_ids and re.search(r"^status:\s*open", t, re.M):
+                for page in [p] + [fb / f"{n}.md" for n in re.findall(r"\[\[raw/feedback/([\w-]+)\]\]", t)]:
+                    if page.exists():
+                        s = page.read_text(errors="replace")
+                        s = re.sub(r"^status:\s*open", "status: done", s, count=1, flags=re.M)
+                        s = re.sub(r"^card:\s*none", f"card: {m.group(1)}", s, count=1, flags=re.M)
+                        page.write_text(s)
         for b in sorted(batches):
-            f["feedback-batch:" + b] = (f"the owner sent a batch of feedback: raw/feedback/{b}.md (one review pass: "
+            f["feedback-batch:" + b] =(f"the owner sent a batch of feedback: raw/feedback/{b}.md (one review pass: "
                                          "ONE card for the whole batch, never one per note; all on one variant = the owner picked it)")
         if waiting:
             waiting.sort()
