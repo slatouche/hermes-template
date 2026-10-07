@@ -168,8 +168,13 @@ def findings():
         soul = prof / "SOUL.md"
         if name != "default" and soul.exists() and soul.stat().st_size > 10_000:
             f[f"soul:{name}"] = f"{name}'s SOUL.md is {soul.stat().st_size // 1000} KB (keep under 10)"
+    try:
+        phase = re.search(r"^phase:\s*(\S+)", (HOME / "vault" / "00-status.md").read_text(errors="replace"), re.M).group(1)
+    except (OSError, AttributeError):
+        phase = ""
     for agents in (HOME / "workspace" / "AGENTS.md",):
-        if agents.exists() and agents.stat().st_size > 8_500:
+        # While onboarding, AGENTS.md is still the imported project's own: the takeover rewrites it.
+        if phase != "onboarding" and agents.exists() and agents.stat().st_size > 8_500:
             f["agents:size"] = f"workspace/AGENTS.md is {agents.stat().st_size // 100 / 10} KB (keep under about 8; move detail to the vault or per-folder AGENTS.md files)"
     lessons = HOME / "vault" / "system" / "lessons.md"
     if lessons.exists():
