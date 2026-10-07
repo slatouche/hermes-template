@@ -117,6 +117,7 @@ def save(d):
     status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
     (INBOX / f"{stem}.md").write_text(render(rec, status, now), encoding="utf-8")
     if d.get("_snip"):      # only where opening the page can't touch real data (the mockup or a demo)
+        SNIPPING.add(stem)
         threading.Thread(target=snip, args=(stem, rec), daemon=True).start()
     log = SCRIPTS / "vault-log.sh"
     if log.exists() and status == "open":
@@ -126,6 +127,7 @@ def save(d):
 
 
 SNIP_LOCK = threading.Lock()
+SNIPPING = set()          # notes whose picture is still being taken (Send waits a moment for an area's)
 
 
 def snip(stem, rec):
@@ -203,6 +205,8 @@ def snip(stem, rec):
                 f.write_text(t.replace("- **Where:**", line + "- **Where:**", 1), encoding="utf-8")
     except Exception as e:                      # a missing picture never loses a note
         print(f"feedback-inbox: snip {stem}: {e}", file=sys.stderr)
+    finally:
+        SNIPPING.discard(stem)
 
 
 def edit(stem, note):
@@ -292,9 +296,13 @@ def round_text(batch, drafts, where, card, summary="", quick=None):
         inside = ", ".join(f"`{e.get('selector')}` {e.get('text')!r}" for e in (n.get("elements") or [])[:6])
         pic = INBOX / f"{n['id']}.png"
         vp = n.get("viewport") or {}
+        ctx = n.get("ctx") or {}
+        now_ = "; ".join(f"{k} {v}" for k, v in (ctx.get("style") or {}).items())
         out.append(f"{i}. \"{clean(n.get('note'), 1500)}\"\n   on {n.get('page')} ({source_label(n)}), screen {vp.get('w')}x{vp.get('h')}\n"
                    f"   element `{n.get('selector') or anchor or 'an area'}`" + (f"; inside: {inside}" if inside else "")
-                   + (f"\n   picture: `{pic}`" if pic.exists() else ""))
+                   + (f"\n   now: {now_[:400]}" if now_ else "")
+                   + (f"\n   html: {clean(ctx.get('html'), 600)}" if ctx.get("html") else "")
+                   + (f"\n   snip (only to find a drawn area, or to check a change): `{pic}`" if pic.exists() else ""))
     if quick:
         done = "".join(f"\n- note {a['n']}: {a['did']}" for a in quick["applied"]) or " none"
         todo = "".join(f"\n- note {o['n']}: {o['why']}" for o in quick["open"]) or " none"
@@ -304,7 +312,14 @@ def round_text(batch, drafts, where, card, summary="", quick=None):
         m = VARIANTS / look / "map.md"
         if m.exists():
             out.append(f"The map of look `{look}` (`{m}`):\n" + m.read_text(encoding="utf-8", errors="replace")[:8000])
+        css = VARIANTS / look / "style.css"
+        if css.exists():
+            out.append(f"The look's CSS now (`{css}`, quick fixes included):\n```css\n"
+                       + css.read_text(encoding="utf-8", errors="replace")[-10000:] + "\n```")
     out.append(
+        "You're mid-session on this look: everything you need is in this message (the notes, each element's styles and "
+        "HTML, the look's map and CSS). Don't search or read the vault, the repo or other notes; if this session is new to "
+        "the look, read only `design/DESIGN.md` (tokens) once. "
         "How: minutes, not tens of minutes. The owner is watching the page: it refreshes itself when the look's files "
         "change. Each note above names its element and its current styles, so act on that: change first (your first or "
         "second step), then one `look-check.sh` call to confirm; no vision on the snips unless the note is about how a "
@@ -410,8 +425,20 @@ def quick_fix(drafts, look, summary=""):
     user = (("Their overall comment: " + summary + "\n\n" if summary else "") + "Notes:\n" + json.dumps(items, indent=1)
             + "\n\nDesign tokens (DESIGN.md, start):\n" + tokens + "\n\nThe look's current CSS (yours to add to):\n"
             + current[-12000:])
+    content = [{"type": "text", "text": user}]
+    for _ in range(40):                                        # an area drawn just before Send: its snip is seconds away
+        if not any(n["id"] in SNIPPING for n in drafts if n.get("kind") == "area"):
+            break
+        threading.Event().wait(0.25)
+    for i, n in enumerate(drafts, 1):                          # areas: the snip shows the spot (elements: text is enough)
+        pic = INBOX / f"{n['id']}.png"
+        if n.get("kind") == "area" and pic.exists() and pic.stat().st_size < 1_500_000:
+            import base64
+            content += [{"type": "text", "text": f"Note {i}'s snip (what the owner boxed):"},
+                        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + base64.b64encode(pic.read_bytes()).decode()}}]
     body = {"model": mc["model"], "max_tokens": 2500, "temperature": 0.3,
-            "messages": [{"role": "system", "content": QUICK_SYSTEM}, {"role": "user", "content": user}]}
+            "messages": [{"role": "system", "content": QUICK_SYSTEM},
+                         {"role": "user", "content": content if len(content) > 1 else user}]}
     if "deepseek" in mc["model"].lower():
         body["thinking"] = {"type": "disabled"}              # seconds, not tens of seconds
     headers = {"Authorization": "Bearer " + mc["key"], "Content-Type": "application/json", "Accept": "application/json",
