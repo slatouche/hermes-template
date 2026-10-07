@@ -59,7 +59,7 @@ Anything the owner opens (an app, a page, an API) runs as a systemd user service
 ## Cron jobs (default profile, no model tokens)
 | Job | When | Does |
 |---|---|---|
-| `vault-sweep` | every 15 min | Regenerates `index.md`, commits leftover vault changes |
+| `vault-sweep` | every 15 min | Logs each finished card (its summary's first line), regenerates `index.md`, commits leftover vault changes |
 | `vault-lint` | 02:15 daily | Checks the vault; silent when clean, fails loudly on problems |
 | `host-facts` | 03:05 daily | Rewrites [[system/host]] (`system/host.md`): OS, hardware, LAN address, port block, running app services, tools |
 | `workspace-tidy` | hourly at :40 | Removes finished card worktrees and card branches already merged into main; never touches unmerged work |
@@ -85,7 +85,7 @@ Anything the owner opens (an app, a page, an API) runs as a systemd user service
 | A stuck card | `manager-watch` raises it within 2 hours; the Manager never loops a card a fourth time |
 
 ## Scripts (`~/.hermes/scripts/`)
-`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `vault-sweep.sh`, `vault-lint.py`, `vault-lint-job.sh`, `workspace-tidy.sh`, `hire.sh`, `skill-check.py` (checks a skill folder for planted instructions before a bot gets it; `hire.sh` runs it), `raw-stamp.py` (fingerprints a raw source), `run-eval.sh` (a bot's fixed eval, before and after a change), `vault-changes.sh` (what changed in the vault since you last looked; the `/vault-changes` quick command in a Manager chat), `import-survey.py` (a zero-token survey of `workspace/`: shape, how it runs, other AI tools' files, secret risks; writes `raw/predecessor/inventory.md`). Cron scripts must live here.
+`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `vault-sweep.sh` (with `card-log.py`: a log line per finished card), `vault-lint.py`, `vault-lint-job.sh`, `workspace-tidy.sh`, `hire.sh`, `skill-check.py` (checks a skill folder for planted instructions before a bot gets it; `hire.sh` runs it), `raw-stamp.py` (fingerprints a raw source), `run-eval.sh` (a bot's fixed eval, before and after a change), `vault-changes.sh` (what changed in the vault since you last looked; the `/vault-changes` quick command in a Manager chat), `import-survey.py` (a zero-token survey of `workspace/`: shape, how it runs, other AI tools' files, secret risks; writes `raw/predecessor/inventory.md`). Cron scripts must live here.
 
 ## Repos
 1. **Product**: `workspace/`. Only the bots whose domain includes it commit; code goes in worktrees.
