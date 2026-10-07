@@ -161,6 +161,14 @@ def main():
         check("the element's current styles are kept with the note", '"font-size": "15px"' in md and "**Element now:** font-size 15px" in md)
         json.loads(call("POST", "/__mark/notes", {"page": f"http://127.0.0.1:{MOCK}/", "kind": "area", "note": "use this space",
                                                   "draft": True}, headers={"Cookie": "mark_variant=v1"})[2])
+        z = json.loads(call("POST", "/__mark/notes", {"page": f"http://127.0.0.1:{MOCK}/", "kind": "element", "selector": "#t",
+                                                     "note": "nul check", "draft": True,
+                                                     "ctx": {"style": {}, "html": "<div data-sig=\"a\u0000b\">x</div>"}},
+                            headers={"Cookie": "mark_variant=v1"})[2])["id"]
+        check("control characters from the page never reach the note (a null byte breaks the card command)",
+              r"\u0000" not in (fb / f"{z}.md").read_text() and "\x00" not in (fb / f"{z}.md").read_text()
+              and "data-sig" in (fb / f"{z}.md").read_text())
+        call("POST", f"/__mark/notes/{z}/withdraw", {})
         st, _, ver0 = call("GET", "/__mark/look-version?v=v1")
         t0 = time.time()
         st, _, out = call("POST", "/__mark/notes/send", {})

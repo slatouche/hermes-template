@@ -265,7 +265,7 @@
     keys.forEach((k) => { const v = cs.getPropertyValue(k); if (v && !["normal", "none", "auto", "0px", "visible", "static"].includes(v)) style[k] = v.slice(0, 120); });
     const par = el.parentElement, ps = par ? getComputedStyle(par) : null;
     return {
-      style, html: (el.outerHTML || "").replace(/\s+/g, " ").slice(0, 900),
+      style, html: (el.outerHTML || "").replace(/[\u0000-\u001f\u007f]/g, " ").replace(/\s+/g, " ").slice(0, 900),
       parent: par ? { selector: selectorOf(par), display: ps.display, "grid-template-columns": ps.gridTemplateColumns.slice(0, 120), width: ps.width } : null,
     };
   };

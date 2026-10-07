@@ -72,8 +72,12 @@ def notes(status="open", page=None, app=None):
     return out
 
 
+CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+
 def clean(s, n):
-    return str(s or "").replace("\r", "")[:n]
+    """Text from a page is untrusted: no carriage returns or control characters (a null byte can't go in a command)."""
+    return CONTROL.sub("", str(s or "").replace("\r", ""))[:n]
 
 
 def render(rec, status, now, stem=None):
@@ -112,6 +116,8 @@ def save(d):
                                  "scroll", "anchor", "elements", "ua", "ctx")}
     if not isinstance(rec.get("ctx"), dict) or len(json.dumps(rec["ctx"])) > 4000:   # the element as it is now, capped
         rec["ctx"] = None
+    else:                                                       # pages can hold control characters (data attributes)
+        rec["ctx"] = json.loads(re.sub(r"\\u00(?:0[0-8bcef]|1[0-9a-f]|7f)", "", json.dumps(rec["ctx"])))
     rec["note"] = note
     rec = {k: (clean(v, 600) if isinstance(v, str) and k != "note" else v) for k, v in rec.items()}
     status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
@@ -524,7 +530,10 @@ def send(scope, summary=""):
     env = {**os.environ, "PATH": f"{HOME}/.local/bin:/usr/bin:/bin"}
 
     def hermes(*args):
+        args = [CONTROL.sub("", a) for a in args]
         r = subprocess.run(["hermes", *args], capture_output=True, text=True, env=env, timeout=60)
+        if r.returncode:
+            print(f"feedback-inbox: hermes {' '.join(args[:2])} failed: {r.stderr.strip()[-300:]}", file=sys.stderr)
         return r.stdout
 
     quick = None
@@ -566,11 +575,17 @@ def send(scope, summary=""):
                         "round is live and the handoff has a line per note.\n")
                 title = (f"{DESIGN_ROUND}: {len(quick['open'])} open, {len(quick['applied'])} live" if quick
                          else f"{DESIGN_ROUND}: {len(drafts)} notes")
-                args = ["kanban", "create", title, "--assignee", "designer", "--body", body,
-                        "--workspace", f"dir:{HOME}", "--max-runtime", "10m", "--created-by", "owner",
-                        "--idempotency-key", batch, "--json"]
-                card = json.loads(hermes(*args)).get("id")
-        except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
+                bf = INBOX / f".{batch}.card.md"                 # a file, not an argument: no size or character limits
+                bf.write_text(clean(body, 200_000), encoding="utf-8")
+                try:
+                    args = ["kanban", "create", title, "--assignee", "designer", "--body-file", str(bf),
+                            "--workspace", f"dir:{HOME}", "--max-runtime", "10m", "--created-by", "owner",
+                            "--idempotency-key", batch, "--json"]
+                    card = json.loads(hermes(*args)).get("id")
+                finally:
+                    bf.unlink(missing_ok=True)
+        except (OSError, ValueError, subprocess.SubprocessError, AttributeError) as e:
+            print(f"feedback-inbox: no Designer card for {batch}, waking the Manager: {e}", file=sys.stderr)
             card = None                          # no card: the Manager routes it instead (the batch page is saved either way)
         if card:
             set_field(INBOX / f"{batch}.md", "card", card)
