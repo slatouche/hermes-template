@@ -60,6 +60,23 @@ OWNER_USER="${OWNER_USER:-${SUDO_USER:-}}"
 id "$OWNER_USER" >/dev/null 2>&1 || die "owner user '$OWNER_USER' does not exist"
 HOST_LABEL="${HOST_LABEL:-$(hostname -s)}"
 HOST_ADDR="${HOST_ADDR:-$(hostname -I | awk '{print $1}')}"
+
+# ---------- WSL2 (Windows): the same install, with three differences ----------
+# Services need systemd; the firewall is Windows'; and the address the owner reaches depends on WSL's networking:
+# "mirrored" shares the PC's own LAN address, the default NAT mode is reachable from this PC only, as localhost.
+WSL=0
+if grep -qiE "microsoft|wsl" /proc/sys/kernel/osrelease 2>/dev/null; then
+  WSL=1
+  [ "$(ps -p 1 -o comm= 2>/dev/null)" = systemd ] || die "this is WSL without systemd. Add these lines to /etc/wsl.conf:
+    [boot]
+    systemd=true
+  then run 'wsl --shutdown' in Windows PowerShell, open Ubuntu again and re-run this command."
+  case "$HOST_ADDR" in
+    172.1[6-9].*|172.2[0-9].*|172.3[01].*)        # WSL's private NAT network: only this PC can reach it
+      WSL_NAT=1
+      HOST_ADDR=localhost ;;
+  esac
+fi
 IMPORT="${IMPORT/#\~/$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)}"     # allow ~/path
 NOTES="${NOTES/#\~/$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)}"
 if [ -n "$IMPORT" ]; then
@@ -92,6 +109,12 @@ else
   fi
 fi
 for c in git curl openssl /usr/bin/python3; do command -v "$c" >/dev/null 2>&1 || die "$c is required and could not be installed"; done
+if [ "$WSL" = 1 ]; then            # Hermes Desktop reaches a project over SSH; Ubuntu on WSL doesn't run a server by default
+  if ! dpkg-query -W -f='${Status}' openssh-server 2>/dev/null | grep -q "ok installed"; then
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openssh-server >/dev/null || echo "warning: couldn't install openssh-server"
+  fi
+  systemctl enable --now ssh >/dev/null 2>&1 || echo "warning: the SSH server didn't start (systemctl status ssh): Hermes Desktop needs it"
+fi
 /usr/bin/python3 -c 'import yaml' 2>/dev/null || die "python3-yaml is required and could not be installed"
 if [ "${SEARXNG:-yes}" = yes ]; then
   step "Web search for the bots (SearXNG, shared by all projects)"
@@ -177,7 +200,16 @@ echo "ok"
 
 # ---------- firewall: app ports to the LAN only ----------
 step "Firewall"
-if command -v ufw >/dev/null 2>&1; then
+if [ "$WSL" = 1 ]; then
+  echo "WSL: Windows' firewall decides who reaches these ports (ufw inside WSL doesn't apply)."
+  if [ "${WSL_NAT:-0}" = 1 ]; then
+    echo "  WSL is in NAT mode: the apps are reachable from this PC only, as http://localhost:<port>."
+    echo "  For other devices on your network: networkingMode=mirrored in %UserProfile%\\.wslconfig (see README, WSL2)."
+  else
+    echo "  For other devices on your network, allow the ports once in Windows PowerShell (as administrator):"
+    echo "    New-NetFirewallRule -DisplayName 'Hermes $NAME' -Direction Inbound -Protocol TCP -LocalPort $APP_LO-$APP_HI -Action Allow"
+  fi
+elif command -v ufw >/dev/null 2>&1; then
   for NET in $LAN_SUBNETS; do
     ufw allow from "$NET" to any port "$APP_LO:$APP_HI" proto tcp comment "$NAME apps"
   done

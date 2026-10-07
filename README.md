@@ -125,3 +125,22 @@ Improvements found in a project get copied back here, so the next project starts
 Any recent Ubuntu Server (tested on 26.04) with an admin user that has sudo and your SSH key in `~/.ssh/authorized_keys`. `new-project.sh` installs everything else. Before the first project:
 - Check `host.conf`: `OWNER_NAME`, `LAN_SUBNETS` (the networks allowed to reach project apps), and optionally `DISCORD_USER_ID`.
 - The firewall: the script adds allow rules but never switches ufw on (that could lock you out). To enable it: `sudo ufw allow OpenSSH && sudo ufw enable`.
+
+## On Windows (WSL2)
+The same install runs inside Ubuntu on WSL2 (Windows 11). The installer notices WSL and adjusts: it needs systemd, installs and starts an SSH server for Hermes Desktop, leaves the firewall to Windows (it prints the one rule to add), and uses `localhost` as the address when WSL is in its default NAT mode. Once, before the first project:
+1. Install Ubuntu: `wsl --install -d Ubuntu-24.04` in PowerShell, then create your user.
+2. Turn on systemd: add to `/etc/wsl.conf` inside Ubuntu
+   ```
+   [boot]
+   systemd=true
+   ```
+   then `wsl --shutdown` in PowerShell and open Ubuntu again.
+3. Optional, so other devices on your network can reach the apps and Mark links: in `%UserProfile%\.wslconfig` on Windows
+   ```
+   [wsl2]
+   networkingMode=mirrored
+   vmIdleTimeout=-1
+   ```
+   (`vmIdleTimeout=-1` stops WSL shutting down when idle), then `wsl --shutdown`. Without mirrored networking everything works from this PC at `http://localhost:<port>`.
+4. Keep the bots running when no terminal is open: a Task Scheduler task at log-on that runs `wsl.exe -d Ubuntu-24.04 --exec sleep infinity` (hidden). WSL stops when Windows sleeps or shuts down; the projects' services start again with it.
+5. Then run the same one-line install inside Ubuntu. If Windows' own OpenSSH Server already uses port 22 (mirrored mode shares ports), stop it or move one of them.
