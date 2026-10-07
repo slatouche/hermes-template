@@ -52,6 +52,7 @@ DEFAULTS="$HOME/.hermes/scripts/hire-defaults.conf"
 COMPRESSION_ROLE_TOKENS=150000; ROLE_MAX_TURNS=90; ROLE_BUDGET_WARNING=0.8; EFFORT=medium
 ROLE_DISABLED_TOOLSETS='["image_gen","video_gen","computer_use","tts","cronjob","connections","clarify"]'
 ROLE_SKILL_CATEGORIES_OFF="apple autonomous-ai-agents email media note-taking social-media productivity"
+CARD_APPROVALS=approve; APPROVAL_DENY='[]'
 # shellcheck disable=SC1090
 [ -f "$DEFAULTS" ] && source "$DEFAULTS"
 
@@ -144,6 +145,9 @@ EOF
   hermes -p "$ROLE" config set agent.budget_warning_ratio "$ROLE_BUDGET_WARNING" >/dev/null
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null
   hermes -p "$ROLE" config set agent.verify_on_stop "$R_VERIFY" >/dev/null
+  # Cards run unattended: approve what the scanner flags; the hardline floor and the deny globs still block.
+  hermes -p "$ROLE" config set approvals.single_query_mode "$CARD_APPROVALS" >/dev/null
+  hermes -p "$ROLE" config set approvals.deny "$APPROVAL_DENY" >/dev/null
   # Skills: every skill's name and summary rides along on every model call, so a hired bot loads only what its
   # work can use: whole bundled categories are switched off (a role file can keep some: skill_categories_on), and
   # llm-wiki always (the vault has its own rules).

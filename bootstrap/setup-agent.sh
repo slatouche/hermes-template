@@ -105,6 +105,9 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
   hermes -p "$p" config set delegation.max_concurrent_children "$DELEGATION_MAX_CHILDREN"
   hermes -p "$p" config set delegation.max_iterations "$DELEGATION_MAX_ITERATIONS"
   hermes -p "$p" config set --force delegation.reasoning_effort "$DELEGATION_EFFORT"
+  # Card workers run unattended: approve what the scanner flags; the hardline floor and the deny globs still block.
+  hermes -p "$p" config set approvals.single_query_mode "${CARD_APPROVALS:-approve}" >/dev/null
+  hermes -p "$p" config set approvals.deny "${APPROVAL_DENY:-[]}" >/dev/null
   # Every bot needs the board tools in chats (CLI/Desktop and Discord); story-maker's Manager had them off.
   hermes -p "$p" tools enable kanban >/dev/null
   hermes -p "$p" tools enable --platform discord kanban >/dev/null
@@ -143,6 +146,8 @@ ROLE_BUDGET_WARNING="$ROLE_BUDGET_WARNING"
 EFFORT="$EFFORT"
 ROLE_DISABLED_TOOLSETS='${ROLE_DISABLED_TOOLSETS:-$DISABLED_TOOLSETS}'
 ROLE_SKILL_CATEGORIES_OFF="${ROLE_SKILL_CATEGORIES_OFF:-apple autonomous-ai-agents email media note-taking social-media productivity}"
+CARD_APPROVALS="${CARD_APPROVALS:-approve}"
+APPROVAL_DENY='${APPROVAL_DENY:-[]}'
 EOF
 render "$T/root-AGENTS.md" > "$HOME/AGENTS.md"
 
