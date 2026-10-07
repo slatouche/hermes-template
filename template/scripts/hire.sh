@@ -146,7 +146,9 @@ EOF
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null
   hermes -p "$ROLE" config set agent.verify_on_stop "$R_VERIFY" >/dev/null
   # Cards run unattended: approve what the scanner flags; the hardline floor and the deny globs still block.
-  hermes -p "$ROLE" config set approvals.single_query_mode "$CARD_APPROVALS" >/dev/null
+  for m in single_query_mode cron_mode unattended_mode; do   # cards, cron runs, API chats: no one to ask
+    hermes -p "$ROLE" config set "approvals.$m" "$CARD_APPROVALS" >/dev/null
+  done
   hermes -p "$ROLE" config set approvals.deny "$APPROVAL_DENY" >/dev/null
   # Skills: every skill's name and summary rides along on every model call, so a hired bot loads only what its
   # work can use: whole bundled categories are switched off (a role file can keep some: skill_categories_on), and

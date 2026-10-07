@@ -106,7 +106,11 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
   hermes -p "$p" config set delegation.max_iterations "$DELEGATION_MAX_ITERATIONS"
   hermes -p "$p" config set --force delegation.reasoning_effort "$DELEGATION_EFFORT"
   # Card workers run unattended: approve what the scanner flags; the hardline floor and the deny globs still block.
-  hermes -p "$p" config set approvals.single_query_mode "${CARD_APPROVALS:-approve}" >/dev/null
+  # Same for the other no-one-to-ask runs: cron (manager-watch waking the Manager) and API chats (Hermes treats
+  # api_server as unattended, so a flagged command there is refused outright, not asked).
+  for m in single_query_mode cron_mode unattended_mode; do
+    hermes -p "$p" config set "approvals.$m" "${CARD_APPROVALS:-approve}" >/dev/null
+  done
   hermes -p "$p" config set approvals.deny "${APPROVAL_DENY:-[]}" >/dev/null
   # Every bot needs the board tools in chats (CLI/Desktop and Discord); story-maker's Manager had them off.
   hermes -p "$p" tools enable kanban >/dev/null

@@ -47,8 +47,12 @@ def findings():
     f = {}   # key -> text
     tasks = kanban("list") or []
     diags = kanban("diagnostics") or []
+    busy = {t.get("assignee") for t in tasks if t.get("status") == "running"}
     for d in diags:
         for item in d.get("diagnostics") or []:
+            # Waiting behind its bot's running card (one card per bot at a time) is a queue, not a stranded card.
+            if isinstance(item, dict) and item.get("kind") == "stranded_in_ready" and d.get("assignee") in busy:
+                continue
             f[f"diag:{d.get('task_id')}:{str(item)[:60]}"] = f"board diagnostic on {d.get('task_id') or 'the board'}: {str(item)[:200]}"
     for t in tasks:
         tid, st, title = t.get("id"), t.get("status"), (t.get("title") or "")[:60]
