@@ -59,16 +59,20 @@ Steps 1 and 2 are quiet work. **Then stop working and talk:** in one message, sa
 The owner may approve parts. Apply only what got a yes.
 
 ## 5. Apply
-**Steps 1-4 in the chat** (the instruction-file write needs the owner on the line); reply as soon as the tests are back, a few minutes. **Steps 5-8 on a card to yourself** (`Takeover: move the know-how`, `Session: manager:takeover`, the approved list in the body): tell the owner it's running and that you'll report when it lands. Never keep the owner waiting through the whole takeover in one reply.
+Steps 1-5 happen in the chat (the instruction-file write needs the owner on the line), and the chat turn **ends at step 5**. Everything after that runs on a card, so the owner gets an answer in minutes, not after the whole takeover.
 
 1. Re-read `workspace/` status (`git status` must be clean; if not, stop and ask).
 2. Write the new `AGENTS.md` and make the approved removals. Hermes protects instruction files (`AGENTS.md`, `CLAUDE.md`, `SOUL.md`, `.cursorrules`): the write shows the owner an approval prompt every time, even after their yes. That's expected; say so in one line. **Every write asks again, so write each instruction file once:** draft the whole new `AGENTS.md` (and `CLAUDE.md`) in `~/scratch/`, check it, then write each file in a single `write_file`, never as a series of patches. With no human on the line (a card, a cron job), it's refused: stop and ask the owner to open a chat. Never route around it. Add `.gitignore` lines for removed tool caches so they don't come back.
 3. One commit in `workspace/`: `Takeover: one instructions file, old tool files removed (system/changes/<date>-takeover)`.
 4. Run the baseline tests again. **Same or better: keep. Worse: `git revert` the commit,** tell the owner what broke, and fix the list.
-5. Write the destinations from the ledger (vault pages, skills, owner-profile proposal). Set the change page to `status: active` with an `applied: <date>` line and the commit id, and `system/takeover.md` to `status: active`; nothing applied stays `draft`. Then checkpoint with `vault-commit.sh`.
-6. **Clear the drop spot.** If the source was copied into `~/import/`, the code is now in `workspace/` (with its history) and the evidence in `raw/predecessor/`. First move anything the owner said to keep from `raw/predecessor/not-imported.md` (data the project needs goes to `~/data/`, outside git). Then, with the owner's yes, delete the source folder from `~/import/` (and any `--notes` folder there). The owner's original elsewhere is never touched.
-7. Set `00-status.md` to the agreed next phase (`setup` with Gate 1 done, or `build`), log a `decision`, and tell the owner in three lines: what was kept, what was removed, the test result.
-8. Carry on with the hires and first cards as approved.
+5. **Hand off and stop.** Create a card for yourself, `Takeover: finish`, with `Session: manager:takeover` and steps 6-9 below plus the approved list (destinations, hires, first cards) in the body. Reply to the owner in three lines (the instructions file is in, the test result, the rest is on the card and you'll report when it lands) and **end your turn**. No hires, page moves or status edits in this chat turn.
+
+**On the card:**
+
+6. Write the destinations from the ledger (vault pages, skills, owner-profile proposal). Set the change page to `status: active` with an `applied: <date>` line and the commit id, and `system/takeover.md` to `status: active`; nothing applied stays `draft`. Then checkpoint with `vault-commit.sh`.
+7. **Clear the drop spot.** If the source was copied into `~/import/`, the code is now in `workspace/` (with its history) and the evidence in `raw/predecessor/`. First move anything the owner said to keep from `raw/predecessor/not-imported.md` (data the project needs goes to `~/data/`, outside git). Then, with the owner's yes, delete the source folder from `~/import/` (and any `--notes` folder there). The owner's original elsewhere is never touched.
+8. Set `00-status.md` to the agreed next phase (`setup` with Gate 1 done, or `build`), log a `decision`, and tell the owner in three lines: what was kept, what was removed, the test result.
+9. Carry on with the hires and first cards as approved.
 
 ## Pitfalls
 - Removing first and understanding later: the snapshot is evidence, but the context of why a rule existed is lost once nobody reads it.
