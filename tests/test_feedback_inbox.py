@@ -24,7 +24,30 @@ HERE = pathlib.Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "template" / "scripts"
 MOCK_APP, DEMO_APP, REAL_APP = 18101, 18102, 18103
 MOCK, DEMO, REAL, INBOX_PORT = 18151, 18152, 18153, 18199
+MODEL = 18198
 seen = []
+model_calls = []
+
+
+class FakeModel(http.server.BaseHTTPRequestHandler):
+    """The provider's chat/completions: turns the first note into CSS and leaves the rest open, like the real one."""
+    def log_message(self, *a):
+        pass
+
+    def do_POST(self):
+        body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)))
+        model_calls.append({"body": body, "headers": dict(self.headers)})
+        user = body["messages"][-1]["content"]
+        reply = {"fixes": [{"n": 1, "css": "#t { font-size: 48px; }", "did": "the heading is huge now"}],
+                 "open": [{"n": 2, "why": "needs a decision on what goes there"}]}
+        if "BADCSS" in user:
+            reply = {"fixes": [{"n": 1, "css": "#t { color: red </style><script>", "did": "x"}], "open": []}
+        out = json.dumps({"choices": [{"message": {"content": "```json\n" + json.dumps(reply) + "\n```"}}]}).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
 
 
 class FakeApp(http.server.BaseHTTPRequestHandler):
@@ -77,8 +100,14 @@ def main():
     var.mkdir(parents=True)
     (var / "style.css").write_text("h1{color:red}")
     (var / "note.md").write_text("# Variant one\nRed headings.\n")
+    # the project's model, as Hermes configures it (a fake provider on localhost); the key is only ever sent to it
+    (home / ".hermes" / "config.yaml").write_text(
+        f"model:\n  # comments and blank lines, like the real file\n\n  default: \"deepseek-v4.1-flash\"\n  provider: test-prov\n"
+        f"  base_url: http://127.0.0.1:{MODEL}/v1\n  api_mode: chat_completions\nagent:\n  max_turns: 90\n")
+    (home / ".hermes" / ".env").write_text("TEST_PROV_API_KEY=sk-test-123\n")
 
     apps = [http.server.ThreadingHTTPServer(("127.0.0.1", p), FakeApp) for p in (MOCK_APP, DEMO_APP, REAL_APP)]
+    apps.append(http.server.ThreadingHTTPServer(("127.0.0.1", MODEL), FakeModel))
     for a in apps:
         threading.Thread(target=a.serve_forever, daemon=True).start()
     env = {**os.environ, "HOME": str(home), "PATH": "/usr/bin:/bin"}   # no hermes on PATH: Send must still work
@@ -123,6 +152,44 @@ def main():
         st, _, _ = call("GET", "/__mark/v/v1/..%2F..%2F..%2F.hermes%2Fscripts%2Ffeedback-inbox.py")
         check("no path escape from the looks folder", st == 404, st)
 
+        # the element as it is now travels with the note (the hand-over the quick lane and the Designer act on)
+        ctx = {"style": {"font-size": "15px", "font-weight": "600"}, "html": "<h1 id=t>Hello</h1>", "parent": {"selector": "body"}}
+        q = json.loads(call("POST", "/__mark/notes", {"page": f"http://127.0.0.1:{MOCK}/", "kind": "element", "selector": "#t",
+                                                     "note": "too small, make it huge", "draft": True, "ctx": ctx},
+                            headers={"Cookie": "mark_variant=v1"})[2])["id"]
+        md = (fb / f"{q}.md").read_text()
+        check("the element's current styles are kept with the note", '"font-size": "15px"' in md and "**Element now:** font-size 15px" in md)
+        json.loads(call("POST", "/__mark/notes", {"page": f"http://127.0.0.1:{MOCK}/", "kind": "area", "note": "use this space",
+                                                  "draft": True}, headers={"Cookie": "mark_variant=v1"})[2])
+        st, _, ver0 = call("GET", "/__mark/look-version?v=v1")
+        t0 = time.time()
+        st, _, out = call("POST", "/__mark/notes/send", {})
+        d = json.loads(out)
+        quick = d.get("quick") or {}
+        check("quick lane: Send answers with what changed, in seconds", st == 200 and time.time() - t0 < 10
+              and [a["did"] for a in quick.get("applied", [])] == ["the heading is huge now"], d)
+        check("quick lane: the open note is left for the Designer", [o["n"] for o in quick.get("open", [])] == [2], quick)
+        css = (var / "style.css").read_text()
+        check("quick lane: CSS lands in the look, after what was there", css.startswith("h1{color:red}") and "#t { font-size: 48px; }" in css
+              and "/* quick fix" in css, css)
+        call_ = model_calls[-1] if model_calls else {}
+        check("quick lane: one call, thinking off, the note's element in it",
+              len(model_calls) == 1 and call_["body"].get("thinking") == {"type": "disabled"}
+              and '"font-size": "15px"' in call_["body"]["messages"][-1]["content"], call_.get("body", {}).get("thinking"))
+        check("quick lane: the key goes only to the provider, in the header",
+              call_.get("headers", {}).get("Authorization") == "Bearer sk-test-123" and "sk-test-123" not in out.decode())
+        check("quick lane: the batch page says what was done", "**Quick lane**" in (fb / f"{d['batch']}.md").read_text())
+        st, _, ver1 = call("GET", "/__mark/look-version?v=v1")
+        check("look version changes so open pages refresh themselves", json.loads(ver0)["css"] != json.loads(ver1)["css"], (ver0, ver1))
+        st, _, bad = call("GET", "/__mark/look-version?v=../../.hermes")
+        check("look version: no path escape", bad == b"{}", bad)
+        json.loads(call("POST", "/__mark/notes", {"page": f"http://127.0.0.1:{MOCK}/", "kind": "element", "selector": "#t",
+                                                  "note": "BADCSS please", "draft": True}, headers={"Cookie": "mark_variant=v1"})[2])
+        before = (var / "style.css").read_text()
+        d = json.loads(call("POST", "/__mark/notes/send", {})[2])
+        check("quick lane: CSS that could break out of the stylesheet is refused",
+              (var / "style.css").read_text() == before and d["quick"]["applied"] == [] and d["quick"]["open"], d.get("quick"))
+
         # drafts, with where each was left
         base = {"page": f"http://127.0.0.1:{MOCK}/#/deck", "kind": "element", "selector": "#t", "rect": {"x": 1, "y": 2, "w": 3, "h": 4},
                 "viewport": {"w": 800, "h": 600}, "scroll": {"x": 0, "y": 0}, "draft": True}
@@ -155,6 +222,7 @@ def main():
         st, _, out = call("POST", "/__mark/notes/send", {"summary": "overall comment"})
         d = json.loads(out)
         check("send from the mockup sends its 1 remaining draft", st == 200 and d["sent"] == 1 and d["batch"], d)
+        model_calls.clear()
         check("send falls back to the Manager without hermes", d.get("to") == "Manager", d)
         bpage = (fb / f"{d['batch']}.md").read_text()
         check("batch lists notes under where they were left", "**the mockup (test), look `v1`**" in bpage and "overall comment" in bpage, bpage[:400])

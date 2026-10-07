@@ -16,6 +16,7 @@ metadata:
 Use when turning an agreed plan into cards, when a card comes back blocked or in triage, when `manager-watch` wakes you, or when a feature is ready for the owner's sign-off. The card format and the builder's rules are in `AGENTS.md` (every bot loads them); this skill is how you, the Manager, use them.
 
 ## Cutting cards
+0. **Route by who owns it, one card, no relay.** A UI change the owner asks for (look, layout, wording, what a screen shows) is **one Designer card**: the Designer works out the change, cards the Engineer build itself and reviews it; you don't cut a spec card and a build card, and there's no Tester. A small code fix is one Engineer card. Small choices inside a request are the bot's to make (it says which it picked); the owner is asked only for real taste with no obvious answer.
 1. **One outcome per card, smallest first, about 15 minutes of work: 30-60 steps** (a bot has 90; a card that hits the cap resumes, but costs a restart). Its bot works one card at a time, so a long card holds up everything queued behind it. A build across several screens or features is a card per screen or feature, in order, on one `Session:` topic; so is work that crosses layers (storage, serving, loading data, a service and its review link: separate cards). Slice 1 is always a plain card (no goal mode). If you can't write the Verification, the card isn't ready: ask, prototype or research first.
 2. **Verification comes from the test plan** (`qa/<feature>/test-plan.md` when there's a Tester), copied verbatim. You (and the Architect, if hired) approve the plan; it goes to the owner only if it settles something the owner decides (see "What needs the owner"). Without a Tester, write 2–5 checks yourself: a command and its exact expected output, plus one "reachable from the running app" check.
 3. **Give related cards one `Session:` topic** (`<area>:<thing>`, e.g. `engineer:deck-view`): the same bot then resumes its session for that area (it remembers the code, the page and the last card) instead of starting cold. Same feature, look, side track or bug area, same topic; unrelated work, a new topic; a topic going stale or confused, `Session: new <topic>`. `~/.hermes/scripts/hermes-worker.py --topics` (with `HERMES_HOME` set to the bot's profile) lists a bot's topics.
@@ -28,7 +29,7 @@ Use when turning an agreed plan into cards, when a card comes back blocked or in
    | Work | Review |
    |---|---|
    | code that touches data, money, files, migrations, print geometry or security | `tester` (if hired) |
-   | UI built from a look the owner approved | `none`: the Designer compares the app with the mockup (`look-check.sh`, ~10 min), one card after the build |
+   | a UI change the owner asked for, or UI built from a look they approved | `designer`: the Engineer lands it, then the Designer checks the running app (`look-check.sh`) and approves |
    | other code | `none`: the builder runs the tests; one review round at most, never a chain of them |
    | docs, research, vault-only | `none`: you read the handoff |
 

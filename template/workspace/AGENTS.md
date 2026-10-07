@@ -26,7 +26,7 @@ Think before acting and say your assumptions; ask rather than guess. Build only 
 ## Cards
 Every piece of real work is a card, even if it started in a chat. A card is about 150–250 words:
 ```
-Context: <vault links, one line>      Review: tester | none
+Context: <vault links, one line>      Review: tester | designer | none
 Session: <topic>   optional: the same bot on the same area resumes its last session for it
 ## Outcome        the observable result, one or two sentences
 ## Verification   commands + exact expected output; one check that it's reachable from the running app;

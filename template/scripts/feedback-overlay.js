@@ -62,7 +62,11 @@
   let mode = null, target = null, rect = null, start = null, open = [], showPins = true;
   let editing = null, sending = false, drafts = 0;   // editing: the draft whose pin was clicked; sending: the Send box
   const APP = "__APP__";
-  const say = (msg) => { toast.textContent = msg; toast.style.display = "block"; setTimeout(() => (toast.style.display = "none"), 2600); };
+  let sayTimer = 0;
+  const say = (msg, ms = 2600) => {
+    toast.textContent = msg; toast.style.display = "block";
+    clearTimeout(sayTimer); if (ms) sayTimer = setTimeout(() => (toast.style.display = "none"), ms);
+  };
   const post = (path, body) => fetch(INBOX + path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
   const store = (k, v) => { try { v === undefined ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (_) {} };
   const recall = (k) => { try { return sessionStorage.getItem(k); } catch (_) { return null; } };
@@ -252,14 +256,37 @@
     $("textarea").focus();
   };
   const closePop = () => { pop.style.display = "none"; area.style.display = "none"; hl.style.display = "none"; editing = null; sending = false; };
+  const ctxOf = (el) => {
+    if (!el || !el.getBoundingClientRect) return null;
+    const keys = ["display", "position", "width", "height", "font-size", "font-weight", "line-height", "color",
+      "background-color", "margin", "padding", "gap", "grid-template-columns", "grid-column", "flex", "justify-content",
+      "align-items", "border", "border-radius", "max-width", "overflow", "text-transform", "letter-spacing"];
+    const style = {}, cs = getComputedStyle(el);
+    keys.forEach((k) => { const v = cs.getPropertyValue(k); if (v && !["normal", "none", "auto", "0px", "visible", "static"].includes(v)) style[k] = v.slice(0, 120); });
+    const par = el.parentElement, ps = par ? getComputedStyle(par) : null;
+    return {
+      style, html: (el.outerHTML || "").replace(/\s+/g, " ").slice(0, 900),
+      parent: par ? { selector: selectorOf(par), display: ps.display, "grid-template-columns": ps.gridTemplateColumns.slice(0, 120), width: ps.width } : null,
+    };
+  };
   const save = async () => {
     const note = $("textarea").value.trim();
     try {
       if (sending) {                                  // Send: every draft goes to the team as one batch
+        closePop(); say("Sending… concrete notes go live in seconds.", 0);
         const r = await post("/notes/send", { app: APP || undefined, summary: note });
         if (!r.ok) throw new Error(r.status);
         const d = await r.json();
-        closePop(); say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The ${d.to || "Manager"} has them now.` : "Nothing to send.");
+        const q = d.quick;
+        if (q && q.applied.length) {
+          const rest = q.open.length ? ` The ${d.to || "Designer"} has ${q.open.length} more.` : "";
+          say(`Changed ${q.applied.length} in ${q.secs}s: ${q.applied.map((a) => a.did).join(" · ")}.${rest}`, 9000);
+          if (q.look !== ((cfg && cfg.variant) || "")) {        // the fixes went into a look this page isn't showing yet
+            const u = new URL(location.href); u.searchParams.set("__variant", q.look); location.href = u.pathname + u.search + u.hash;
+          } else checkLook(true);
+        } else {
+          say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The ${d.to || "Manager"} has them now.` : "Nothing to send.", 5000);
+        }
       } else if (editing) {
         if (!note) return;
         const r = await post(`/notes/${editing}/edit`, { note });
@@ -273,6 +300,10 @@
           rect, viewport: { w: innerWidth, h: innerHeight }, scroll: { x: scrollX, y: scrollY }, ua: navigator.userAgent,
           ...(target ? {} : boxInfo || {}),
         };
+        try {
+          const anchor = !target && boxInfo && boxInfo.anchor && document.querySelector(boxInfo.anchor.selector);
+          body.ctx = ctxOf(target || anchor);
+        } catch (_) {}
         const r = await post("/notes", body);
         if (!r.ok) throw new Error(r.status);
         closePop(); say("Saved as a draft. Press Send when you're done.");
@@ -363,6 +394,24 @@
     if (location.href !== href) { href = location.href; load(); } else if (open.length && showPins) redraw();
   }, 700);
   addEventListener("popstate", load);
+  let lookSeen = null;
+  const checkLook = async (now) => {
+    const v = cfg && cfg.variant;
+    if (!v || (document.hidden && !now)) return;
+    let d;
+    try { d = await (await fetch(INBOX + "/look-version?v=" + encodeURIComponent(v), { cache: "no-store" })).json(); } catch (_) { return; }
+    if (!d || d.css === undefined) return;
+    if (lookSeen && d.js !== lookSeen.js) { location.reload(); return; }
+    if (lookSeen && d.css !== lookSeen.css) {
+      document.querySelectorAll(`link[href^="/__mark/v/${v}/style.css"]`).forEach((l) => (l.href = `/__mark/v/${v}/style.css?t=${d.css}`));
+      if (!now) say("The look just changed: showing it.", 3000);
+    }
+    lookSeen = d;
+  };
+  if (cfg && cfg.variant) {                        // every 2 s while you look; at once when you come back to the tab
+    checkLook(); setInterval(checkLook, 2000);
+    addEventListener("visibilitychange", () => { if (!document.hidden) checkLook(); });
+  }
   load();
   // From the bookmarklet the owner clicked to mark something: start in Mark mode. On a review link the
   // toolbar just waits, so the app works normally until the owner presses Mark.

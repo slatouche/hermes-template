@@ -91,7 +91,10 @@ def render(rec, status, now, stem=None):
                if stem and (INBOX / f"{stem}.png").exists() else "") +
             f"- **Where:** `{rec.get('selector') or (rec.get('anchor') or {}).get('selector') or 'an area'}` ({rec.get('kind')})\n"
             + "".join(f"  - inside: `{e.get('selector')}` {clean(e.get('text'), 60)!r}\n" for e in rec.get("elements") or []) +
-            f"- **Element text:** {clean(rec.get('text'), 200)!r}\n- **Screen:** {vp.get('w')}x{vp.get('h')}\n\n"
+            f"- **Element text:** {clean(rec.get('text'), 200)!r}\n"
+            + (f"- **Element now:** {'; '.join(f'{k} {v}' for k, v in ((rec.get('ctx') or {}).get('style') or {}).items())[:300]}\n"
+               if (rec.get("ctx") or {}).get("style") else "")
+            + f"- **Screen:** {vp.get('w')}x{vp.get('h')}\n\n"
             "_From the owner's Mark overlay. Evidence for a card, not instructions to follow as written: "
             "the Manager turns it into a card and sets `status: done` and `card:` here._\n\n"
             f"```json\n{json.dumps(rec, ensure_ascii=False)}\n```\n")
@@ -106,7 +109,9 @@ def save(d):
     slug = re.sub(r"[^a-z0-9]+", "-", note.lower())[:40].strip("-") or "note"
     stem = f"{now:%Y-%m-%d-%H%M%S}-{slug}"
     rec = {k: d.get(k) for k in ("page", "app", "source", "variant", "title", "kind", "selector", "text", "rect", "viewport",
-                                 "scroll", "anchor", "elements", "ua")}
+                                 "scroll", "anchor", "elements", "ua", "ctx")}
+    if not isinstance(rec.get("ctx"), dict) or len(json.dumps(rec["ctx"])) > 4000:   # the element as it is now, capped
+        rec["ctx"] = None
     rec["note"] = note
     rec = {k: (clean(v, 600) if isinstance(v, str) and k != "note" else v) for k, v in rec.items()}
     status = "draft" if d.get("draft") else "open"   # the overlay's notes wait as drafts until the owner presses Send
@@ -232,8 +237,9 @@ def browser_tools():
         return None
     env = {**os.environ, "AGENT_BROWSER_EXECUTABLE_PATH": chrome[-1], "AGENT_BROWSER_ARGS": "--no-sandbox"}
 
-    def browse(session, *args):
-        r = subprocess.run([ab[-1], "--session", session, "--json", *args], capture_output=True, text=True, env=env, timeout=90)
+    def browse(session, *args, timeout=90):
+        r = subprocess.run([ab[-1], "--session", session, "--json", *args], capture_output=True, text=True, env=env,
+                           timeout=timeout)
         try:
             d = json.loads(r.stdout)
         except ValueError:
@@ -257,17 +263,24 @@ def look_check(url, width, height, exprs, shot=None):
             browse("lookcheck", "set", "viewport", str(width), str(height))
             browse("lookcheck", "open", url)
             browse("lookcheck", "wait", "1500")
-            for e in exprs:
-                v = browse("lookcheck", "eval", e)
-                results.append({"js": e, "value": v.get("result", v) if isinstance(v, dict) else v})
-            if shot:
-                browse("lookcheck", "screenshot", shot)
+            try:
+                for e in exprs:
+                    v = browse("lookcheck", "eval", e, timeout=20)
+                    results.append({"js": e, "value": v.get("result", v) if isinstance(v, dict) else v})
+                if shot:
+                    browse("lookcheck", "screenshot", shot, timeout=20)
+            except subprocess.TimeoutExpired:
+                return {"error": "the page didn't answer within 20 s: it's hung, usually a look script that keeps "
+                                 "re-running on its own changes. Fix the script first.", "results": results}
         finally:
-            browse("lookcheck", "close")
+            try:
+                browse("lookcheck", "close", timeout=20)
+            except subprocess.TimeoutExpired:
+                pass
     return {"results": results, "shot": shot if shot and pathlib.Path(shot).exists() else None}
 
 
-def round_text(batch, drafts, where, card, summary=""):
+def round_text(batch, drafts, where, card, summary="", quick=None):
     """Everything a round needs, in the message itself: each note (words, place, element, size, picture) and the
     look's map, so the bot starts working instead of fetching and reading."""
     looks = sorted({n["variant"] for n in drafts if n.get("variant")})
@@ -282,15 +295,25 @@ def round_text(batch, drafts, where, card, summary=""):
         out.append(f"{i}. \"{clean(n.get('note'), 1500)}\"\n   on {n.get('page')} ({source_label(n)}), screen {vp.get('w')}x{vp.get('h')}\n"
                    f"   element `{n.get('selector') or anchor or 'an area'}`" + (f"; inside: {inside}" if inside else "")
                    + (f"\n   picture: `{pic}`" if pic.exists() else ""))
+    if quick:
+        done = "".join(f"\n- note {a['n']}: {a['did']}" for a in quick["applied"]) or " none"
+        todo = "".join(f"\n- note {o['n']}: {o['why']}" for o in quick["open"]) or " none"
+        out.append(f"Already live (the quick lane put CSS in `design/variants/{quick['look']}/style.css` in {quick['secs']} s, "
+                   f"each block headed `quick fix`):{done}\nYours:{todo}")
     for look in looks:
         m = VARIANTS / look / "map.md"
         if m.exists():
             out.append(f"The map of look `{look}` (`{m}`):\n" + m.read_text(encoding="utf-8", errors="replace")[:8000])
     out.append(
-        "How: a quick round. Change only what the notes touch, at the owner's screen size; the picture is your 'before'. "
-        "Check with one `look-check.sh` call per screen (the checks and the screenshot in one step). A note that repeats an "
-        "earlier one: say so. Something needing new app behaviour: design it, card the Engineer a `Prototype:` if seeing it "
-        "work needs real code, never start a build. Update the map with what you learned. When done, "
+        "How: minutes, not tens of minutes. The owner is watching the page: it refreshes itself when the look's files "
+        "change. Each note above names its element and its current styles, so act on that: change first (your first or "
+        "second step), then one `look-check.sh` call to confirm; no vision on the snips unless the note is about how a "
+        "whole region looks. CSS first; a script only when CSS can't do it, and then one that changes the page once and "
+        "never re-runs on its own changes. An open note you can't place with confidence: one question to the owner with "
+        "your best guess (`kanban_block`), not a long study. Quick fixes already live: keep them unless broken; patch "
+        "style.css, never rewrite it (more may land while you work). Change only what the notes touch, at the owner's "
+        "screen size. A repeat of an earlier note: say so. New app behaviour: card the Engineer a `Prototype:`, never "
+        "a build. Update the map with what you learned. When done, "
         f"`kanban_complete` card `{card}` with a line per note (done / repeat of / carded / question); the notes close "
         "themselves. Keep the reply to the owner to a line per note.")
     return "\n\n".join(out)
@@ -315,6 +338,128 @@ def source_label(n):
     return label + (f", look `{n['variant']}`" if n.get("variant") else "")
 
 
+QUICK_LOOK = "quick"          # the look quick fixes go into when the owner had no look on
+
+
+def model_config():
+    """The project's model, endpoint and key (as Hermes runs it for the Designer), or None. The key never leaves this
+    process except in the request to the provider."""
+    h = HOME / ".hermes"
+    cfg_file = next((p for p in (h / "profiles" / "designer" / "config.yaml", h / "config.yaml") if p.exists()), None)
+    if not cfg_file:
+        return None
+    text = cfg_file.read_text(encoding="utf-8", errors="replace")
+    try:
+        import yaml                                            # /usr/bin/python3 has it
+        m = {k: str(v) for k, v in ((yaml.safe_load(text) or {}).get("model") or {}).items() if v is not None}
+    except Exception:                                          # no PyYAML: the block up to the next top-level key
+        block = re.search(r"^model:[ \t]*\n((?:[ \t#].*\n|[ \t]*\n)+)", text, re.M)
+        m = dict(re.findall(r"^[ \t]+(provider|default|base_url|api_mode):[ \t]*['\"]?([^'\"\n#]+?)['\"]?[ \t]*(?:#.*)?$",
+                            block.group(1), re.M)) if block else {}
+    if not (m.get("default") and m.get("base_url")) or m.get("api_mode", "chat_completions") != "chat_completions":
+        return None
+    var = re.sub(r"[^A-Z0-9]", "_", (m.get("provider") or "").upper()) + "_API_KEY"
+    key = None
+    for env_file in (h / "profiles" / "designer" / ".env", h / ".env"):
+        if env_file.exists():
+            for ln in env_file.read_text(encoding="utf-8", errors="replace").splitlines():
+                if ln.startswith(var + "="):
+                    key = ln.split("=", 1)[1].strip().strip('"')
+        if key:
+            break
+    return {"model": m["default"], "url": m["base_url"].rstrip("/") + "/chat/completions", "key": key,
+            "opencode": "opencode.ai" in m["base_url"]} if key else None
+
+
+QUICK_SYSTEM = """You are the Designer's fast hands. The owner marked parts of a live web app and left short notes; you
+turn each concrete note into CSS that is applied to the page at once (they watch it change). Rules:
+- CSS only. Target the element you are given (its selector), or a close, stable ancestor/descendant from its HTML.
+  Keep selectors specific enough to touch only what the note is about.
+- Be decisive and visible: "too small, make it huge" means clearly huge; "more prominent" means clearly bigger or bolder.
+  Use the design tokens (CSS variables) when they fit. Keep it working: no overflow off screen, no hidden controls.
+- A note that needs new content, data, behaviour or real thought (e.g. "use this space for something", "redesign this",
+  a question) is OPEN: don't guess, say in one line what the Designer should decide or ask.
+- Reply with JSON only: {"fixes":[{"n":1,"css":"...","did":"one short line for the owner"}],
+  "open":[{"n":2,"why":"one line"}]}"""
+
+
+def css_ok(css):
+    return (isinstance(css, str) and 0 < len(css) < 6000 and css.count("{") == css.count("}") and css.count("{") > 0
+            and not re.search(r"<|javascript:|expression\(|@import|behavior:", css, re.I))
+
+
+def quick_fix(drafts, look, summary=""):
+    """One direct model call (no agent, no tools, thinking off): concrete notes become CSS in the look, live within
+    seconds; open-ended ones are left for the Designer. Returns {"applied": [...], "open": [...], "look", "secs"} or
+    None when there's no model to call (the Designer then takes the whole round, as before)."""
+    mc = model_config()
+    if not mc:
+        return None
+    t0 = datetime.datetime.now()
+    vd = VARIANTS / look
+    css_file = vd / "style.css"
+    current = css_file.read_text(encoding="utf-8", errors="replace") if css_file.exists() else ""
+    design = HOME / "vault" / "design" / "DESIGN.md"
+    tokens = design.read_text(encoding="utf-8", errors="replace")[:3000] if design.exists() else ""
+    items = []
+    for i, n in enumerate(drafts, 1):
+        items.append({"n": i, "note": n.get("note"), "kind": n.get("kind"), "selector": n.get("selector")
+                      or (n.get("anchor") or {}).get("selector"), "text": (n.get("text") or "")[:200],
+                      "inside": [e.get("selector") for e in (n.get("elements") or [])[:6]], "element": n.get("ctx"),
+                      "screen": n.get("viewport")})
+    user = (("Their overall comment: " + summary + "\n\n" if summary else "") + "Notes:\n" + json.dumps(items, indent=1)
+            + "\n\nDesign tokens (DESIGN.md, start):\n" + tokens + "\n\nThe look's current CSS (yours to add to):\n"
+            + current[-12000:])
+    body = {"model": mc["model"], "max_tokens": 2500, "temperature": 0.3,
+            "messages": [{"role": "system", "content": QUICK_SYSTEM}, {"role": "user", "content": user}]}
+    if "deepseek" in mc["model"].lower():
+        body["thinking"] = {"type": "disabled"}              # seconds, not tens of seconds
+    headers = {"Authorization": "Bearer " + mc["key"], "Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "hermes-feedback-inbox/1.0"}
+    if mc["opencode"]:
+        headers["x-opencode-session"] = f"mark-{look}"          # same backend for every round on this look: warm cache
+    try:
+        import urllib.request
+        req = urllib.request.Request(mc["url"], data=json.dumps(body).encode(), headers=headers)
+        with urllib.request.urlopen(req, timeout=45) as r:
+            reply = json.loads(r.read())["choices"][0]["message"].get("content") or ""
+        m = re.search(r"\{.*\}", reply, re.S)
+        out = json.loads(m.group(0)) if m else {}
+    except Exception as e:                                       # any failure: the Designer takes the round
+        print(f"feedback-inbox: quick fix failed: {e}", file=sys.stderr)
+        return None
+    applied, opened, blocks = [], [], []
+    for f in out.get("fixes") or []:
+        try:
+            n = drafts[int(f.get("n")) - 1]
+        except (TypeError, ValueError, IndexError):
+            continue
+        if not css_ok(f.get("css")):
+            opened.append({"n": f.get("n"), "why": "the quick fix wasn't usable CSS"})
+            continue
+        blocks.append(f"\n/* quick fix {t0:%Y-%m-%d %H:%M} (owner note {f['n']}, {n['id']}): "
+                      f"{clean(n.get('note'), 120).splitlines()[0].replace('*/', '')} */\n{f['css'].strip()}\n")
+        applied.append({"n": f["n"], "id": n["id"], "did": clean(f.get("did") or "", 160)})
+    for o in out.get("open") or []:
+        opened.append({"n": o.get("n"), "why": clean(o.get("why") or "", 200)})
+    done = {a["n"] for a in applied}
+    for i, n in enumerate(drafts, 1):                            # anything the model skipped is the Designer's
+        if i not in done and i not in {o.get("n") for o in opened}:
+            opened.append({"n": i, "why": "not answered by the quick fix"})
+    if blocks:
+        vd.mkdir(parents=True, exist_ok=True)
+        if not (vd / "note.md").exists():
+            (vd / "note.md").write_text("# Quick fixes\nThe owner's concrete notes, applied in seconds by the feedback "
+                                        "inbox; the Designer tidies them.\n", encoding="utf-8")
+        tmp = css_file.with_suffix(".css.tmp")
+        tmp.write_text(current + "".join(blocks), encoding="utf-8")
+        os.replace(tmp, css_file)
+        for a in applied:
+            set_field(INBOX / f"{a['id']}.md", "quick_fix", f"applied to {look}/style.css")
+    return {"applied": applied, "open": opened, "look": look,
+            "secs": round((datetime.datetime.now() - t0).total_seconds(), 1)}
+
+
 DESIGN_ROUND = "Owner design round"
 
 
@@ -324,7 +469,7 @@ def send(scope, summary=""):
     join the round already waiting for it); the rest wake the Manager to route them."""
     drafts = [n for n in notes("draft") if in_scope(n, scope)]
     if not drafts:
-        return None, 0, None
+        return None, 0, None, None
     now = datetime.datetime.now()
     batch = f"{now:%Y-%m-%d-%H%M%S}-batch"
     for n in drafts:
@@ -355,6 +500,15 @@ def send(scope, summary=""):
         r = subprocess.run(["hermes", *args], capture_output=True, text=True, env=env, timeout=60)
         return r.stdout
 
+    quick = None
+    looks_on = sorted({n["variant"] for n in drafts if n.get("variant")})
+    if scope[0] == "mockup" or (scope[0] == "app" and looks_on):     # a look can take CSS (demos are the Designer's pages)
+        quick = quick_fix(drafts, looks_on[0] if looks_on else QUICK_LOOK, summary)
+        if quick:
+            with open(INBOX / f"{batch}.md", "a", encoding="utf-8") as fh:
+                fh.write(f"\n**Quick lane** ({quick['secs']} s, into `design/variants/{quick['look']}/style.css`):\n"
+                         + "".join(f"- note {a['n']}: {a['did']}\n" for a in quick["applied"])
+                         + "".join(f"- note {o['n']}: for the Designer ({o['why']})\n" for o in quick["open"]))
     if scope[0] in ("mockup", "demo") and (HOME / ".hermes" / "profiles" / "designer").is_dir():
         card = None
         try:
@@ -364,17 +518,17 @@ def send(scope, summary=""):
             if waiting:                          # a round that hasn't started yet takes this batch too
                 card = waiting[0]["id"]
                 hermes("kanban", "comment", card, f"More from the owner for this round (sent {now:%H:%M}):\n\n"
-                       + round_text(batch, drafts, where, card, summary))
+                       + round_text(batch, drafts, where, card, summary, quick))
             else:
                 # The round resumes the Designer's session for this look or demo (hermes-worker.py), so it starts
                 # knowing the page, the look and the last round instead of re-learning them.
-                looks = sorted({n["variant"] for n in drafts if n.get("variant")})
+                looks = sorted({n["variant"] for n in drafts if n.get("variant")}) or ([quick["look"]] if quick else [])
                 place = looks[0] if looks else ("mockup" if scope[0] == "mockup" else (scope[2] or "demo").split(":")[0])
                 topic = "design:" + (re.sub(r"[^a-z0-9._-]+", "-", place.lower()).strip("-")[:60] or "mockup")
                 body = (f"Context: the owner's design feedback, sent together (batch `vault/raw/feedback/{batch}.md`). "
                         "Review: none (the owner reviews it on the mockup).\n"
                         f"Session: {topic}\n\n"
-                        + round_text(batch, drafts, where, "this card", summary)
+                        + round_text(batch, drafts, where, "this card", summary, quick)
                         + "\n\n## Outcome\nEvery note answered in the mockup's look, or in the demo it was left on.\n\n"
                         "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
                         "(card id), or a question for the owner.\n- `look-check.sh` evidence for each screen that changed; "
@@ -383,22 +537,24 @@ def send(scope, summary=""):
                         "owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input).\n\n## Boundaries\nOwns: "
                         "`vault/design/`. Do not touch: `workspace/`, `vault/product/`, `00-status.md`.\n\n## Stop when\nThe "
                         "round is live and the handoff has a line per note.\n")
-                args = ["kanban", "create", f"{DESIGN_ROUND}: {len(drafts)} notes", "--assignee", "designer", "--body", body,
-                        "--workspace", f"dir:{HOME}", "--max-runtime", "30m", "--created-by", "owner",
+                title = (f"{DESIGN_ROUND}: {len(quick['open'])} open, {len(quick['applied'])} live" if quick
+                         else f"{DESIGN_ROUND}: {len(drafts)} notes")
+                args = ["kanban", "create", title, "--assignee", "designer", "--body", body,
+                        "--workspace", f"dir:{HOME}", "--max-runtime", "10m", "--created-by", "owner",
                         "--idempotency-key", batch, "--json"]
                 card = json.loads(hermes(*args)).get("id")
         except (OSError, ValueError, subprocess.SubprocessError, AttributeError):
             card = None                          # no card: the Manager routes it instead (the batch page is saved either way)
         if card:
             set_field(INBOX / f"{batch}.md", "card", card)
-            return batch, len(drafts), "Designer"
+            return batch, len(drafts), "Designer", quick
     # Otherwise wake the Manager now instead of at the next 15-minute watch (it runs on the scheduler's next tick).
     try:
         subprocess.Popen(["hermes", "-p", "manager", "cron", "run", "manager-watch"], stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL, env=env)
     except OSError:
         pass                                     # the 15-minute watch still picks the batch up
-    return batch, len(drafts), "Manager"
+    return batch, len(drafts), "Manager", quick
 
 
 def mirrors():
@@ -517,6 +673,12 @@ class Base(BaseHTTPRequestHandler):
             js = OVERLAY.read_text(encoding="utf-8").replace("__INBOX__", base).replace("__APP__", self.app_name)
             self._send(200, js, "application/javascript")
             return True
+        if path == "/look-version":            # the page refreshes itself when the look it shows changes
+            v = parse_qs(query).get("v", [""])[0]
+            vd = VARIANTS / v if re.fullmatch(r"[\w-]+", v or "") else None
+            stamp = lambda f: f.stat().st_mtime_ns if f.exists() else 0
+            self._send(200, json.dumps({"css": stamp(vd / "style.css"), "js": stamp(vd / "script.js")} if vd else {}))
+            return True
         if path == "/notes":
             q = parse_qs(query)
             found = notes(q.get("status", ["open"])[0], q.get("page", [None])[0], q.get("app", [None])[0])
@@ -548,8 +710,8 @@ class Base(BaseHTTPRequestHandler):
                 d = json.loads(raw or b"{}")
             except ValueError:
                 d = {}
-            batch, count, to = send(self.scope(), d.get("summary", ""))
-            self._send(200, json.dumps({"batch": batch, "sent": count, "to": to}))
+            batch, count, to, quick = send(self.scope(), d.get("summary", ""))
+            self._send(200, json.dumps({"batch": batch, "sent": count, "to": to, "quick": quick}))
             return True
         m = re.fullmatch(r"/notes/([\w-]+)/edit", path)
         if m and (INBOX / f"{m.group(1)}.md").exists():
