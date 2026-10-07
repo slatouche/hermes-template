@@ -12,7 +12,7 @@ owns: "Building: code, tests, docs in `workspace/`"
 ask_when: "something needs implementing or fixing"
 compression_tokens: 200000  # optional settings (see _guide.md)
 max_turns: 90
-effort: medium
+effort: low                 # medium took 2-6 min per hard step (JobSearch test); tests + Tester review guard quality
 verify_on_stop: true
 tags: [role]
 ---
