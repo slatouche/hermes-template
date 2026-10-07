@@ -38,6 +38,8 @@ verify_on_stop: false        # true for roles that edit code: one nudge if they 
 ```
 Keep every value on one line, in double quotes if it contains a colon.
 
+A role can also have a **working file**, `<role>.working.md`: then that file's body is the SOUL (what the bot needs every session, kept short) and the role file is its reference, read when a card needs it. The Designer has one ([[system/roles/designer.working]]).
+
 ## The body (becomes the SOUL)
 Use these sections, in this order. Keep it to about a page: the SOUL is loaded into every one of the bot's turns.
 

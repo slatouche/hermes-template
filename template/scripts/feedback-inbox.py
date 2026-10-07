@@ -322,21 +322,21 @@ def round_text(batch, drafts, where, card, summary="", quick=None):
         if css.exists():
             out.append(f"The look's CSS now (`{css}`, quick fixes included):\n```css\n"
                        + css.read_text(encoding="utf-8", errors="replace")[-10000:] + "\n```")
+    first = urlparse(drafts[0].get("page") or "") if drafts else None
+    vp0 = (drafts[0].get("viewport") or {}) if drafts else {}
+    if first and looks:
+        where_ = quote(first.path or "/", safe="/") + ("#" + quote(first.fragment, safe="/%=&?") if first.fragment else "")
+        out.append(
+            "Do the round in one step (it adds your CSS, checks it on this page at the owner's size, and closes this card "
+            "when every check passes):\n```\n"
+            f"~/.hermes/scripts/look-apply.py {looks[0]} --page '{where_}' --size {vp0.get('w', 1440)}x{vp0.get('h', 900)} "
+            "--label '<this round in a few words>' \\\n  --check '<js, truthy when note 1 landed>' --check '<note 2>' \\\n"
+            "  --done 'note 1: <what changed>' --done 'note 2: <what changed>' <<'CSS'\n<the round's CSS>\nCSS\n```\n"
+            "A check that fails leaves the card open: fix and run it again. Get anything the round needs first (an image "
+            "into the look's folder, a look at the data) in the same command or one step before.")
     out.append(
-        "You're mid-session on this look: everything you need is in this message (the notes, each element's styles and "
-        "HTML, the look's map and CSS). Don't search or read the vault, the repo or other notes; if this session is new to "
-        "the look, read only `design/DESIGN.md` (tokens) once. "
-        "How: minutes, not tens of minutes. The owner is watching the page: it refreshes itself when the look's files "
-        "change. Each note above names its element and its current styles, so act on that: change first (your first or "
-        "second step), then one `look-check.sh` call to confirm; no vision on the snips unless the note is about how a "
-        "whole region looks. CSS first; a script only when CSS can't do it, and then one that changes the page once and "
-        "never re-runs on its own changes. An open note you can't place with confidence: one question to the owner with "
-        "your best guess (`kanban_block`), not a long study. Quick fixes already live: keep them unless broken; patch "
-        "style.css, never rewrite it (more may land while you work). Change only what the notes touch, at the owner's "
-        "screen size. A repeat of an earlier note: say so. New app behaviour: card the Engineer a `Prototype:`, never "
-        "a build. Update the map with what you learned. When done, "
-        f"`kanban_complete` card `{card}` with a line per note (done / repeat of / carded / question); the notes close "
-        "themselves. Keep the reply to the owner to a line per note.")
+        "Work each note as your role says. A note you can't do without the owner: put your best guess live, and say "
+        f"so in its --done line as a question. The card is `{card}`; the notes close themselves.")
     return "\n\n".join(out)
 
 
@@ -538,7 +538,7 @@ def send(scope, summary=""):
 
     quick = None
     looks_on = sorted({n["variant"] for n in drafts if n.get("variant")})
-    if scope[0] == "mockup" or (scope[0] == "app" and looks_on):     # a look can take CSS (demos are the Designer's pages)
+    if (SCRIPTS / "quick-lane.on").exists() and (scope[0] == "mockup" or (scope[0] == "app" and looks_on)):
         quick = quick_fix(drafts, looks_on[0] if looks_on else QUICK_LOOK, summary)
         if quick:
             with open(INBOX / f"{batch}.md", "a", encoding="utf-8") as fh:
@@ -884,6 +884,7 @@ def mirror_handler(app_port, name, review_port=None):
             if not f or not f.is_file():
                 return self._send(404, '{"error":"not found"}')
             types = {".css": "text/css", ".js": "application/javascript", ".png": "image/png", ".jpg": "image/jpeg",
+                     ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
                      ".svg": "image/svg+xml", ".md": "text/plain", ".html": "text/html"}
             self._send(200, f.read_bytes(), types.get(f.suffix, "application/octet-stream"))
 

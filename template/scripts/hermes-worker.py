@@ -40,6 +40,7 @@ MAX_IDLE_DAYS = 3
 MAX_RUNS = 40
 WAIT_FOR_PREVIOUS = 90     # seconds to let the card's previous worker finish writing before resuming its session
 TOPIC_RE = re.compile(r"^[a-z0-9][a-z0-9:._-]{0,79}$")
+CARD_TEXT_CTRL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")   # control characters never go in a command
 SESSION_LINE = re.compile(r"^\s*(?:\*\*)?Session:(?:\*\*)?\s*(.+?)\s*$", re.M | re.I)
 
 
@@ -158,8 +159,9 @@ def session_of_task(home, task):
     con = sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True)
     row = con.execute(
         "SELECT s.id FROM sessions s WHERE s.source = 'kanban' AND EXISTS (SELECT 1 FROM messages m WHERE "
-        "m.session_id = s.id AND m.role = 'user' AND m.content = ?) ORDER BY s.started_at DESC LIMIT 1",
-        (f"work kanban task {task}",)).fetchone()
+        "m.session_id = s.id AND m.role = 'user' AND (m.content = ? OR m.content LIKE ? ESCAPE '\\')) "
+        "ORDER BY s.started_at DESC LIMIT 1",                      # a design round's message carries the card after it
+        (f"work kanban task {task}", f"work kanban task {task}\n%".replace("_", "\\_"))).fetchone()
     return row[0] if row else None
 
 
@@ -359,6 +361,10 @@ def main(argv):
                 why, sid = f"session {sid} is still open in another worker after {WAIT_FOR_PREVIOUS}s", None
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     prune(data, now)
+    if topic.startswith("design:") and body:     # a design round starts working at once: the card is in the message
+        qi = argv.index("-q") + 1
+        argv = argv[:qi] + [f"{argv[qi]}\n\nThe card, so you can start at once (no need to call kanban_show):\n\n"
+                            + CARD_TEXT_CTRL.sub("", body)[:30000]] + argv[qi + 1:]
     if sid:
         data[topic] = {"session": sid, "runs": entry.get("runs", 0) + 1, "last_task": task, "updated": stamp}
         save(path, data)

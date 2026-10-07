@@ -43,9 +43,45 @@ def kanban(*args):
         return None
 
 
+def wrap_up_looks(tasks):
+    """A look whose rounds have stopped (round blocks in its CSS, untouched for an hour) gets one wrap-up card for the
+    Designer, in the same session: fold the round blocks into clean rules and bring map.md up to date. Rounds stay
+    fast because they never tidy; this does it once. No model call here."""
+    variants = HOME / "vault" / "design" / "variants"
+    if not variants.is_dir() or not (ROOT_H / "profiles" / "designer").is_dir():
+        return
+    open_titles = {t.get("title") for t in tasks if t.get("status") not in ("done", "archived")}
+    for vd in sorted(p for p in variants.iterdir() if p.is_dir()):
+        css = vd / "style.css"
+        if not css.exists() or NOW - css.stat().st_mtime < 3600:
+            continue
+        if "/* round t_" not in css.read_text(encoding="utf-8", errors="replace"):
+            continue
+        title = f"Designer: wrap up look {vd.name}"[:50]
+        if title in open_titles:
+            continue
+        body = (f"Context: the owner's rounds on look `{vd.name}` have stopped for an hour. Review: none.\n"
+                f"Session: design:{vd.name}\n\n## Outcome\nThe look's CSS reads as one clean design: every `/* round t_... */` "
+                "block folded into the rules it changes (same result on the page, no round headers left), and `map.md` "
+                "up to date with where things live and the gotchas a later round needs.\n\n## Verification\n- One "
+                "`look-check.sh` at the owner's last screen size shows the same values as before the tidy.\n- `grep -c "
+                f"'/\\* round t_' vault/design/variants/{vd.name}/style.css` → 0\n\n## Stop when\nTidied and checked; "
+                "nothing about the look's appearance changed.\n")
+        bf = ROOT_H / "profiles" / "manager" / "scripts" / f".wrapup-{vd.name}.md"
+        bf.write_text(body, encoding="utf-8")
+        sh("hermes", "kanban", "create", title, "--assignee", "designer", "--body-file", str(bf), "--workspace",
+           f"dir:{HOME}", "--max-runtime", "15m", "--created-by", "manager", "--idempotency-key",
+           f"wrapup-{vd.name}-{int(css.stat().st_mtime)}")
+        bf.unlink(missing_ok=True)
+
+
 def findings():
     f = {}   # key -> text
     tasks = kanban("list") or []
+    try:
+        wrap_up_looks(tasks)                      # zero-token upkeep: tidy a look once its rounds stop
+    except OSError:
+        pass
     diags = kanban("diagnostics") or []
     busy = {t.get("assignee") for t in tasks if t.get("status") == "running"}
     for d in diags:

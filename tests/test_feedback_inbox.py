@@ -105,6 +105,7 @@ def main():
         f"model:\n  # comments and blank lines, like the real file\n\n  default: \"deepseek-v4.1-flash\"\n  provider: test-prov\n"
         f"  base_url: http://127.0.0.1:{MODEL}/v1\n  api_mode: chat_completions\nagent:\n  max_turns: 90\n")
     (home / ".hermes" / ".env").write_text("TEST_PROV_API_KEY=sk-test-123\n")
+    (scripts / "quick-lane.on").touch()             # off by default (one Designer decides); these checks switch it on
 
     apps = [http.server.ThreadingHTTPServer(("127.0.0.1", p), FakeApp) for p in (MOCK_APP, DEMO_APP, REAL_APP)]
     apps.append(http.server.ThreadingHTTPServer(("127.0.0.1", MODEL), FakeModel))

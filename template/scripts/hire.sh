@@ -122,8 +122,10 @@ if root.is_dir():
     print(f"removed {len(removed)} skill(s) copied from the Manager" + (f": {', '.join(removed)}" if removed else ""))
 EOF
 
-  # The SOUL is the role file's body (everything after the frontmatter).
-  awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {f=0; b=1; next} b' "$RF" | sed '/./,$!d' > "$P/SOUL.md"
+  # The SOUL is the role file's body (everything after the frontmatter), or the role's working file when it has one
+  # (<role>.working.md: what the bot needs every session; the role file stays its reference, read when needed).
+  SOUL_SRC="$RF"; [ -f "${RF%.md}.working.md" ] && SOUL_SRC="${RF%.md}.working.md"
+  awk 'NR==1 && /^---$/ {f=1; next} f && /^---$/ {f=0; b=1; next} b' "$SOUL_SRC" | sed '/./,$!d' > "$P/SOUL.md"
   if grep -q '^display_name:' "$P/profile.yaml" 2>/dev/null; then
     sed -i "s|^display_name:.*|display_name: $DNAME ($PROJECT)|" "$P/profile.yaml"
   else

@@ -220,6 +220,17 @@ def main():
     got, log = run("t_21", "Session: design:fromcli")
     check("a card missing from that database falls back to the hermes command", "design:fromcli" in json.loads(topics.read_text()), log)
     os.environ.pop("HERMES_KANBAN_DB", None)
+    got, log = run("t_30", "Context: a round.\nSession: design:quick-look\n## Outcome\nThe notes, live.")
+    q = got[got.index("-q") + 1] if got else ""
+    check("a design round's card text is in its first message (no kanban_show step)",
+          q.startswith("work kanban task t_30\n") and "The notes, live." in q, q[:120])
+    db.execute("INSERT INTO sessions VALUES ('S30', 'kanban', NULL, NULL, NULL, ?, ?, '{}')", (now - 100, now - 50))
+    db.execute("INSERT INTO messages (session_id, role, content) VALUES ('S30', 'user', ?)", (q,))
+    db.commit()
+    got, log = run("t_31", "Session: design:quick-look")
+    check("...and the next round still finds that session", resumed(got) == "S30", log)
+    got, log = run("t_32", "Context: not design.\nSession: eng:x")
+    check("other cards keep the plain first message", bool(got) and got[got.index("-q") + 1] == "work kanban task t_32", got)
     os.environ.pop("HERMES_KANBAN_TASK", None)
     print(f"\n{'ALL PASS' if not failures else str(len(failures)) + ' FAILED'}")
     return 1 if failures else 0

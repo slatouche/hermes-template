@@ -112,6 +112,9 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
     hermes -p "$p" config set "approvals.$m" "${CARD_APPROVALS:-approve}" >/dev/null
   done
   hermes -p "$p" config set approvals.deny "${APPROVAL_DENY:-[]}" >/dev/null
+  # A provider that goes silent mid-answer is retried after this long instead of Hermes's 180 s (one 3.5-minute stall
+  # cost a design round its time limit). Hired bots inherit it from the Manager.
+  hermes -p "$p" config set "providers.$PROVIDER.stale_timeout_seconds" "${PROVIDER_STALE_SECONDS:-60}" >/dev/null
   # Every bot needs the board tools in chats (CLI/Desktop and Discord); story-maker's Manager had them off.
   hermes -p "$p" tools enable kanban >/dev/null
   hermes -p "$p" tools enable --platform discord kanban >/dev/null
