@@ -32,6 +32,9 @@ import subprocess
 import sys
 import threading
 import time
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import look_service  # noqa: E402  (the Designer's warm browser, beside this file)
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, quote, urlparse
 
@@ -295,6 +298,19 @@ def browser_tools():
 CHECK_LOCK = threading.Lock()
 
 
+def proto_folder():
+    """The prototype folder the mockup serves (mockup.sh proto), or None when the mockup is a copy of the app."""
+    try:
+        for line in MOCKUPS.read_text(encoding="utf-8").splitlines():
+            p = line.split("|")
+            if len(p) >= 4 and p[2].strip() == "-" and not line.lstrip().startswith("#"):
+                m = re.search(r"--directory\s+(\S+)", p[3])
+                return m.group(1) if m else None
+    except OSError:
+        pass
+    return None
+
+
 def demo_folder(slot):
     """The folder a demo slot serves, read off its systemd unit (demo.sh writes it), so a round card can name the one
     command for the page a note was left on without anyone repeating which folder it is."""
@@ -485,12 +501,14 @@ def round_text(batch, drafts, where, card, summary="", quick=None, card_id=None)
         css = VARIANTS / look / "style.css"
         if css.exists():
             out.append(f"The look's CSS now (`{css}`, quick fixes included):\n```css\n"
-                       + css.read_text(encoding="utf-8", errors="replace")[-10000:] + "\n```")
+                       + css.read_text(encoding="utf-8", errors="replace")[-4000:] + "\n```")
     first = urlparse(drafts[0].get("page") or "") if drafts else None
     vp0 = (drafts[0].get("viewport") or {}) if drafts else {}
     target = None                                          # the one command for the page these notes were left on
     if looks:
         target = f"look-apply.py {looks[0]}"
+    elif drafts and (drafts[0].get("source") or {}).get("kind") == "mockup" and proto_folder():
+        target = f"look-apply.py --dir {proto_folder()}"
     elif drafts and (drafts[0].get("source") or {}).get("kind") == "demo":
         label = ((drafts[0].get("source") or {}).get("label") or drafts[0].get("app") or "")
         m = re.search(r"demo\s*(\d)", label, re.I)
@@ -504,22 +522,27 @@ def round_text(batch, drafts, where, card, summary="", quick=None, card_id=None)
             # the board travels with the card: a delegate_task child, or any worker without the board in its
             # environment, still closes the right card
             target += f" --board {os.environ.get('HERMES_KANBAN_BOARD') or 'default'}"
+        demo_flag = f" --demo {m.group(1)}" if "--demo" in target else ""
+        structure = ("  --edit '<move something>' --move '<what> -> before|after|into|start <where>' \\\n"
+                     "  --edit '<new words>' --text '<what> => <new text>' \\\n") if looks else (
+                     "  --edit '<a markup change>' --in-file 'pages/<page>.html' \\\n"
+                     "     --html-in '<the file's own text, exactly>' --html-out '<what replaces it>' \\\n")
         out.append(
-            "Do the round with one command: it adds each edit, saves it, checks the page at the owner's size and closes "
-            "this card when every check passes. Write the round as its edits, in order \u2014 the page updates as each one "
-            "lands, and the chip names it:\n```\n"
+            "Do it like this: **read, change, look, done.**\n"
+            f"1. Read what you need in one step (about a second): `~/.hermes/scripts/look.py map{demo_flag} --on '{where_}'` "
+            "for the structure (every element's selector, box and text), `look.py audit` for spacing and alignment. "
+            "The notes already give the element and its styles: often you need nothing.\n"
+            "2. Change everything in one command; each edit lands on the owner's page as it saves:\n```\n"
             f"~/.hermes/scripts/{target} --page '{where_}' --size {vp0.get('w', 1440)}x{vp0.get('h', 900)} "
             "--label '<the round in a few words>' \\\n"
-            "  --edit '<what edit 1 does>' --css '<its rules>' \\\n"
-            "  --edit '<what edit 2 does>' --css '<its rules>' \\\n"
-            "  --edit '<a note that needs markup>' \\\n"
-            "     --html-in '<the page's own text, exactly as index.html has it>' --html-out '<what replaces it>' \\\n"
-            "  --check '<js, truthy when note 1 landed>' --check '<note 2>' \\\n"
+            "  --edit '<what edit 1 does>' --css '<its rules>' \\\n" + structure +
+            "  --see '<the area that changed>' \\\n"
             "  --done 'note 1: <what changed>' --done 'note 2: <what changed>'\n```\n"
-            "A check that fails leaves the card open: fix and run it again. Get anything the round needs first (an image "
-            "into the look's folder, a look at the data) in the same command or one step before. Never hand-edit a "
-            "page: a look change and a markup change are both edits of the round. A markup edit must match the page's "
-            "own text exactly once (copy it from index.html) and leaves a .bak-<time> beside the file.")
+            "3. It ends with an `eye:` verdict: the model looked at the result (did each edit land, is anything off). "
+            "Spacing, alignment and balance are what you are looking for. Wrong? One more command. Right? The card is "
+            "closed already (its --done lines); stop.\n"
+            "Never hand-edit a page or write a script for a look: a move, new words or an inserted element are "
+            "--move/--text/--insert, kept true as the app redraws. No --check unless a number is the point.")
     elif drafts:
         out.append(
             "This card carries no round command for the page its notes were left on: that is a card defect. Say so in "
@@ -535,7 +558,7 @@ def round_text(batch, drafts, where, card, summary="", quick=None, card_id=None)
         "without their answer: a fork inside the change you are already making (two options, both visible and genuinely "
         "plausible), or something they raised that you cannot read either way. Write it on its own line in your "
         "handoff, starting `Question for the owner:` \u2014 the page shows it beside the Mark toolbar, they answer it "
-        "there, and the answer comes back to this session; `look-check.sh` runs on the version that stays. A "
+        "there, and the answer comes back to this session. A "
         f"question the owner never sees is a defect. The card is `{card}`; the notes close themselves.")
     out.append(
         "The round's edits are its numbered list: edit 1, saved, then edit 2, then 3 \u2014 the one command saves each in "
@@ -548,8 +571,8 @@ def round_tail():
     """The fixed tail of every round card body: a Send round and an answer round are the same card with the same rules."""
     return ("\n\n## Outcome\nEvery note answered in the mockup's look, or in the demo it was left on.\n\n"
             "## Verification\n- A line per note in the handoff: done (what changed), repeat of (which), carded "
-            "(card id), or a question for the owner (at most one for the whole round).\n- `look-check.sh` evidence for each screen that changed; "
-            "`map.md` updated.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
+            "(card id), or a question for the owner (at most one for the whole round).\n- The closing screenshot of "
+            "each screen that changed, looked at.\n\n## Constraints\nThe mockup and the demo slots only; never the real app or its "
             "data. Never start a build: new app behaviour is designed, prototyped if needed, and waits for the "
             "owner's \"build it\" as an `Owner: build it?` card (blocked, needs_input).\n\n## Boundaries\nOwns: "
             "`vault/design/`. Do not touch: `workspace/`, `vault/product/`, `00-status.md`.\n\n## Stop when\nThe "
@@ -868,6 +891,42 @@ turn each concrete note into CSS that is applied to the page at once (they watch
   a question) is OPEN: don't guess, say in one line what the Designer should decide or ask.
 - Reply with JSON only: {"fixes":[{"n":1,"css":"...","did":"one short line for the owner"}],
   "open":[{"n":2,"why":"one line"}]}"""
+
+
+EYE_SYSTEM = """You are a meticulous UI designer looking at a screenshot of a page being designed. Be brief and concrete.
+First line: the direct answer to the question. Then up to 4 visible problems, one short line each, saying where: things
+that don't line up, uneven or cramped spacing, text that is clipped, overflowing, too small or low contrast, anything that
+looks broken or unbalanced. If you see none, say "Looks clean." No preamble, no description of the whole page."""
+
+
+def eye(path, question):
+    """The Designer's eyes: one direct call to the project's model with the screenshot (thinking off, a short answer),
+    so a look takes seconds. Hermes's own vision tool can't hand this provider an image inside a tool result, and its
+    fallback asks for a full description (10-30 s)."""
+    mc = model_config()
+    if not mc:
+        return None
+    import base64
+    import urllib.request
+    data = pathlib.Path(path).read_bytes()
+    mime = "image/jpeg" if data[:3] == b"\xff\xd8\xff" else "image/png"
+    body = {"model": mc["model"], "max_tokens": 400, "temperature": 0.2,
+            "messages": [{"role": "system", "content": EYE_SYSTEM},
+                         {"role": "user", "content": [{"type": "text", "text": question or "Does this look right?"},
+                                                      {"type": "image_url", "image_url": {"url": f"data:{mime};base64," + base64.b64encode(data).decode()}}]}]}
+    if "deepseek" in mc["model"].lower():
+        body["thinking"] = {"type": "disabled"}
+    headers = {"Authorization": "Bearer " + mc["key"], "Content-Type": "application/json", "Accept": "application/json",
+               "User-Agent": "hermes-feedback-inbox/1.0"}
+    if mc["opencode"]:
+        headers["x-opencode-session"] = "look-eye"
+    try:
+        req = urllib.request.Request(mc["url"], data=json.dumps(body).encode(), headers=headers)
+        with urllib.request.urlopen(req, timeout=40) as r:
+            return (json.loads(r.read())["choices"][0]["message"].get("content") or "").strip()
+    except Exception as e:
+        print(f"feedback-inbox: eye failed: {e}", file=sys.stderr)
+        return None
 
 
 def css_ok(css):
@@ -1199,6 +1258,9 @@ class Base(BaseHTTPRequestHandler):
             js = OVERLAY.read_text(encoding="utf-8").replace("__INBOX__", base).replace("__APP__", self.app_name)
             self._send(200, js, "application/javascript")
             return True
+        if path == "/look-runtime.js":         # a look's structural edits (dom.json), kept true while the app redraws
+            self._send(200, (SCRIPTS / "look-runtime.js").read_text(encoding="utf-8"), "application/javascript")
+            return True
         if path == "/live-reload.js":          # a demo page watches its own files (added to demo pages below)
             self._send(200, (SCRIPTS / "live-reload.js").read_text(encoding="utf-8"), "application/javascript")
             return True
@@ -1206,7 +1268,7 @@ class Base(BaseHTTPRequestHandler):
             v = parse_qs(query).get("v", [""])[0]
             vd = VARIANTS / v if re.fullmatch(r"[\w-]+", v or "") else None
             stamp = lambda f: f.stat().st_mtime_ns if f.exists() else 0
-            out = {"css": stamp(vd / "style.css"), "js": stamp(vd / "script.js")} if vd else {}
+            out = {"css": stamp(vd / "style.css"), "js": stamp(vd / "script.js"), "dom": stamp(vd / "dom.json")} if vd else {}
             if getattr(self, "kind", lambda: "")() == "mockup":
                 out["look"] = working_look()       # the Designer (or a pick on a demo) changed it: the page reloads
             if self.rounds_here():             # a mockup or a demo: this page also carries its round
@@ -1345,6 +1407,17 @@ li{{margin:.6rem 0}}.dim{{color:#9aa0ad}}code{{background:#1d1f23;padding:.1rem 
         path = urlparse(self.path).path
         if path == "/shoot":
             return self.shoot()
+        if path == "/look":                    # the Designer's eyes: the warm browser (look_service.py)
+            if self.client_address[0] != "127.0.0.1":
+                return self._send(403, '{"error":"localhost only"}')
+            try:
+                d = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                out = look_service.handle(d, browser_tools(), BASE, eye)
+            except (ValueError, KeyError) as e:
+                return self._send(400, json.dumps({"error": str(e)}))
+            except Exception as e:             # the page or the browser failed: say so, never hang the caller
+                out = {"error": f"{type(e).__name__}: {str(e)[:300]}"}
+            return self._send(200, json.dumps(out))
         if path == "/check":
             if self.client_address[0] != "127.0.0.1":
                 return self._send(403, '{"error":"localhost only"}')
@@ -1417,7 +1490,7 @@ def mirror_handler(app_port, name, review_port=None):
                 return self._send(404, '{"error":"not found"}')
             types = {".css": "text/css", ".js": "application/javascript", ".png": "image/png", ".jpg": "image/jpeg",
                      ".jpeg": "image/jpeg", ".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
-                     ".svg": "image/svg+xml", ".md": "text/plain", ".html": "text/html"}
+                     ".svg": "image/svg+xml", ".md": "text/plain", ".html": "text/html", ".json": "application/json"}
             self._send(200, f.read_bytes(), types.get(f.suffix, "application/octet-stream"))
 
         def _proxy(self):
@@ -1470,6 +1543,8 @@ def mirror_handler(app_port, name, review_port=None):
                     vd = VARIANTS / v
                     tag += f'<link rel="stylesheet" href="/__mark/v/{v}/style.css">'.encode() if (vd / "style.css").exists() else b""
                     tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
+                    if (vd / "dom.json").exists():     # moves, text and inserts: applied and kept by the runtime
+                        tag += f'<script src="/__mark/look-runtime.js" data-dom="/__mark/v/{v}/dom.json" defer></script>'.encode()
                 # Looks are tried on the mockup; the real app's link offers them only when there is no mockup.
                 tag += b"" if no_overlay else badge(v, mockup, name if self.kind() == "demo" else None,
                                                     looks=False, nav=design_nav(review_port))

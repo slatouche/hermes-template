@@ -115,6 +115,8 @@ apply_learning_settings() {   # apply_learning_settings <profile> <compression t
   # A provider that goes silent mid-answer is retried after this long instead of Hermes's 180 s (one 3.5-minute stall
   # cost a design round its time limit). Hired bots inherit it from the Manager.
   hermes -p "$p" config set "providers.$PROVIDER.stale_timeout_seconds" "${PROVIDER_STALE_SECONDS:-60}" >/dev/null
+  # A model that takes images sees a screenshot itself (about 2 s); otherwise Hermes asks a second model (20 s to 2 min).
+  [ "${MODEL_VISION:-false}" = true ] && hermes -p "$p" config set model.supports_vision true >/dev/null
   # Every bot needs the board tools in chats (CLI/Desktop and Discord); story-maker's Manager had them off.
   hermes -p "$p" tools enable kanban >/dev/null
   hermes -p "$p" tools enable --platform discord kanban >/dev/null
@@ -155,6 +157,7 @@ ROLE_DISABLED_TOOLSETS='${ROLE_DISABLED_TOOLSETS:-$DISABLED_TOOLSETS}'
 ROLE_SKILL_CATEGORIES_OFF="${ROLE_SKILL_CATEGORIES_OFF:-apple autonomous-ai-agents email media note-taking social-media productivity}"
 CARD_APPROVALS="${CARD_APPROVALS:-approve}"
 OWNER_NAME="$OWNER_NAME"
+MODEL_VISION="${MODEL_VISION:-false}"
 APPROVAL_DENY='${APPROVAL_DENY:-[]}'
 EOF
 render "$T/root-AGENTS.md" > "$HOME/AGENTS.md"

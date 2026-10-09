@@ -3,6 +3,7 @@
 
   python3 tests/test_look_apply.py      (a temporary HOME; the page checks themselves are covered by the live tests)
 """
+import json
 import os
 import pathlib
 import subprocess
@@ -65,6 +66,42 @@ def main():
         r = run(home, ["--dir", str(page), "--demo", "1", "--edit", "bad", *args])
         check(f"markup edit refused, nothing written: {why}", r.returncode == 2 and (page / "index.html").read_text() == before_html,
               (r.returncode, r.stderr))
+
+    # structure on a look: moves, text, inserts and attributes go into dom.json, in order, with ids and screens
+    r = run(home, ["v1", "--no-see", "--gap", "0", "--edit", "toggle left", "--move", "#theme -> before .brand h1",
+                   "--edit", "rename", "--text", ".head > h2 => My decks", "--on", "#/$",
+                   "--edit", "a badge", "--insert", "after .brand => <span class='tag'>beta</span>",
+                   "--edit", "label", "--attr", ".btn @aria-label => Create a deck"])
+    ops = json.loads((look / "dom.json").read_text()) if (look / "dom.json").exists() else []
+    check("structural edits saved to dom.json in order", r.returncode == 0 and [o["op"] for o in ops] == ["move", "text", "insert", "attr"],
+          (r.returncode, r.stderr, ops))
+    check("...with ids, the move's parts and the screen limit", ops and ops[0]["id"] == "e1" and ops[0]["sel"] == "#theme"
+          and ops[0]["where"] == "before" and ops[0]["ref"] == ".brand h1" and ops[1].get("on") == "#/$"
+          and ops[1]["text"] == "My decks", ops)
+    r = run(home, ["v1", "--no-see", "--edit", "another", "--move", ".a -> into .b"])
+    ops2 = json.loads((look / "dom.json").read_text())
+    check("a later round appends with the next id", r.returncode == 0 and len(ops2) == 5 and ops2[-1]["id"] == "e5", ops2[-1:])
+    for args, why in ((["--insert", "after .x => <script>alert(1)</script>"], "a script"),
+                      (["--insert", "after .x => <img src=x onerror=alert(1)>"], "an inline handler"),
+                      (["--attr", ".x @onclick => alert(1)"], "an on* attribute"),
+                      (["--move", ".a into .b"], "a malformed move")):
+        before_ops = (look / "dom.json").read_text()
+        r = run(home, ["v1", "--no-see", "--edit", "bad", *args])
+        check(f"structural edit refused, nothing written: {why}", r.returncode == 2 and (look / "dom.json").read_text() == before_ops,
+              (r.returncode, r.stderr))
+    r = run(home, ["--dir", str(page), "--demo", "1", "--no-see", "--edit", "x", "--move", ".a -> into .b"])
+    check("moves are for a look; a folder edits its files", r.returncode == 2 and "for a look" in r.stderr, r.stderr)
+
+    # a prototype page: --in-file points the markup edit at pages/<page>.html, and it must stay inside the folder
+    (page / "pages").mkdir()
+    (page / "pages" / "deck.html").write_text("<h1>Deck</h1><p>cards</p>\n")
+    r = run(home, ["--dir", str(page), "--demo", "1", "--no-see", "--edit", "title", "--in-file", "pages/deck.html",
+                   "--html-in", "<h1>Deck</h1>", "--html-out", "<h1>Your deck</h1>"])
+    check("--in-file edits a page of the folder", r.returncode == 0 and "<h1>Your deck</h1>" in (page / "pages" / "deck.html").read_text(),
+          (r.returncode, r.stderr))
+    r = run(home, ["--dir", str(page), "--demo", "1", "--no-see", "--edit", "escape", "--in-file", "../../../.bashrc",
+                   "--html-in", "a", "--html-out", "b"])
+    check("--in-file can't leave the folder", r.returncode == 2, (r.returncode, r.stderr))
     print(f"\n{'ALL PASS' if not failures else str(len(failures)) + ' FAILED'}")
     return 1 if failures else 0
 

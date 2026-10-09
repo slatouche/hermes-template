@@ -10,6 +10,8 @@
 #                               owner can try it; the badge says so) and a fresh copy of the data, then (re)start
 #   mockup.sh reset <name>      a fresh copy of the data only (the owner's "reset data" on the badge)
 #   mockup.sh look <look|off>   the look the mockup shows from now on (off: the app as built); open pages reload
+#   mockup.sh proto <folder>    the mockup is a prototype (look.py proto new) instead of a copy of the app: a navigable
+#                               skeleton site on the same port, before the app exists or for a screen it doesn't have
 #   mockup.sh list
 #
 # <command> starts the app from the snapshot; {port}, {data} and {repo} are filled in (the mockup's port, the copied
@@ -44,11 +46,22 @@ case "${1:-}" in
     touch "$CONF"; grep -v "^$name|" "$CONF" > "$CONF.tmp" || true
     echo "$name|$((aport + 25))|$data|$cmd" >> "$CONF.tmp"; mv "$CONF.tmp" "$CONF"
     exec "$0" refresh "$name" ;;
+  proto)
+    folder="${2:?prototype folder under ~/vault/design}"; src="$HOME/vault/design/${folder#/}"
+    [ -f "$src/index.html" ] || die "no prototype at $src (look.py proto new <name>)"
+    [ -n "$api" ] || die "no API port"
+    touch "$CONF"; old=$(grep -v '^\s*#' "$CONF" | cut -d'|' -f1 | head -1 || true)
+    if [ -n "$old" ] && [ "$old" != proto ]; then           # the app's mockup steps aside (mockup.sh add brings it back)
+      cp "$CONF" "$CONF.before-proto"; systemctl --user disable -q --now "$old-mockup" 2>/dev/null || true; fi
+    echo "proto|$((api + 26))|-|/usr/bin/python3 -m http.server {port} --bind 127.0.0.1 --directory $src" > "$CONF"
+    exec "$0" refresh proto ;;
   refresh|reset)
     r="$(row "${2:?name}")"; [ -n "$r" ] || die "no mockup called $2 (mockup.sh list)"
     IFS='|' read -r name port data cmd <<<"$r"
     dir="$HOME/mockup/$name"; mkdir -p "$dir"
-    if [ "$1" = refresh ]; then
+    if [ "$data" = - ]; then                             # a prototype: its files are the mockup, nothing to snapshot
+      printf 'prototype %s' "$(basename "${cmd##* }")" > "$dir/SNAPSHOT"; mkdir -p "$dir/code" "$dir/data"
+    elif [ "$1" = refresh ]; then
       main=$(git -C "$REPO" rev-parse --verify -q main >/dev/null && echo main || echo master)
       ref="$main"; [ "${3:-}" = "--ref" ] && ref="${4:?branch}"
       git -C "$REPO" rev-parse --verify -q "$ref" >/dev/null || die "no branch $ref in ~/workspace"
@@ -58,7 +71,7 @@ case "${1:-}" in
       printf '%s%s · snapshot %s' "$label" "$(git -C "$dir/code" log -1 --format='%h %s' | cut -c1-70)" "$(date '+%-d %b %H:%M')" > "$dir/SNAPSHOT"
     fi
     systemctl --user stop "$name-mockup" 2>/dev/null || true
-    copy_data "$data" "$dir"
+    [ "$data" = - ] || copy_data "$data" "$dir"
     run="${cmd//\{port\}/$port}"; run="${run//\{data\}/$dir/data}"; run="${run//\{repo\}/$REPO}"
     unit="$HOME/.config/systemd/user/$name-mockup.service"; mkdir -p "$(dirname "$unit")"
     cat > "$unit" <<EOF

@@ -87,7 +87,7 @@ def main():
     home = pathlib.Path(tempfile.mkdtemp(prefix="fitest-"))
     scripts = home / ".hermes" / "scripts"
     scripts.mkdir(parents=True)
-    for f in ("feedback-inbox.py", "feedback-overlay.js", "live-reload.js"):
+    for f in ("feedback-inbox.py", "feedback-overlay.js", "live-reload.js", "look_service.py", "look-runtime.js"):
         (scripts / f).write_bytes((SCRIPTS / f).read_bytes())
     (scripts / "review-mirrors.conf").write_text(f"{MOCK} {MOCK_APP} test mockup\n{DEMO} {DEMO_APP} demo 1: card backs\n"
                                                  f"{REAL} {REAL_APP} Test app\n")
@@ -158,6 +158,18 @@ def main():
         check("no cookie: the look isn't per browser", "Set-Cookie" not in h, h.get("Set-Cookie"))
         st, _, lv = call("GET", "/__mark/look-version?v=v1")
         check("look-version names the working look", json.loads(lv).get("look") == "v1", lv)
+        st, _, page = call("GET", "/")
+        check("no dom.json: no runtime on the page", b"look-runtime.js" not in page)
+        (var / "dom.json").write_text('[{"id":"e1","op":"text","sel":"h1","text":"Hi"}]')
+        st, _, page = call("GET", "/")
+        check("a look with moves gets the runtime and its list", b'look-runtime.js" data-dom="/__mark/v/v1/dom.json"' in page)
+        st, _, lv = call("GET", "/__mark/look-version?v=v1")
+        check("look-version stamps the moves (open pages apply new ones)", json.loads(lv).get("dom", 0) > 0, lv)
+        st, _, rt = call("GET", "/__mark/look-runtime.js")
+        check("the runtime is served", st == 200 and b"__lookRuntime" in rt, st)
+        st, _, dj = call("GET", "/__mark/v/v1/dom.json")
+        check("the look's dom.json is served", st == 200 and b'"op":"text"' in dj, (st, dj[:80]))
+        (var / "dom.json").unlink()
         st, _, page = call("GET", "/", port=REAL, headers={"Cookie": "mark_variant=v1"})
         check("the mockup's look never shows on the real app", b"/__mark/v/v1/style.css" not in page)
         st, _, _ = call("POST", "/__mark/pick-look", {"look": "../x"}, port=DEMO)

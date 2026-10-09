@@ -146,6 +146,8 @@ EOF
   # cache_ttl only matters on Claude models (others cache on their own): cards minutes apart then reuse the cache.
   hermes -p "$ROLE" config set compression.idle_compact_after_seconds 2700 >/dev/null
   hermes -p "$ROLE" config set prompt_caching.cache_ttl 1h >/dev/null
+  # Screenshots straight to the model when it takes images (the Designer's eyes: seconds, not a second model call)
+  [ "${MODEL_VISION:-false}" = true ] && hermes -p "$ROLE" config set model.supports_vision true >/dev/null
   hermes -p "$ROLE" config set agent.max_turns "$R_TURNS" >/dev/null
   hermes -p "$ROLE" config set agent.budget_warning_ratio "$ROLE_BUDGET_WARNING" >/dev/null
   hermes -p "$ROLE" config set --force agent.reasoning_effort "$R_EFFORT" >/dev/null

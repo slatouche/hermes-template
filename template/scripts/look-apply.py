@@ -28,6 +28,16 @@ it on the page, and closes the round's card when every check passes, so the Desi
   `!document.querySelector('X')`, `document.querySelector('X').naturalWidth > 0`.
 - With --done and every check passing, the card is completed with those lines: `--card` names the card and
   `--board` the board it is on (the round card carries both), so closing it never depends on the environment.
+- Structure, on a look (the app stays the app; the edits are listed in the look's dom.json and look-runtime.js
+  keeps them true while the app redraws and the owner navigates; a moved button still works):
+    --move '<what> -> before|after|into|start <where>'      --text '<what> => <new text>'
+    --insert 'before|after|into|start <where> => <markup>'  --attr '<what> @<name> => <value>' (value `-` removes)
+  `--on '<regex>'` after any payload limits that edit to matching screens (location.pathname + hash), e.g. '#/deck'.
+  On a --dir folder (a prototype) edit its files instead: `--in-file pages/deck.html` points --html-in/--html-out at
+  one of the folder's files (default index.html).
+- When the edits are in, the page is opened in the team's warm browser and a screenshot saved (`--see <selector>`
+  crops it to what changed) and looked at: it prints an `eye:` verdict (did each edit land, is anything off; --ask asks
+  something specific). That look is the check; --check is only for a number.
 Exit 0 when every check passes, 1 otherwise (the values say why), 2 on bad input.
 """
 import argparse
@@ -45,6 +55,16 @@ SCRIPTS = HOME / ".hermes" / "scripts"
 VARIANTS = HOME / "vault" / "design" / "variants"
 DESIGN = HOME / "vault" / "design"
 UNITS = HOME / ".config" / "systemd" / "user"
+
+
+def mockup_serves(folder):
+    """Is this folder the prototype the mockup serves (mockup.sh proto)?"""
+    try:
+        txt = (SCRIPTS / "mockups.conf").read_text(encoding="utf-8")
+    except OSError:
+        return False
+    m = re.search(r"^[^#\n]*\|-\|[^\n]*--directory\s+(\S+)", txt, re.M)
+    return bool(m) and pathlib.Path(m.group(1)).resolve() == folder.resolve()
 
 
 def demo_slot_for(folder):
@@ -93,6 +113,58 @@ def chip(task, label, secs):
         pass
 
 
+STRUCT = ("move", "text", "insert", "attr")
+WHERE = ("before", "after", "into", "start")
+
+
+def struct_op(ed):
+    """One structural edit as a dom.json entry. Markup is plain: no scripts, handlers or javascript: URLs."""
+    if ed.get("move"):
+        m = re.fullmatch(r"\s*(.+?)\s*->\s*(before|after|into|start)\s+(.+?)\s*", ed["move"])
+        if not m:
+            raise ValueError("--move is '<what> -> before|after|into|start <where>'")
+        return {"op": "move", "sel": m.group(1), "where": m.group(2), "ref": m.group(3)}
+    if ed.get("text"):
+        m = re.fullmatch(r"\s*(.+?)\s*=>\s*(.*)", ed["text"], re.S)
+        if not m:
+            raise ValueError("--text is '<what> => <new text>'")
+        return {"op": "text", "sel": m.group(1), "text": m.group(2)}
+    if ed.get("insert"):
+        m = re.fullmatch(r"\s*(before|after|into|start)\s+(.+?)\s*=>\s*(.+)", ed["insert"], re.S)
+        if not m:
+            raise ValueError("--insert is 'before|after|into|start <where> => <markup>'")
+        if re.search(r"<script|javascript:|\son[a-z]+\s*=", m.group(3), re.I):
+            raise ValueError("that markup isn't safe to add (a script, javascript: or an inline handler)")
+        return {"op": "insert", "where": m.group(1), "ref": m.group(2), "html": m.group(3)}
+    m = re.fullmatch(r"\s*(.+?)\s*@([\w-]+)\s*=>\s*(.*)", ed["attr"], re.S)
+    if not m or m.group(2).lower().startswith("on") or "javascript:" in m.group(3).lower():
+        raise ValueError("--attr is '<what> @<name> => <value>' (no on* handlers, no javascript:)")
+    return {"op": "attr", "sel": m.group(1), "name": m.group(2), "value": None if m.group(3).strip() == "-" else m.group(3)}
+
+
+def glance(a, check_args):
+    """Open the page in the team's warm browser (the feedback inbox keeps it) and save a screenshot."""
+    import urllib.request
+    try:
+        port = next((l.split("=", 1)[1].strip() for l in (HOME / ".hermes" / ".env").read_text().splitlines()
+                     if l.startswith("API_SERVER_PORT=")), "")
+    except OSError:
+        port = ""
+    if not port:
+        return {"error": "no API_SERVER_PORT"}
+    w, _, h = a.size.partition("x")
+    body = {"op": "see", "target": f"demo{check_args[1]}" if check_args else "mockup", "route": a.page,
+            "look": a.look or "", "selector": a.see, "width": int(w or 1440), "height": int(h or 900), "report": True,
+            "ask": a.ask or ("These edits were just made: " + "; ".join(e.get("label") or "a change" for e in a.edits)
+                             + ". Did each one land as described? Is anything misaligned, unevenly spaced or broken?")}
+    try:
+        req = urllib.request.Request(f"http://127.0.0.1:{int(port) + 99}/look", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        return json.loads(urllib.request.urlopen(req, timeout=60).read())
+    except Exception as e:                            # a glance that can't be taken never fails the edits
+        return {"error": str(e)[:200]}
+
+
 def main():
     ap = argparse.ArgumentParser(description="Add a round's CSS to a look or a served design folder, check it, close the card.")
     ap.add_argument("look", nargs="?")
@@ -117,6 +189,19 @@ def main():
                     help="markup this edit replaces: must occur exactly once in the page's index.html")
     ap.add_argument("--html-out", action=payload("html_out"), dest="edits", metavar="TEXT",
                     help="the markup that replaces --html-in")
+    ap.add_argument("--move", action=payload("move"), dest="edits", metavar="'SEL -> WHERE REF'")
+    ap.add_argument("--text", action=payload("text"), dest="edits", metavar="'SEL => TEXT'")
+    ap.add_argument("--insert", action=payload("insert"), dest="edits", metavar="'WHERE REF => HTML'")
+    ap.add_argument("--attr", action=payload("attr"), dest="edits", metavar="'SEL @NAME => VALUE'")
+    ap.add_argument("--on", action=payload("on"), dest="edits", metavar="REGEX",
+                    help="limit the edit above to screens whose path+hash matches")
+    ap.add_argument("--in-file", action=payload("file"), dest="edits", metavar="PATH",
+                    help="the folder file the edit above's --html-in/--html-out changes (default index.html)")
+    ap.add_argument("--see", default="", metavar="SELECTOR",
+                    help="crop the closing screenshot to this element (default: the viewport)")
+    ap.add_argument("--no-see", action="store_true", help="skip the closing screenshot")
+    ap.add_argument("--ask", default="", metavar="QUESTION",
+                    help="what to check in the closing screenshot (default: did the edits land, and is anything off)")
     ap.add_argument("--gap", type=float, default=1.5,
                     help="seconds between the round's edits, so the page shows each one land (default 1.5)")
     ap.add_argument("--check", action="append", default=[])
@@ -137,23 +222,30 @@ def main():
             print(f"look-apply: --dir needs an existing folder under {DESIGN} (got {a.folder!r})", file=sys.stderr)
             return 2
         slot = a.demo or demo_slot_for(vd)
-        if not slot:
-            print(f"look-apply: nothing serves {vd} on a demo slot; pass --demo 1|2 for it", file=sys.stderr)
-            return 2
         check_page = "current"                        # not a look: check the page as it is served
-        check_args = ["--demo", str(slot)]
+        if slot:
+            check_args = ["--demo", str(slot)]
+        elif not mockup_serves(vd):
+            print(f"look-apply: nothing serves {vd} (not the mockup, not a demo slot); pass --demo 1|2 for it", file=sys.stderr)
+            return 2
     for ed in a.edits:
         if ed.get("html_out") and not ed.get("html_in"):
             print("look-apply: --html-out needs the --html-in it replaces", file=sys.stderr)
             return 2
-        if ed.get("css") and ed.get("html_in"):
-            print("look-apply: one payload per --edit: either --css, or --html-in with --html-out", file=sys.stderr)
+        kinds = [k for k in ("css", "html_in", "move", "text", "insert", "attr") if ed.get(k)]
+        if len(kinds) > 1:
+            print("look-apply: one payload per --edit: --css, --html-in/--html-out, --move, --text, --insert or --attr",
+                  file=sys.stderr)
+            return 2
+        if kinds and kinds[0] in STRUCT and not a.look:
+            print("look-apply: --move/--text/--insert/--attr are for a look on the app; in a --dir folder edit its files "
+                  "(--html-in/--html-out, with --in-file for a page)", file=sys.stderr)
             return 2
     if not a.edits and not sys.stdin.isatty():
         css = sys.stdin.read().strip()
         if css:
             a.edits = [{"label": a.label, "css": css}]        # the older form: one block on stdin
-    edits = [ed for ed in a.edits if ed.get("css") or ed.get("html_in")]
+    edits = [ed for ed in a.edits if ed.get("css") or ed.get("html_in") or any(ed.get(k) for k in STRUCT)]
     card = a.card or os.environ.get("HERMES_KANBAN_TASK", "")     # the command names its own card: the env can be empty
     cssf, idx, bak = vd / "style.css", vd / "index.html", None
     try:
@@ -172,9 +264,30 @@ def main():
             head += (f": {label.replace('*/', '')}" if label else "") + " */"
             with open(cssf, "a", encoding="utf-8") as fh:      # appended, never rewritten: others may add while we work
                 fh.write(f"\n{head}\n{css}\n")
-        else:                                                 # markup: one exact, unique replacement in the page itself
+        elif any(ed.get(k) for k in STRUCT):                  # structure on a look: one more entry in its dom.json
+            try:
+                op = struct_op(ed)
+            except ValueError as e:
+                print(f"look-apply: {e}", file=sys.stderr)
+                return 2
+            domf = vd / "dom.json"
+            ops = json.loads(domf.read_text(encoding="utf-8")) if domf.exists() else []
+            n = 1 + max([int(o["id"][1:]) for o in ops if re.fullmatch(r"e\d+", str(o.get("id", "")))] or [0])
+            op = {"id": f"e{n}", **op, **({"on": ed["on"]} if ed.get("on") else {}), "label": label}
+            ops.append(op)
+            tmp = domf.with_suffix(".tmp")
+            tmp.write_text(json.dumps(ops, indent=1, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(domf)
+            where_ = f"{domf.name} ({op['op']})"
+        else:                                                 # markup: one exact, unique replacement in a folder file
             old, new = ed["html_in"], ed["html_out"]
-            where_ = idx.name
+            idx = vd / "index.html"
+            if ed.get("file"):
+                idx = (vd / ed["file"]).resolve()
+                if not idx.is_relative_to(vd.resolve()) or not idx.is_file():
+                    print(f"look-apply: --in-file {ed['file']!r} isn't a file in {vd}", file=sys.stderr)
+                    return 2
+            where_ = str(idx.relative_to(vd.resolve())) if idx.is_relative_to(vd.resolve()) else idx.name
             if not idx.exists():
                 print(f"look-apply: no {idx} to change", file=sys.stderr)
                 return 2
@@ -187,8 +300,8 @@ def main():
                 print(f"look-apply: --html-in matches {n} times in {idx} - it must match exactly once; read the file and copy its text exactly",
                       file=sys.stderr)
                 return 2
-            if bak is None:                                   # one backup per call, before the first markup edit
-                bak = idx.with_name(idx.name + f".bak-{datetime.datetime.now():%H%M%S}")
+            bak = idx.with_name(idx.name + f".bak-{datetime.datetime.now():%H%M%S}")     # a backup per file changed
+            if not bak.exists():
                 bak.write_text(text, encoding="utf-8")
             idx.write_text(text.replace(old, new, 1), encoding="utf-8")
             note = f" (backup {bak.name})"
@@ -197,6 +310,20 @@ def main():
         if i < len(edits) and a.gap > 0:
             time.sleep(a.gap)                                 # saved one at a time, so the page shows each arrive
     ok = True
+    if edits and not a.no_see:                                # the glance: the page as it is now, through the warm browser
+        t0 = time.time()
+        seen = glance(a, check_args)
+        if seen.get("path"):
+            print(f"see: {seen['path']}  ({seen.get('url', '')}, {time.time() - t0:.1f}s)")
+        if seen.get("eye"):
+            print("eye: " + seen["eye"].replace("\n", "\n     "))
+        for r in seen.get("report") or []:
+            if r.get("status") not in ("ok", "skipped (other screen)"):
+                ok = False
+                print(f"FAIL {r.get('id')} {r.get('op')}: {r.get('status')}")
+        if seen.get("error"):
+            print(f"(no screenshot: {seen['error']})")
+        chip(card, "a look at the page", time.time() - t0)
     if a.check:
         t0 = time.time()
         r = subprocess.run([str(SCRIPTS / "look-check.sh"), check_page, a.page, "--size", a.size, *check_args,

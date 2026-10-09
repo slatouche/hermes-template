@@ -610,6 +610,9 @@
     if (cfg && cfg.mockup && "look" in d && !/[?&]__variant=/.test(location.search) && (d.look || "") !== (v || "")) { location.reload(); return; }   // a new working look
     if (!v || d.css === undefined) return;
     if (lookSeen && d.js !== lookSeen.js) { location.reload(); return; }
+    if (lookSeen && d.dom !== lookSeen.dom) {                     // a move, text or insert landed: apply it in place
+      if (window.__lookRuntime) window.__lookRuntime.refresh(); else { location.reload(); return; }
+    }
     if (lookSeen && d.css !== lookSeen.css) {
       document.querySelectorAll(`link[href^="/__mark/v/${v}/style.css"]`).forEach((l) => (l.href = `/__mark/v/${v}/style.css?t=${d.css}`));
       if (!now) say("The look just changed: showing it.", 3000);
