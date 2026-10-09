@@ -74,10 +74,15 @@ h1{{font-size:18px;margin:56px 24px 4px}} p.sub{{margin:0 24px 18px;color:#9a9da
 .frame iframe{{position:absolute;left:0;top:0;width:1280px;height:880px;border:0;transform:scale(.34);transform-origin:0 0}}
 .meta{{padding:12px 14px}} .meta b{{font-size:15px}} .meta p{{margin:4px 0 10px;color:#a6a9b2}}
 .meta button{{background:#3d6bff;color:#fff;border:0;border-radius:8px;padding:7px 12px;font-weight:600;cursor:pointer}}
-.meta a{{color:#8fb0ff;margin-left:10px}} .done{{outline:2px solid #3d6bff}}
+.meta .try{{background:none;color:#8fb0ff;padding:7px 4px;margin-left:8px;font-weight:500}} .done{{outline:2px solid #3d6bff}}
+.live{{position:fixed;inset:0;z-index:2147483000;display:none;flex-direction:column;background:#0f1013}}
+.live.on{{display:flex}} .live .bar{{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid #2a2c33}}
+.live .bar b{{flex:1}} .live .bar button{{border:0;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer}}
+.live .use{{background:#3d6bff;color:#fff}} .live .x{{background:#23262f;color:#e8e8ea}} .live iframe{{flex:1;border:0;background:#fff}}
 </style></head><body>
 <h1>{html.escape(what)}</h1><p class="sub">Each one is the live mockup with that look. "Use this one" puts it on the mockup.</p>
 <div class="grid" id="g"></div>
+<div class="live"><div class="bar"><b></b><button class="use">Use this one</button><button class="x">Close (Esc)</button></div><iframe></iframe></div>
 <script>
 const D = {data};
 const host = location.hostname, mk = `${{location.protocol}}//${{host}}:${{D.mport}}`;
@@ -86,17 +91,30 @@ D.cards.forEach((c) => {{
   const el = document.createElement("div"); el.className = "card";
   const src = `${{mk}}${{c.page}}${{c.page.includes("?") ? "&" : "?"}}__variant=${{c.look}}&__shot=1&__nooverlay=1`;
   el.innerHTML = `<div class="frame"><iframe loading="lazy" tabindex="-1"></iframe></div><div class="meta"><b></b><p></p>
-    <button>Use this one</button><a target="_blank">open it full size</a></div>`;
+    <button class="pick">Use this one</button><button class="try">Try it live</button></div>`;
   el.querySelector("iframe").src = src; el.querySelector("b").textContent = c.title; el.querySelector("p").textContent = c.why;
-  el.querySelector("a").href = src.replace("&__shot=1&__nooverlay=1", "");
-  el.querySelector("button").onclick = async (e) => {{
+  const pick = async (btn) => {{
     const r = await fetch("/__mark/pick-look", {{method: "POST", headers: {{"Content-Type": "application/json"}}, body: JSON.stringify({{look: c.look}})}});
-    if (!r.ok) {{ e.target.textContent = "Couldn't set it"; return; }}
-    document.querySelectorAll(".card").forEach((x) => x.classList.remove("done")); el.classList.add("done");
-    e.target.textContent = "On the mockup now";
+    if (!r.ok) {{ btn.textContent = "Couldn't set it"; return; }}
+    document.querySelectorAll(".card").forEach((x) => {{ x.classList.remove("done"); x.querySelector(".pick").textContent = "Use this one"; }});
+    el.classList.add("done"); el.querySelector(".pick").textContent = "On the mockup now"; btn.textContent = "On the mockup now";
+  }};
+  el.querySelector(".pick").onclick = (e) => pick(e.target);
+  // Try it live: the look full-window, right here on the demo (the app clickable inside it), so the nav and the
+  // pick stay where they were. The mockup itself keeps showing the working look until "Use this one".
+  el.querySelector(".try").onclick = () => {{
+    live.querySelector("b").textContent = c.title;
+    live.querySelector("iframe").src = src.replace("&__shot=1", "");
+    live.querySelector(".use").textContent = "Use this one";
+    live.querySelector(".use").onclick = (e) => pick(e.target);
+    live.classList.add("on");
   }};
   g.appendChild(el);
 }});
+const live = document.querySelector(".live");
+const closeLive = () => {{ live.classList.remove("on"); live.querySelector("iframe").src = "about:blank"; }};
+live.querySelector(".x").onclick = closeLive;
+addEventListener("keydown", (e) => {{ if (e.key === "Escape") closeLive(); }});
 </script></body></html>""", encoding="utf-8")
 PY
     exec "$0" show "$n" "$folder" "$what" ;;

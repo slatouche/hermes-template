@@ -71,14 +71,19 @@
        Same border, radius, fill, type and padding, so they read as one family; only their content tells them apart. */
     .round,.cbar,.mtools,button.mbadge{border:1px solid #2a2c33;border-radius:12px;background:#15161a;font-size:13px;
       padding:8px;box-sizing:border-box}
-    /* The design nav: Mockup · Demo 1 · Demo 2, the same three views in every project, top centre. */
-    .nav{position:fixed;top:10px;left:50%;transform:translateX(-50%);display:none;gap:2px;z-index:3;
-      border:1px solid #2a2c33;border-radius:999px;background:#15161a;padding:3px;font:12px/1.2 system-ui,sans-serif;
-      box-shadow:0 6px 20px rgba(0,0,0,.45);pointer-events:auto;max-width:calc(100vw - 24px)}
-    .nav a{color:#c9cbd2;text-decoration:none;padding:5px 11px;border-radius:999px;white-space:nowrap;overflow:hidden;
-      text-overflow:ellipsis;max-width:260px}
+    /* The design nav: a small tab hanging from the top edge (which view this is); a click drops down the three
+       views, Mockup · Demo 1 · Demo 2, the same in every project. Closed, it is one line of small text. */
+    .nav{position:fixed;top:0;left:50%;transform:translateX(-50%);display:none;flex-direction:column;align-items:center;
+      z-index:3;pointer-events:auto;font:11px/1.2 system-ui,sans-serif}
+    .nav .tab{background:rgba(21,22,26,.82);color:#c9cbd2;border:1px solid #2a2c33;border-top:0;border-radius:0 0 8px 8px;
+      padding:2px 10px 3px;cursor:pointer;white-space:nowrap;opacity:.7}
+    .nav .tab:hover,.nav.open .tab{opacity:1}
+    .nav .menu{display:none;flex-direction:column;margin-top:4px;min-width:220px;max-width:min(340px,calc(100vw - 24px));
+      background:#15161a;border:1px solid #2a2c33;border-radius:10px;padding:4px;box-shadow:0 8px 30px rgba(0,0,0,.45)}
+    .nav.open .menu{display:flex}
+    .nav a{color:#c9cbd2;text-decoration:none;padding:6px 10px;border-radius:7px;font-size:12px;display:flex;flex-direction:column}
     .nav a:hover{background:#23262f}.nav a.here{background:#3d6bff;color:#fff;font-weight:600}
-    .nav a.empty{color:#5d606b}.nav a small{opacity:.75;margin-left:6px;font-size:11px}
+    .nav a.empty{color:#5d606b}.nav a small{opacity:.75;font-size:11px;font-weight:400;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
     :host(.folded) .nav{display:none !important}
   </style>
   <nav class="nav"></nav>
@@ -190,17 +195,23 @@
   // The nav badge: one tap between the mockup (the app in work, the main design view) and the two demos
   // (throwaway visuals: options to pick from, palettes, swatches). Each shows what it holds now.
   if (cfg && cfg.nav && cfg.nav.length) {
-    const nav = $(".nav");
+    const nav = $(".nav"), tab = document.createElement("div"), menu = document.createElement("div");
+    tab.className = "tab"; menu.className = "menu";
+    const here = cfg.nav.find((v) => v.here);
+    tab.textContent = (here ? here.label : "Design views") + " \u25be";
+    tab.title = "Switch between the mockup and the demos";
     cfg.nav.forEach((v) => {
       const a = document.createElement("a");
       a.href = `${location.protocol}//${location.hostname}:${v.port}/`;
       a.textContent = v.label;
-      if (v.what) { const s = document.createElement("small"); s.textContent = v.what; a.appendChild(s); }
-      a.title = v.what ? `${v.label}: ${v.what}` : `${v.label}: nothing here yet`;
+      const s = document.createElement("small"); s.textContent = v.what || "nothing here yet"; a.appendChild(s);
       if (v.here) a.classList.add("here");
       if (!v.what && !v.here) a.classList.add("empty");
-      nav.appendChild(a);
+      menu.appendChild(a);
     });
+    tab.onclick = (e) => { e.stopPropagation(); nav.classList.toggle("open"); };
+    addEventListener("pointerdown", (e) => { if (!e.composedPath().includes(nav)) nav.classList.remove("open"); }, true);
+    nav.append(tab, menu);
     nav.style.display = "flex";
   }
   draggable($(".mzone"), "markZonePos");
