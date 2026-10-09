@@ -138,7 +138,9 @@ def main():
         # looks
         st, h, page = call("GET", "/?__variant=v1&__shot=1&__scroll=40#x")
         check("look's CSS injected", b"/__mark/v/v1/style.css" in page)
-        check("shot mode: no overlay, scroll script", b"overlay.js" not in page and b"scrollTo(0,40)" in page)
+        check("shot mode: overlay kept (checks see what the owner sees), scroll script", b"overlay.js" in page and b"scrollTo(0,40)" in page)
+        st, h, page = call("GET", "/?__variant=v1&__shot=1&__nooverlay=1")
+        check("a clean picture asks for it: no overlay", b"overlay.js" not in page)
         check("the app never sees the __ switches", seen and seen[-1] == "/", seen[-1:])
         st, h, _ = call("GET", "/?__variant=v1")
         check("look remembered in a cookie", "mark_variant=v1" in h.get("Set-Cookie", ""), h.get("Set-Cookie"))

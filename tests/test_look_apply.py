@@ -46,6 +46,25 @@ def main():
     check("no path escape through the look name", r.returncode == 2, r.returncode)
     r = run(home, ["v1"], css="")
     check("no CSS and no checks: nothing written, nothing failed", r.returncode == 0 and (look / "style.css").read_text() == before)
+
+    # a round as a list of edits, on a design folder that isn't a look: CSS and markup, each saved in turn
+    page = home / "vault" / "design" / "page1"
+    page.mkdir(parents=True)
+    (page / "style.css").write_text("p{margin:0}\n")
+    (page / "index.html").write_text("<main><div class=bar>3 of 5</div><p>hi</p><p>hi</p></main>\n")
+    r = run(home, ["--dir", str(page), "--demo", "1", "--edit", "tighten", "--css", "main{padding:8px}",
+                   "--edit", "a stepper", "--html-in", "<div class=bar>3 of 5</div>", "--html-out", "<ol class=steps></ol>"])
+    css, html = (page / "style.css").read_text(), (page / "index.html").read_text()
+    check("--edit list: CSS edit appended to the folder's style.css", r.returncode == 0 and "main{padding:8px}" in css, (r.returncode, r.stderr))
+    check("--edit list: markup edit replaced once, with a backup", "<ol class=steps></ol>" in html and "3 of 5" not in html
+          and any(page.glob("index.html.bak-*")), (html, r.stderr))
+    for args, why in ((["--html-in", "<p>hi</p>", "--html-out", "<p>yo</p>"], "matches 2 times"),
+                      (["--html-in", "<b>nope</b>", "--html-out", "<b>x</b>"], "matches 0 times"),
+                      (["--html-in", "<ol class=steps></ol>", "--html-out", "<script>x()</script>"], "isn't safe")):
+        before_html = (page / "index.html").read_text()
+        r = run(home, ["--dir", str(page), "--demo", "1", "--edit", "bad", *args])
+        check(f"markup edit refused, nothing written: {why}", r.returncode == 2 and (page / "index.html").read_text() == before_html,
+              (r.returncode, r.stderr))
     print(f"\n{'ALL PASS' if not failures else str(len(failures)) + ' FAILED'}")
     return 1 if failures else 0
 

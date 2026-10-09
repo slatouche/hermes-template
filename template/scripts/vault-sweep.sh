@@ -11,6 +11,9 @@ flock -w 120 9 || { echo "vault-sweep: timed out waiting for lock" >&2; exit 1; 
 /usr/bin/python3 "$HOME/.hermes/scripts/vault-index.py" "$HOME/vault"
 git add -A
 git diff --cached --quiet && exit 0
+# Only the cron jobs' run times changed (every run rewrites jobs.json): nothing worth a commit. They ride along with
+# the next real change instead of adding ~100 empty commits a day.
+git diff --cached --name-only | grep -qv '/cron/jobs\.json$' || { git reset -q; exit 0; }
 COUNT=$(git diff --cached --name-only | wc -l)
 BODY=$(git diff --cached -U0 -- vault/log.md \
   | grep -E '^\+[0-9]{4}-' | cut -c2- \

@@ -45,7 +45,7 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 - Discord chats are separate sessions from Hermes Desktop chats. Decisions go to the vault or a card, so nothing is lost between them.
 
 ## Kanban
-- One shared board: `~/.hermes/kanban.db`. The dispatcher starts a worker per ready card, as the card's assignee.
+- One shared board: `~/.hermes/kanban.db`. The dispatcher starts a worker per ready card, as the card's assignee. A second board, `rig`, holds the cards a check needs (nobody is subscribed, so they never reach the owner); `HERMES_KANBAN_BOARD=rig` picks it.
 - Limits (default profile config): at most {{MAX_IN_PROGRESS}} cards running at once, 1 per bot; a card that fails twice is blocked (`failure_limit: 2`). Orchestrator: `manager`.
 - Review: `kanban_request_review(reviewer="<bot>")` names the reviewer; without it the card stays with its builder.
 - After a crash or reboot, cards whose worker died go back to ready and re-run.
@@ -85,7 +85,7 @@ Anything the owner opens (an app, a page, an API) runs as a systemd user service
 | A stuck card | `manager-watch` raises it within 2 hours; the Manager never loops a card a fourth time |
 
 ## Scripts (`~/.hermes/scripts/`)
-`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `look-apply.py` (a design round in one step: add the CSS, check it, close the card), `vault-sweep.sh` (with `card-log.py`: a log line per finished card), `vault-lint.py`, `vault-lint-job.sh`, `workspace-tidy.sh`, `hire.sh`, `skill-check.py` (checks a skill folder for planted instructions before a bot gets it; `hire.sh` runs it), `raw-stamp.py` (fingerprints a raw source), `run-eval.sh` (a bot's fixed eval, before and after a change), `vault-changes.sh` (what changed in the vault since you last looked; the `/vault-changes` quick command in a Manager chat), `import-survey.py` (a zero-token survey of `workspace/`: shape, how it runs, other AI tools' files, secret risks; writes `raw/predecessor/inventory.md`). Cron scripts must live here.
+`vault-log.sh` (append to `log.md`), `vault-commit.sh` (checkpoint named files), `vault-index.py`, `look-apply.py` (a design round in one command: CSS or markup edits landing one by one, checks, close the card), `look-check.sh` (checks on a page: values, real clicks, typing and drags), `board-now.py` (every running card, its time and last step; no model), `vault-sweep.sh` (with `card-log.py`: a log line per finished card), `vault-lint.py`, `vault-lint-job.sh`, `workspace-tidy.sh`, `hire.sh`, `skill-check.py` (checks a skill folder for planted instructions before a bot gets it; `hire.sh` runs it), `raw-stamp.py` (fingerprints a raw source), `run-eval.sh` (a bot's fixed eval, before and after a change), `vault-changes.sh` (what changed in the vault since you last looked; the `/vault-changes` quick command in a Manager chat), `import-survey.py` (a zero-token survey of `workspace/`: shape, how it runs, other AI tools' files, secret risks; writes `raw/predecessor/inventory.md`). Cron scripts must live here.
 
 ## Repos
 1. **Product**: `workspace/`. Only the bots whose domain includes it commit; code goes in worktrees.

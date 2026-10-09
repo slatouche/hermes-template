@@ -49,7 +49,7 @@ mkdir -p "$DIR"
 
 base="${PAGE%%#*}"; hash=""; [[ "$PAGE" == *"#"* ]] && hash="#${PAGE#*#}"
 [[ "$base" == *"?"* ]] && sep="&" || sep="?"
-URL="http://127.0.0.1:$PORT${base:-/}${sep}__variant=$SW&__shot=1$hash"
+URL="http://127.0.0.1:$PORT${base:-/}${sep}__variant=$SW&__shot=1&__nooverlay=1$hash"   # a clean picture: no overlay UI
 URL="${URL//\'/%27}"                         # an apostrophe in a #route stops the browser
 printf '%s\n' "$PAGE" > "$DIR/page.txt"   # the variants page opens "try it live" on this screen
 slug=$(printf '%s' "${PAGE//%[0-9A-Fa-f][0-9A-Fa-f]/-}" | tr -c 'A-Za-z0-9' '-' | sed 's/-\+/-/g; s/^-//; s/-$//' | cut -c1-40)

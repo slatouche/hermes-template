@@ -154,6 +154,7 @@ EFFORT="$EFFORT"
 ROLE_DISABLED_TOOLSETS='${ROLE_DISABLED_TOOLSETS:-$DISABLED_TOOLSETS}'
 ROLE_SKILL_CATEGORIES_OFF="${ROLE_SKILL_CATEGORIES_OFF:-apple autonomous-ai-agents email media note-taking social-media productivity}"
 CARD_APPROVALS="${CARD_APPROVALS:-approve}"
+OWNER_NAME="$OWNER_NAME"
 APPROVAL_DENY='${APPROVAL_DENY:-[]}'
 EOF
 render "$T/root-AGENTS.md" > "$HOME/AGENTS.md"
@@ -250,6 +251,10 @@ hermes kanban init
 # Cards created from a chat may carry no workspace path; without a board default their worker can't start.
 hermes kanban boards set-default-workdir default "$HOME/workspace" >/dev/null
 hermes -p manager project bind-board "$NAME" default >/dev/null 2>&1 || true
+# The rig board: cards a check needs (to exercise blocked/review/answer states) go here, never on the project
+# board, so they can never notify the owner. Nobody is subscribed to it.
+hermes kanban boards list 2>/dev/null | grep -qw rig \
+  || hermes kanban boards create rig --name "Rig checks (never the owner's)" >/dev/null || true
 
 # ---------- housekeeping jobs (no model tokens) ----------
 step "Cron jobs"

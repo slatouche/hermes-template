@@ -14,8 +14,14 @@
   const root = host.attachShadow({ mode: "open" });
   root.innerHTML = `<style>
     :host{all:initial}*{box-sizing:border-box;font:13px/1.4 system-ui,-apple-system,"Segoe UI",sans-serif}
-    .bar{position:fixed;right:16px;bottom:16px;display:flex;gap:6px;padding:6px;border-radius:12px;background:#15161a;
-      border:1px solid #2a2c33;box-shadow:0 8px 30px rgba(0,0,0,.45);pointer-events:auto;color:#e8e8ea;align-items:center}
+    .mzone{position:fixed;left:20px;bottom:20px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;
+      width:max-content;max-width:calc(50vw - 24px);pointer-events:auto;z-index:2;touch-action:none}
+    .cbar{position:fixed;right:20px;bottom:20px;display:flex;gap:6px;align-items:center;justify-content:flex-end;flex-wrap:wrap;
+      width:max-content;max-width:calc(50vw - 24px);box-shadow:0 8px 30px rgba(0,0,0,.45);pointer-events:auto;color:#e8e8ea;z-index:2;touch-action:none}
+    .mtools{display:none;gap:6px;flex-wrap:wrap;box-shadow:0 8px 30px rgba(0,0,0,.45)}
+    .mzone.tools .mtools{display:flex}
+    button.mbadge{background:#15161a;color:#8fb0ff;font-weight:600;box-shadow:0 6px 20px rgba(0,0,0,.45)}
+    button.mbadge:hover{background:#1d2029}
     button{border:0;border-radius:8px;padding:7px 11px;background:#23252c;color:#e8e8ea;cursor:pointer}
     button:hover{background:#2d3039}button.on{background:#3d6bff;color:#fff}
     .hl{position:fixed;border:2px solid #3d6bff;background:rgba(61,107,255,.12);border-radius:4px;pointer-events:none;display:none}
@@ -24,6 +30,9 @@
       font-weight:700;font-size:12px;display:flex;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
       box-shadow:0 2px 8px rgba(0,0,0,.4)}
     button.send{background:#1e7d4f;color:#fff;font-weight:600;display:none}button.send:hover{background:#249760}
+    button.send:disabled{opacity:.6;cursor:default}
+    input.fb{border:1px solid #2a2c33;background:#0f1013;color:#e8e8ea;border-radius:8px;padding:6px 9px;width:170px;font:inherit}
+    input.fb::placeholder{color:#7c828f}input.fb:focus{outline:none;border-color:#3d6bff}
     button.del{margin-right:auto;background:transparent;color:#ff8095}
     .pop{position:fixed;width:min(340px,calc(100vw - 24px));padding:10px;border-radius:12px;background:#15161a;
       border:1px solid #2a2c33;box-shadow:0 12px 40px rgba(0,0,0,.5);pointer-events:auto;color:#e8e8ea;display:none}
@@ -32,35 +41,58 @@
     .pop .what{color:#9aa0ad;margin-bottom:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
     .toast{position:fixed;left:50%;bottom:76px;transform:translateX(-50%);padding:8px 12px;border-radius:8px;background:#1e7d4f;
       color:#fff;display:none}
+    .round{position:fixed;right:20px;bottom:74px;display:none;max-width:min(340px,calc(100vw - 40px));
+      color:#cfd6ea;font-weight:600;pointer-events:auto;cursor:move;line-height:1.3;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;box-shadow:0 8px 30px rgba(0,0,0,.45)}
+    .round.on{display:block}
+    .round.need{color:#ffe0a8}
+    .round.done{color:#bdf0d2}
+    button.qback{display:none;background:#7a3cff;color:#fff;font-weight:600;max-width:min(320px,44vw);overflow:hidden;
+      text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+    button.qback.on{display:inline-block}button.qback:hover{background:#8a54ff}
+    .rbar{position:fixed;right:16px;bottom:120px;width:min(380px,calc(100vw - 24px));padding:10px;border-radius:12px;
+      background:#15161a;border:1px solid #2a2c33;box-shadow:0 12px 40px rgba(0,0,0,.5);pointer-events:auto;color:#e8e8ea;display:none}
+    .rbar .q{color:#ffe0a8;font-weight:600;margin-bottom:4px;max-height:7.5em;overflow:auto}
+    .rbar .to{color:#9aa0ad;margin-bottom:6px}
+    .rbar textarea{width:100%;min-height:64px;resize:vertical;border-radius:8px;border:1px solid #2a2c33;background:#0f1013;
+      color:#e8e8ea;padding:8px}
+    .rbar .row{display:flex;gap:6px;justify-content:flex-end;margin-top:8px}
+    .rbar button.post{background:#3d6bff;color:#fff;font-weight:600}
     .layer{position:absolute;left:0;top:0}
     .box{position:absolute;border:1.5px dashed #ffb02e;border-radius:4px;pointer-events:none}
-    .fold{position:fixed;right:16px;bottom:16px;width:36px;height:36px;border-radius:50%;background:#3d6bff;color:#fff;
+    .fold{position:fixed;right:20px;bottom:20px;width:36px;height:36px;border-radius:50%;background:#3d6bff;color:#fff;
       font-weight:700;display:none;align-items:center;justify-content:center;pointer-events:auto;cursor:pointer;
       box-shadow:0 6px 20px rgba(0,0,0,.45)}
-    :host(.folded) .bar{display:none}:host(.folded) .fold{display:flex}:host(.folded) .layer{display:none}
-    .pop{z-index:5}.toast{z-index:6}.bar,.fold,.look{z-index:2;touch-action:none}
-    .look{position:fixed;left:16px;bottom:16px;display:none;align-items:center;gap:6px;flex-wrap:wrap;max-width:calc(100vw - 32px);
-      padding:5px 6px 5px 12px;border-radius:999px;background:#2d5bff;color:#fff;font-weight:600;font-size:12px;
-      box-shadow:0 6px 20px rgba(0,0,0,.45);pointer-events:auto;cursor:grab}
-    .look.sb{background:#7a3cff}.look button{all:unset;cursor:pointer;text-decoration:underline;font:inherit;color:#fff}
-    .look b{font:inherit;text-decoration:none;background:rgba(255,255,255,.22);padding:1px 7px;border-radius:999px}
-    .look .min{text-decoration:none;width:20px;height:20px;border-radius:50%;background:rgba(0,0,0,.25);text-align:center;line-height:20px}
-    .look.small{padding:0;width:32px;height:32px;justify-content:center}.look.small>*{display:none}.look.small>.min{display:block;background:none;width:32px;height:32px;line-height:32px}
+    :host(.folded) .cbar{display:none}:host(.folded) .round{display:none}:host(.folded) .fold{display:flex}:host(.folded) .layer{display:none}
+    .pop{z-index:5}.toast{z-index:6}.rbar{z-index:5}.mzone,.cbar,.fold,.round{z-index:2;touch-action:none}
+    button.mbadge.on{background:#3d6bff}
+    .mtools{color:#e8e8ea}.mtools b{background:rgba(255,255,255,.22);padding:1px 7px;border-radius:999px}
+    /* One look: every box on the overlay is the same dark surface — progress chip, note box, tools, left badge.
+       Same border, radius, fill, type and padding, so they read as one family; only their content tells them apart. */
+    .round,.cbar,.mtools,button.mbadge{border:1px solid #2a2c33;border-radius:12px;background:#15161a;font-size:13px;
+      padding:8px;box-sizing:border-box}
   </style>
-  <div class="look"></div>
   <div class="hl"></div><div class="area"></div><div class="layer"></div>
   <div class="pop"><div class="what"></div><textarea placeholder="What's wrong, or what should change?"></textarea>
     <div class="row"><button class="del">Delete</button><button class="cancel">Cancel</button><button class="save on">Save</button></div></div>
   <div class="toast"></div>
-  <div class="bar"><button class="mark" title="Click an element to mark it">Mark</button>
+  <div class="rbar"><div class="q"></div><div class="to"></div>
+    <textarea placeholder="Your answer to the Designer…"></textarea>
+    <div class="row"><button class="later">later</button><button class="post on">Send answer</button></div></div>
+  <div class="mzone"><div class="mtools"><button class="mark" title="Click an element to mark it">Mark</button>
     <button class="areab" title="Drag a box over an area">Area</button>
-    <button class="send" title="Send your draft notes to the team as one piece of feedback"></button>
-    <button class="pins" title="Show or hide your draft pins">Pins</button><button class="close" title="Fold away (click M to bring it back)">×</button></div>
+    <button class="pins" title="Show or hide your draft pins">Pins</button></div>
+    <button class="mbadge" title="Marking tools — Mark, Area, Pins">Mark ▾</button></div>
+  <span class="round"></span>
+  <div class="cbar"><button class="qback" title="The Designer asked you something — click to bring the answer bar back"></button>
+    <input class="fb" placeholder="Note about this page…" title="Feedback about the page itself — type and press Send">
+    <button class="send" title="Send your notes to the team (no question asked)"></button>
+    <button class="close" title="Fold the comms away (click M to bring them back)">×</button></div>
   <div class="fold" title="Open the Mark toolbar">M</div>`;
   const $ = (s) => root.querySelector(s);
   const hl = $(".hl"), area = $(".area"), pop = $(".pop"), layer = $(".layer"), toast = $(".toast");
   let mode = null, target = null, rect = null, start = null, open = [], showPins = true;
-  let editing = null, sending = false, drafts = 0;   // editing: the draft whose pin was clicked; sending: the Send box
+  let editing = null, drafts = 0;                    // editing: the draft whose pin was clicked
   const APP = "__APP__";
   let sayTimer = 0;
   const say = (msg, ms = 2600) => {
@@ -71,60 +103,90 @@
   const store = (k, v) => { try { v === undefined ? sessionStorage.removeItem(k) : sessionStorage.setItem(k, v); } catch (_) {} };
   const recall = (k) => { try { return sessionStorage.getItem(k); } catch (_) { return null; } };
 
-  // Drag the toolbar, the M button and the look badge out of the way of the app's own buttons (remembered for this tab).
+  // Drag a box out of the way of the app's own buttons (remembered for this tab). What is remembered is the gap to
+  // the edge the owner dropped it nearest — not a pixel from the left — so at any window width the box keeps that
+  // gap and reads as the same corner they put it in. Every drop is clamped fully on-screen, and a resize re-places
+  // each dragged box the same way, so none can be stranded or half off the viewport.
+  const EDGE = 20;                                   // the page's own inset: the chrome lines up with the app's bar
+  const layoutW = () => document.documentElement.clientWidth, layoutH = () => document.documentElement.clientHeight;
+  const clamp = (v, lo, hi) => Math.max(lo, Math.min(v, hi));
+  const place = (el, a) => {                         // a = [hEdge, hGap, vEdge, vGap]
+    const W = layoutW(), H = layoutH(), w = el.offsetWidth, h = el.offsetHeight;
+    const [he, hg, ve, vg] = a;
+    Object.assign(el.style, {
+      left: he === "left" ? clamp(hg, EDGE, Math.max(EDGE, W - w - EDGE)) + "px" : "auto",
+      right: he === "right" ? clamp(hg, EDGE, Math.max(EDGE, W - w - EDGE)) + "px" : "auto",
+      top: ve === "top" ? clamp(vg, EDGE, Math.max(EDGE, H - h - EDGE)) + "px" : "auto",
+      bottom: ve === "bottom" ? clamp(vg, EDGE, Math.max(EDGE, H - h - EDGE)) + "px" : "auto",
+    });
+  };
+  const anchorOf = (el) => {                         // which edge it is nearest, and the gap to that edge
+    const r = el.getBoundingClientRect(), W = layoutW(), H = layoutH();
+    const he = r.left + r.width / 2 < W / 2 ? "left" : "right";
+    const ve = r.top + r.height / 2 < H / 2 ? "top" : "bottom";
+    return [he, he === "left" ? r.left : W - r.right, ve, ve === "top" ? r.top : H - r.bottom];
+  };
+  const anchors = new Map();                         // el -> its last edge anchor, so a resize can re-place it
   const draggable = (el, key) => {
-    const put = (x, y) => {
-      x = Math.max(4, Math.min(x, innerWidth - el.offsetWidth - 4)); y = Math.max(4, Math.min(y, innerHeight - el.offsetHeight - 4));
-      Object.assign(el.style, { left: x + "px", top: y + "px", right: "auto", bottom: "auto" });
-    };
+    const remember = (a) => { anchors.set(el, a); store(key, a.join(",")); };
     const saved = recall(key);
-    if (saved) { const [x, y] = saved.split(",").map(Number); requestAnimationFrame(() => put(x, y)); }
+    if (saved) {                                     // "x,y" keys from before read as a left/top drop
+      const p = saved.split(",");
+      const a = p.length === 4 ? p : ["left", p[0], "top", p[1]];
+      anchors.set(el, a);
+      requestAnimationFrame(() => place(el, a));
+    }
     el.addEventListener("pointerdown", (e) => {
-      if (e.target.closest("button") && !el.classList.contains("small")) return;
+      if (e.target.closest("button,input,textarea") && !el.classList.contains("small")) return;
       const r = el.getBoundingClientRect(), dx = e.clientX - r.left, dy = e.clientY - r.top;
       let moved = false;
-      const move = (m) => { moved = true; put(m.clientX - dx, m.clientY - dy); };
+      const move = (m) => {
+        moved = true;
+        const W = layoutW(), H = layoutH(), w = el.offsetWidth, h = el.offsetHeight;
+        const x = clamp(m.clientX - dx, EDGE, Math.max(EDGE, W - w - EDGE));
+        const y = clamp(m.clientY - dy, EDGE, Math.max(EDGE, H - h - EDGE));
+        Object.assign(el.style, { left: x + "px", top: y + "px", right: "auto", bottom: "auto" });
+      };
       const up = () => {
         removeEventListener("pointermove", move); removeEventListener("pointerup", up);
-        if (moved) { const q = el.getBoundingClientRect(); store(key, `${q.left},${q.top}`); el.dataset.dragged = "1"; setTimeout(() => delete el.dataset.dragged, 0); }
+        if (moved) { remember(anchorOf(el)); el.dataset.dragged = "1"; setTimeout(() => delete el.dataset.dragged, 0); }
       };
       addEventListener("pointermove", move); addEventListener("pointerup", up);
     });
   };
+  addEventListener("resize", () => anchors.forEach((a, el) => place(el, a)));
 
-  // The badge: on the mockup, its snapshot and which look is on (one click switches it, on the same screen); on a
-  // demo slot, which demo this is.
-  const look = $(".look"), cfg = window.__markBadge;
+  // One left control: a single marking badge. Tapping it opens the tools (Mark / Area / Pins); on the mockup the look
+  // switcher rides in that same panel. The page name lives in the badge's own tooltip, never as a pill of its own.
+  const badge = $(".mbadge"), cfg = window.__markBadge, mtools = $(".mtools");
+  let pageName = "";
   if (cfg) {
-    const sw = (v) => { const u = new URL(location.href); u.searchParams.set("__variant", v); location.href = u.pathname + u.search + u.hash; };
-    const add = (tag, text, fn) => { const n = document.createElement(tag); n.textContent = text; if (fn) n.onclick = fn; look.appendChild(n); return n; };
-    look.classList.toggle("sb", !!(cfg.mockup || cfg.demo));
-    if (cfg.demo) add("span", cfg.demo.replace(/^demo/i, "Demo")).title = "A demo of something new: nothing here touches your real data";
-    if (cfg.mockup) {
-      const proto = /^prototype /.test(cfg.mockup);
-      add("span", proto ? "Mockup · " + cfg.mockup.split(":")[0] : "Mockup").title = cfg.mockup + " · a copy of the app: nothing here touches your real data";
-      add("button", "reset data", () => {
-        if (confirm("Put the mockup's data back to a fresh copy of the real data?"))
-          fetch(INBOX + "/mockup/reset", { method: "POST" }).then(() => location.reload());
-      });
-    }
-    if (cfg.looks.length) {
+    pageName = cfg.demo ? cfg.demo.replace(/^demo/i, "Demo")
+      : cfg.mockup ? (/^prototype /.test(cfg.mockup) ? "Mockup · " + cfg.mockup.split(":")[0] + " · a copy of the app" : cfg.mockup + " · a copy of the app")
+      : "";
+    const add = (tag, text, fn) => { const n = document.createElement(tag); n.textContent = text; if (fn) n.onclick = fn; mtools.appendChild(n); return n; };
+    if (cfg.mockup) add("button", "reset data", () => {
+      if (confirm("Put the mockup's data back to a fresh copy of the real data?"))
+        fetch(INBOX + "/mockup/reset", { method: "POST" }).then(() => location.reload());
+    });
+    if (cfg.looks && cfg.looks.length) {
+      const sw = (v) => { const u = new URL(location.href); u.searchParams.set("__variant", v); location.href = u.pathname + u.search + u.hash; };
       add("span", "Look:");
       [["off", "current"], ...cfg.looks.map((n) => [n, n])].forEach(([key, label]) =>
         key === (cfg.variant || "off") ? add("b", label) : add("button", label, () => sw(key)));
       add("button", "compare", () => (location.href = "/__mark/variants"));
     }
-    const min = add("button", "–", () => {
-      if (look.dataset.dragged) return;
-      const small = !look.classList.contains("small");
-      look.classList.toggle("small", small); min.textContent = small ? (cfg.demo ? "D" + (cfg.demo.match(/\d/) || [""])[0] : cfg.mockup ? "Mo" : "V") : "–";
-      min.title = small ? "Show the look badge" : "Make it small"; store("markLookSmall", small ? "1" : undefined);
-    });
-    min.className = "min"; min.title = "Make it small";
-    look.style.display = "flex";
-    if (recall("markLookSmall")) min.onclick();
-    draggable(look, "markLookPos");
   }
+  draggable($(".mzone"), "markZonePos");
+  // The badge names the live mode, so one tap shows where the owner is: Mark or Area (blue while that mode is on),
+  // with the page name and what the tools do in its tooltip.
+  const updateBadge = () => {
+    badge.classList.toggle("on", !!mode);
+    badge.textContent = (mode === "area" ? "Area" : "Mark") + " \u25be";
+    badge.title = "Marking tools — Mark, Area, Pins" + (mode ? ` · ${mode === "area" ? "Area" : "Mark"} mode is on` : "")
+      + (pageName ? ` · ${pageName} · a demo of something new: nothing here touches your real data` : "");
+  };
+  updateBadge();
 
   const selectorOf = (el) => {
     if (!el || el === document.body) return "body";
@@ -148,6 +210,7 @@
     host.style.pointerEvents = mode ? "auto" : "none";
     host.style.cursor = mode === "area" ? "crosshair" : mode ? "pointer" : "";
     hl.style.display = "none";
+    updateBadge();
   };
   window.__markToggle = () => setMode("mark");
   const boxAt = (r) => { hl.style.cssText += `;display:block;left:${r.left}px;top:${r.top}px;width:${r.width}px;height:${r.height}px`; };
@@ -162,7 +225,13 @@
       area.style.cssText += `;display:block;left:${x}px;top:${y}px;width:${Math.abs(e.clientX - start.x)}px;height:${Math.abs(e.clientY - start.y)}px`;
     }
   });
-  const onUi = (e) => e.composedPath().some((n) => n === pop || n === $(".bar") || n === look || (n.classList && n.classList.contains("pin")));
+  // The overlay's own panels are UI: a pointer-down inside one must never start a mark, because the handler below
+  // cancels the event to keep the page under it clean — and a cancelled pointer-down means the control never takes
+  // focus, so anything the owner types into silently does nothing. Everything the overlay puts in its shadow root
+  // counts, except the marking visuals that sit under the pointer on purpose and the toast, so a new panel is UI by
+  // default and nobody has to remember to add it to a list. Pins live inside the marking layer, so they are named.
+  const NOT_UI = new Set([hl, area, layer, toast]);
+  const onUi = (e) => e.composedPath().some((n) => (n.parentNode === root && !NOT_UI.has(n)) || (n.classList && n.classList.contains("pin")));
   host.addEventListener("pointerdown", (e) => {
     if (onUi(e) || popOpen()) return;              // finish or cancel the open note before starting another
     e.preventDefault();
@@ -170,7 +239,7 @@
   });
   host.addEventListener("pointerup", (e) => {
     if (onUi(e) || popOpen() || !mode) return;
-    editing = null; sending = false;                 // a new mark is always a new note, never an edit or a Send
+    editing = null;                                  // a new mark is always a new note, never an edit
     if (mode === "mark") {
       target = underPointer(e.clientX, e.clientY);
       if (!target || target === host || target === document.documentElement) return;
@@ -250,12 +319,12 @@
     pop.style.left = Math.max(12, Math.min(x, innerWidth - pop.offsetWidth - 12)) + "px";
     pop.style.top = Math.max(12, Math.min(y + 12, innerHeight - pop.offsetHeight - 12)) + "px";
     $(".del").style.display = editing ? "" : "none";
-    $(".save").textContent = sending ? "Send" : "Save";
+    $(".save").textContent = "Save";
     $("textarea").placeholder = placeholder;
     $("textarea").value = text;
     $("textarea").focus();
   };
-  const closePop = () => { pop.style.display = "none"; area.style.display = "none"; hl.style.display = "none"; editing = null; sending = false; };
+  const closePop = () => { pop.style.display = "none"; area.style.display = "none"; hl.style.display = "none"; editing = null; };
   const ctxOf = (el) => {
     if (!el || !el.getBoundingClientRect) return null;
     const keys = ["display", "position", "width", "height", "font-size", "font-weight", "line-height", "color",
@@ -272,22 +341,7 @@
   const save = async () => {
     const note = $("textarea").value.trim();
     try {
-      if (sending) {                                  // Send: every draft goes to the team as one batch
-        closePop(); say("Sending… concrete notes go live in seconds.", 0);
-        const r = await post("/notes/send", { app: APP || undefined, summary: note });
-        if (!r.ok) throw new Error(r.status);
-        const d = await r.json();
-        const q = d.quick;
-        if (q && q.applied.length) {
-          const rest = q.open.length ? ` The ${d.to || "Designer"} has ${q.open.length} more.` : "";
-          say(`Changed ${q.applied.length} in ${q.secs}s: ${q.applied.map((a) => a.did).join(" · ")}.${rest}`, 9000);
-          if (q.look !== ((cfg && cfg.variant) || "")) {        // the fixes went into a look this page isn't showing yet
-            const u = new URL(location.href); u.searchParams.set("__variant", q.look); location.href = u.pathname + u.search + u.hash;
-          } else checkLook(true);
-        } else {
-          say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The ${d.to || "Manager"} has them now.` : "Nothing to send.", 5000);
-        }
-      } else if (editing) {
+      if (editing) {
         if (!note) return;
         const r = await post(`/notes/${editing}/edit`, { note });
         if (!r.ok) throw new Error(r.status);
@@ -321,19 +375,57 @@
       closePop(); say("Draft deleted."); load();
     } catch (err) { $(".what").textContent = "Couldn't delete (" + err.message + ")."; }
   };
-  $(".send").onclick = () => {
-    if (!drafts) return;
-    setMode(null); closePop(); sending = true;
-    const from = cfg && cfg.demo ? ` from ${cfg.demo.replace(/^demo/i, "demo")}` : cfg && cfg.mockup ? " from the mockup" : "";
-    ask(`Send ${drafts} note${drafts === 1 ? "" : "s"}${from} to the team as one piece of feedback?`, innerWidth - 360, innerHeight - 260,
-        "", "Anything to say about them overall? (optional)");
+  // Send is one press: any text in the toolbar's own box becomes a note about the page itself (no element), then every
+  // draft left on this link goes to the team together. Send never asks a question — the notes just go.
+  const handleSend = async (d) => {
+    const q = d.quick;
+    if (q && q.applied.length) {
+      const rest = q.open.length ? ` The ${d.to || "Designer"} has ${q.open.length} more.` : "";
+      say(`Changed ${q.applied.length} in ${q.secs}s: ${q.applied.map((a) => a.did).join(" · ")}.${rest}`, 9000);
+      if (q.look !== ((cfg && cfg.variant) || "")) {           // the fixes went into a look this page isn't showing yet
+        const u = new URL(location.href); u.searchParams.set("__variant", q.look); location.href = u.pathname + u.search + u.hash;
+      } else checkLook(true);
+    } else {
+      say(d.sent ? `Sent ${d.sent} note${d.sent === 1 ? "" : "s"}. The ${d.to || "Manager"} has them now.` : "Nothing to send.", 5000);
+    }
   };
+  const sendNow = async () => {
+    const box = $(".fb"), text = box.value.trim();
+    if (!drafts && !text) { say("Type a note or mark something first, then Send.", 3200); box.focus(); return; }
+    $(".send").disabled = true;
+    try {
+      if (text) {                                    // the toolbar's note is about the page itself: no element
+        const r = await post("/notes", {
+          page: location.href, app: APP || undefined, title: document.title, note: text, draft: true, kind: "page",
+          selector: null, text: null, rect: null,
+          viewport: { w: innerWidth, h: innerHeight }, scroll: { x: scrollX, y: scrollY }, ua: navigator.userAgent,
+        });
+        if (!r.ok) throw new Error(r.status);
+        box.value = "";
+      }
+      say("Sending…", 0);
+      const r = await post("/notes/send", { app: APP || undefined });
+      if (!r.ok) throw new Error(r.status);
+      handleSend(await r.json());
+    } catch (err) { say("Couldn't send (" + err.message + "). Is the inbox running?", 5000); }
+    $(".send").disabled = false;
+    load();
+  };
+  $(".send").onclick = sendNow;
+  // The toolbar's own box: Enter sends too, and its keys never reach the app's shortcuts.
+  $(".fb").addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter") { e.preventDefault(); sendNow(); }
+  });
+  ["keyup", "keypress", "input"].forEach((t) => $(".fb").addEventListener(t, (e) => e.stopPropagation()));
+  $(".fb").addEventListener("input", () => draw());
   // Keys typed in a note never reach the app (its own shortcuts would fire).
   $("textarea").addEventListener("keydown", (e) => { e.stopPropagation(); if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) save(); });
   ["keyup", "keypress", "input"].forEach((t) => $("textarea").addEventListener(t, (e) => e.stopPropagation()));
   $(".mark").onclick = () => setMode("mark");
   $(".areab").onclick = () => setMode("area");
-  $(".pins").onclick = () => { showPins = !showPins; draw(); };
+  $(".pins").onclick = () => { showPins = !showPins; $(".pins").classList.toggle("on", !showPins); draw(); };
+  $(".mbadge").onclick = () => $(".mzone").classList.toggle("tools");   // the left badge: tap for Mark / Area / Pins
   // × folds the toolbar into a small "M" button (remembered for this tab); M opens it again. Nothing is lost.
   const fold = (on) => {
     if (on) { setMode(null); closePop(); }
@@ -342,15 +434,16 @@
   };
   $(".close").onclick = () => fold(true);
   $(".fold").onclick = () => { if (!$(".fold").dataset.dragged) fold(false); };
-  draggable($(".bar"), "markBarPos");
+  draggable($(".cbar"), "markCbarPos");
   draggable($(".fold"), "markFoldPos");
+  draggable($(".round"), "markRoundPos");          // the progress chip: its own element, movable anywhere
   try { if (sessionStorage.getItem("markFolded")) fold(true); } catch (_) {}
   addEventListener("keydown", (e) => { if (e.key === "Escape") { closePop(); if (mode) setMode(mode); } }, true);
 
   let drawn = "";
   const draw = () => {
-    $(".send").textContent = `Send ${drafts}`;
-    $(".send").style.display = drafts ? "inline-block" : "none";
+    $(".send").textContent = drafts ? `Send ${drafts}` : "Send";
+    $(".send").style.display = (drafts || $(".fb").value.trim()) ? "inline-block" : "none";
     const spots = showPins ? open.map((n) => [n, placeOf(n)])
       .filter(([, at]) => at && at.y + at.h >= 0 && at.y <= innerHeight && at.x + at.w >= 0 && at.x <= innerWidth) : [];
     const sig = spots.map(([n, a]) => `${n.id}:${a.x | 0},${a.y | 0},${a.w | 0},${a.h | 0}`).join("|");
@@ -394,13 +487,90 @@
     if (location.href !== href) { href = location.href; load(); } else if (open.length && showPins) redraw();
   }, 700);
   addEventListener("popstate", load);
+  // The round: what the Designer is doing with the notes you sent, on the page you sent them from. When it has a
+  // question the answer bar opens, and the answer goes back to the same Designer session (/notes/answer). The 2 s
+  // poll below is the transport: no second poll, no second service.
+  const roundEl = $(".round"), rbar = $(".rbar"), rq = $(".rbar .q"), rto = $(".rbar .to"), rbox = $(".rbar textarea"),
+        qback = $(".qback");
+  let roundCard = null, roundQ = null, rbarHidden = null, roundBlk = null, roundAt = 0;
+  // The way back: the question is the owner's to answer while it is live, even after "later" shut the bar — so the
+  // toolbar keeps a button naming it, and one click brings the bar back with that same question. While there is no
+  // live question (a round working or done, or one already answered) there is nothing to come back to and it is gone.
+  const syncQback = () => {
+    const on = !!roundQ;
+    qback.classList.toggle("on", on);
+    if (on) {
+      qback.textContent = "Question: " + (roundQ.length > 40 ? roundQ.slice(0, 39) + "\u2026" : roundQ);
+      qback.title = "The Designer asked: " + roundQ + " \u2014 click to bring the answer bar back";
+    }
+  };
+  const hideRbar = () => { rbar.style.display = "none"; syncQback(); };
+  const openRbar = () => {
+    rq.textContent = roundQ || "";
+    rto.textContent = roundCard ? `Round ${roundCard}: your answer goes back to the Designer who asked, in this page's session.` : "";
+    rbar.style.display = "block";
+    syncQback();
+  };
+  const fmtSpan = (s) => (s == null ? null
+    : s >= 3600 ? `${Math.floor(s / 3600)}h ${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}m`
+    : s >= 60 ? `${Math.floor(s / 60)}m ${String(Math.floor(s % 60)).padStart(2, "0")}s` : `${Math.floor(s)}s`);
+  // The chip: state, how long, and what the worker is on right now. While it works the count keeps moving — a local
+  // repaint of the block the 2 s poll already fetched, so no extra request — and a step that has been quiet for more
+  // than 90 s says so instead of looking hung. A question always wins the chip.
+  const roundText = (b, late) => {
+    const st = b.state || "working";
+    if (st === "needs_you") return "Round needs you" + (b.question ? " \u00b7 " + b.question : "");
+    if (st === "done") return "Round done" + (b.question ? " \u2014 question" : "");
+    const drift = late ? Math.floor((Date.now() - roundAt) / 1000) : 0;
+    const idle = b.idle == null ? null : b.idle + drift;
+    let s = "Round working \u00b7 " + (fmtSpan(b.secs == null ? null : b.secs + drift) || "\u2014");
+    if (b.step) s += " \u00b7 " + b.step;
+    if (idle != null && idle > 90) s += ` \u2014 no movement for ${fmtSpan(idle)}`;
+    return s;
+  };
+  const roundLine = (b, late) => {
+    roundBlk = b;
+    if (!b) { roundCard = null; roundQ = null; roundEl.className = "round"; roundEl.textContent = ""; roundEl.title = ""; hideRbar(); return; }
+    if (!late) roundAt = Date.now();
+    roundCard = b.card; roundQ = b.question || null;
+    const st = b.state || "working";
+    roundEl.className = "round on " + (st === "needs_you" ? "need" : st);
+    roundEl.textContent = roundText(b, late);
+    roundEl.title = roundQ || roundEl.textContent;
+    if (anchors.has(roundEl)) place(roundEl, anchors.get(roundEl));   // a wider label never spills off-screen
+    if (roundQ && rbarHidden !== b.card) openRbar(); else hideRbar();
+  };
+  setInterval(() => { if (roundBlk && (roundBlk.state || "working") === "working") roundLine(roundBlk, true); }, 1000);
+  roundEl.onclick = () => { if (roundEl.dataset.dragged) return; if (roundQ) { rbarHidden = null; openRbar(); } };
+  qback.onclick = () => { if (roundQ) { rbarHidden = null; openRbar(); } };
+  $(".rbar .later").onclick = () => { rbarHidden = roundCard; hideRbar(); };
+  $(".rbar .post").onclick = async () => {
+    const text = rbox.value.trim();
+    if (!text) { say("Type your answer first.", 2400); return; }
+    if (!roundCard) { say("That round is gone — reload the page.", 3000); return; }
+    $(".rbar .post").disabled = true;
+    let d = {};
+    try { d = await (await post("/notes/answer", { card: roundCard, text, page: location.href })).json(); } catch (_) {}
+    $(".rbar .post").disabled = false;
+    if (!d || (!d.card && !d.test)) { say("The answer didn't get through — try again.", 3200); return; }
+    rbox.value = "";
+    // A browser check's answer (`?test=1`) is recorded as evidence and never becomes work: the round stays unanswered
+    // and its question stays live, so say so instead of claiming the Designer has it.
+    if (d.test) { say("Check answer recorded — the round is not answered.", 4000); return; }
+    rbarHidden = null; roundQ = null; hideRbar();
+    say("Answer sent — the Designer is on it.", 3200);
+    checkLook(true);
+  };
   let lookSeen = null;
+  const canPoll = !!(cfg && (cfg.variant || cfg.demo || cfg.mockup));   // a demo or the mockup carries a round as well
   const checkLook = async (now) => {
     const v = cfg && cfg.variant;
-    if (!v || (document.hidden && !now)) return;
+    if (!canPoll || (document.hidden && !now)) return;
     let d;
-    try { d = await (await fetch(INBOX + "/look-version?v=" + encodeURIComponent(v), { cache: "no-store" })).json(); } catch (_) { return; }
-    if (!d || d.css === undefined) return;
+    try { d = await (await fetch(INBOX + "/look-version?v=" + encodeURIComponent(v || ""), { cache: "no-store" })).json(); } catch (_) { return; }
+    if (!d) return;
+    if (d.round || roundCard) roundLine(d.round || null);        // the page's round: state, and its question
+    if (!v || d.css === undefined) return;
     if (lookSeen && d.js !== lookSeen.js) { location.reload(); return; }
     if (lookSeen && d.css !== lookSeen.css) {
       document.querySelectorAll(`link[href^="/__mark/v/${v}/style.css"]`).forEach((l) => (l.href = `/__mark/v/${v}/style.css?t=${d.css}`));
@@ -408,7 +578,7 @@
     }
     lookSeen = d;
   };
-  if (cfg && cfg.variant) {                        // every 2 s while you look; at once when you come back to the tab
+  if (canPoll) {                                   // every 2 s while you look; at once when you come back to the tab
     checkLook(); setInterval(checkLook, 2000);
     addEventListener("visibilitychange", () => { if (!document.hidden) checkLook(); });
   }
