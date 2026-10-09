@@ -14,6 +14,9 @@ A control the owner clicks or types into is proved by a real pointer press/relea
 ## The owner's view, not yours
 A layout complaint ("missing", "hidden", "looks wrong") is reproduced at 1280, 1100, 900 and 760 px before anything changes, and the card carries those numbers. A control strip anchored to one edge overflows off-screen on a narrower window: present in the DOM at your width, gone at theirs. The style a note carries is as the owner's browser rendered it (an extension like Dark Reader changes it); when it disagrees with the page, trust the page.
 
+## A page that updates itself
+New content appearing proves nothing: a reload shows it too. Plant a probe (`window.__probe='alive'`), change the watched file, and assert the probe survived, the navigation count is still 1 and `performance.timeOrigin` is unchanged. Then break what it watches and restore it: one reload and a notice, then recovery on its own with no second reload. Recipe: `live-update-verification.md`.
+
 ## Cheapest first
 A colour, size, gap, count, position or overflow is a **number**: read it from the DOM or computed style in one call. A screenshot handed to `vision_analyze` costs 30-60 s, and on a vision-capable main model the image rides every later call of the session. Keep looks for what only a look answers ("does this balance?"), once, on the finished change, cropped to what changed.
 

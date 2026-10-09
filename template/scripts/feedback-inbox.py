@@ -341,11 +341,12 @@ DRAG_FIND = (
 )
 DRAG_ARM = (
     "(()=>{window.__dragEv={down:null,moves:0,up:null};"
-    "const rec=(t)=>(e)=>{const p={trusted:e.isTrusted,buttons:e.buttons};"
+    "if(!window.__dragArmed){window.__dragArmed=1;"
+    "const rec=(t)=>(e)=>{const p={trusted:e.isTrusted,buttons:e.buttons,x:Math.round(e.clientX),y:Math.round(e.clientY)};"
     "if(t==='pointerdown')window.__dragEv.down=p;"
     "else if(t==='pointermove'&&window.__dragEv.down)window.__dragEv.moves++;"
     "else if(t==='pointerup')window.__dragEv.up=p};"
-    "['pointerdown','pointermove','pointerup'].forEach(t=>addEventListener(t,rec(t),true));"
+    "['pointerdown','pointermove','pointerup'].forEach(t=>addEventListener(t,rec(t),true))}"
     "return 'drag armed'})()"
 )
 DRAG_AFTER = (
@@ -404,8 +405,8 @@ def mark_eval(browse, expr):
 
 
 def coord(v):
-    """A pointer coordinate as agent-browser takes it: 305, not 305.0."""
-    return "%g" % v
+    """A pointer coordinate as agent-browser takes it: whole pixels, like a real mouse (it refuses fractions)."""
+    return "%d" % int(round(v))
 
 
 def drag_step(browse, spec):
@@ -423,8 +424,8 @@ def drag_step(browse, spec):
     if not info.get("grabbable"):
         return {"drag": spec, "error": "%s has no draggable point inside it (every point sits on a button or an "
                                       "input): open its panel first, or grab it by a padding strip" % sel}
-    px, py, dx, dy = info["px"], info["py"], info["dx"], info["dy"]
-    tx, ty = x + dx, y + dy            # end the pointer dx,dy past the target: the element's top-left lands on it
+    px, py, dx, dy = round(info["px"]), round(info["py"]), info["dx"], info["dy"]
+    tx, ty = round(x + dx), round(y + dy)   # end the pointer dx,dy past the target: the element's top-left lands there
     mark_eval(browse, DRAG_ARM)
     browse("lookcheck", "mouse", "move", coord(px), coord(py), timeout=20)
     browse("lookcheck", "mouse", "down", timeout=20)
@@ -435,9 +436,18 @@ def drag_step(browse, spec):
     got = mark_eval(browse, DRAG_AFTER)
     got = got if isinstance(got, dict) else {}
     box = got.get("box")
+    ev = got.get("ev") or {}
+    down, up = ev.get("down") or {}, ev.get("up") or {}
     rnd = lambda b: [round(v, 2) for v in b] if b else None
+    travel = (abs(up.get("x", 0) - down.get("x", 0)) + abs(up.get("y", 0) - down.get("y", 0))) if down and up else None
+    shift = max(abs(box[0] - info["left"]), abs(box[1] - info["top"])) if box else None
     return {"drag": spec, "pointer": got.get("ev"), "before": rnd([info["left"], info["top"], info["w"], info["h"]]),
-            "after": rnd(box), "moved": bool(box) and round(box[0], 2) != round(info["left"], 2)}
+            "target": [x, y], "after": rnd(box),
+            # the pointer moves in whole pixels, so a box whose own layout sits on a fraction of a pixel lands that
+            # fraction off: the miss is reported, never hidden (the page's clamp can also pull a drop back on screen)
+            "miss": rnd([box[0] - x, box[1] - y]) if box else None,
+            "travel": travel,           # how far the pointer went: 0 is a plain click, which must move nothing
+            "moved": shift is not None and shift >= 0.5}
 
 
 def round_text(batch, drafts, where, card, summary="", quick=None, card_id=None):

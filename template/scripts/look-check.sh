@@ -16,9 +16,11 @@
 #   look-check.sh atlas-air "/" --js "getComputedStyle(__markQ('.round')).borderRadius"
 # A drag is a step, run in the order you write it, and the --js after it sees what moved. It is a REAL pointer: the
 # pointer goes down inside the element, moves to the target and lifts (CDP Input.dispatchMouseEvent with the button
-# held down), so the page's own drag handler runs — never a scripted move. '<selector> -> <x>,<y>' puts the element's
-# top-left corner at x,y (the page's own clamp may pull it back on screen). Repeatable, and mixing it with --js is
-# what proves it did something:
+# held down, and the check reports the trusted press-move-release it saw), so the page's own drag handler runs —
+# never a scripted move. '<selector> -> <x>,<y>' puts the element's top-left corner at x,y; the step reports where
+# it landed and the miss, because the pointer moves in whole pixels (a real mouse does too), so a box whose own
+# layout sits on a fraction of a pixel lands that fraction off. A drag with no distance is a plain click and must
+# move nothing. Repeatable, and mixing it with --js is what proves it did something:
 #   look-check.sh atlas-air "/" --drag ".round -> 300,300" --js "__markQ('.round').getBoundingClientRect().x"
 # --no-overlay asks for the opposite (a picture with no overlay UI in it); only pictures need that, a check does not.
 #
@@ -58,13 +60,18 @@ while [ $# -gt 0 ]; do
     --no-overlay) NO_OVERLAY=1; shift ;;
     --drag) KIND+=(drag); VAL+=("$2"); shift 2 ;;
     --js) JS+=("$2"); KIND+=(js); VAL+=("$2"); shift 2 ;;
-    -h|--help) sed -n '2,37p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,45p' "$0"; exit 0 ;;
     *) if [ -z "$V" ]; then V="$1"; else PAGE="$1"; fi; shift ;;
   esac
 done
 
 # ---- real-input mode: a real click (+ real key events) then read the state back ------------------------------
 if [ -n "$TYPE_SEL" ] || [ -n "$CLICK_SEL" ]; then
+  if [ ${#KIND[@]} -gt 0 ] && printf '%s\n' "${KIND[@]}" | grep -qx drag; then
+    echo "look-check: --drag is a look-mode step and this mode is the real-input one (--type/--click);" >&2
+    echo "run the drag as its own check: look-check.sh <look|current> [path] --drag '<selector> -> <x>,<y>' --js '...'" >&2
+    exit 2
+  fi
   command -v systemd-run >/dev/null || { echo "look-check: real-input mode needs systemd-run (the browser must " \
     "run outside the bot's sandbox); use the feedback inbox service instead." >&2; exit 2; }
   [ -n "$URL" ] || { echo "look-check: --type/--click need --url <the page to open>" >&2; exit 2; }
