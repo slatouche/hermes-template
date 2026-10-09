@@ -32,6 +32,11 @@ it on the page, and closes the round's card when every check passes, so the Desi
   keeps them true while the app redraws and the owner navigates; a moved button still works):
     --move '<what> -> before|after|into|start <where>'      --text '<what> => <new text>'
     --insert 'before|after|into|start <where> => <markup>'  --attr '<what> @<name> => <value>' (value `-` removes)
+  `--screen '#/card-maker in #main => <markup>'` (or `=> @card-maker.html`, a file in the look folder) adds a mock
+  screen to the app: at that route it shows in the container and the app's own content there is hidden. Link to it
+  with --insert (e.g. a nav button `<a href="#/card-maker">`).
+  `--repeat '<element> => <part>: A | B | C'` (or '<element> x 6') fills a list or grid out with placeholder copies
+  of a real element, each with its own words; copies keep the original's markup, so they still click.
   `--on '<regex>'` after any payload limits that edit to matching screens (location.pathname + hash), e.g. '#/deck'.
   On a --dir folder (a prototype) edit its files instead: `--in-file pages/deck.html` points --html-in/--html-out at
   one of the folder's files (default index.html).
@@ -113,12 +118,26 @@ def chip(task, label, secs):
         pass
 
 
-STRUCT = ("move", "text", "insert", "attr")
+STRUCT = ("move", "text", "insert", "attr", "repeat")
 WHERE = ("before", "after", "into", "start")
 
 
 def struct_op(ed):
     """One structural edit as a dom.json entry. Markup is plain: no scripts, handlers or javascript: URLs."""
+    if ed.get("repeat"):
+        m = re.fullmatch(r"\s*(.+?)\s+x\s*(\d+)\s*", ed["repeat"])
+        if m:
+            return {"op": "repeat", "sel": m.group(1), "n": min(int(m.group(2)), 60)}
+        m = re.fullmatch(r"\s*(.+?)\s*=>\s*(?:([^:|]+?)\s*:\s*)?(.+)", ed["repeat"], re.S)
+        if not m:
+            raise ValueError("--repeat is '<element> x <n>' or '<element> => <part inside>: <words> | <words> | ...'")
+        vals = [v.strip() for v in m.group(3).split("|") if v.strip()][:60]
+        return {"op": "repeat", "sel": m.group(1), "child": (m.group(2) or "").strip(), "values": vals, "n": len(vals)}
+    if ed.get("link"):
+        m = re.fullmatch(r"\s*(.+?)\s*=>\s*(#\S*)\s*", ed["link"])
+        if not m:
+            raise ValueError("--link is '<what> => #/<screen>'")
+        return {"op": "attr", "sel": m.group(1), "name": "data-goto", "value": m.group(2)}
     if ed.get("move"):
         m = re.fullmatch(r"\s*(.+?)\s*->\s*(before|after|into|start)\s+(.+?)\s*", ed["move"])
         if not m:
@@ -140,6 +159,38 @@ def struct_op(ed):
     if not m or m.group(2).lower().startswith("on") or "javascript:" in m.group(3).lower():
         raise ValueError("--attr is '<what> @<name> => <value>' (no on* handlers, no javascript:)")
     return {"op": "attr", "sel": m.group(1), "name": m.group(2), "value": None if m.group(3).strip() == "-" else m.group(3)}
+
+
+def page_edit(a, check_args, folder, op):
+    """Apply one structural edit to the prototype page the round is on, in the warm browser, and save the page file."""
+    import urllib.request
+    route = a.page.split("#", 1)[1] if "#" in a.page else "/"
+    page = (route.strip("/").split("/")[0] or "home")
+    f = folder / "pages" / f"{page}.html"
+    if not f.exists():
+        return {"error": f"no pages/{page}.html in {folder} (--page '#/<screen>' says which page)"}
+    text = f.read_text(encoding="utf-8")
+    if "data-each" in text or "data-find" in text:
+        return {"error": f"pages/{page}.html fills from data.json (data-each/data-find): edit it with --html-in/--html-out"}
+    try:
+        port = next((l.split("=", 1)[1].strip() for l in (HOME / ".hermes" / ".env").read_text().splitlines()
+                     if l.startswith("API_SERVER_PORT=")), "")
+        body = {"op": "edit", "target": f"demo{check_args[1]}" if check_args else "mockup", "route": a.page,
+                "ops": [op], "settle": 300}
+        req = urllib.request.Request(f"http://127.0.0.1:{int(port) + 99}/look", data=json.dumps(body).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        res = json.loads(urllib.request.urlopen(req, timeout=60).read())
+    except Exception as e:
+        return {"error": f"the inbox's browser didn't answer: {e}"}
+    if res.get("error") or not isinstance(res.get("html"), str):
+        return {"error": res.get("error") or "no page came back"}
+    if (res.get("status") or ["?"])[0] != "ok":
+        return {"error": f"{res['status'][0]} on {page}"}
+    bak = f.with_name(f.name + f".bak-{datetime.datetime.now():%H%M%S}")
+    if not bak.exists():
+        bak.write_text(text, encoding="utf-8")
+    f.write_text(res["html"], encoding="utf-8")
+    return {"file": f"pages/{page}.html ({op['op']})"}
 
 
 def glance(a, check_args):
@@ -193,6 +244,13 @@ def main():
     ap.add_argument("--text", action=payload("text"), dest="edits", metavar="'SEL => TEXT'")
     ap.add_argument("--insert", action=payload("insert"), dest="edits", metavar="'WHERE REF => HTML'")
     ap.add_argument("--attr", action=payload("attr"), dest="edits", metavar="'SEL @NAME => VALUE'")
+    ap.add_argument("--repeat", action=payload("repeat"), dest="edits", metavar="'SEL x N' | 'SEL => CHILD: a | b'",
+                    help="placeholders: copies of a real element (filling out a list or grid), each with its own words")
+    ap.add_argument("--screen", action=payload("screen"), dest="edits", metavar="'#/route in CONTAINER => MARKUP|@file.html'",
+                    help="a mock screen on the app's mockup: shown at that route inside the container, the app's own "
+                         "content there hidden; link to it with --insert '... => <a href=\"#/route\">'")
+    ap.add_argument("--link", action=payload("link"), dest="edits", metavar="'SEL => #/route'",
+                    help="on a prototype: clicking that element goes to that screen")
     ap.add_argument("--on", action=payload("on"), dest="edits", metavar="REGEX",
                     help="limit the edit above to screens whose path+hash matches")
     ap.add_argument("--in-file", action=payload("file"), dest="edits", metavar="PATH",
@@ -232,20 +290,23 @@ def main():
         if ed.get("html_out") and not ed.get("html_in"):
             print("look-apply: --html-out needs the --html-in it replaces", file=sys.stderr)
             return 2
-        kinds = [k for k in ("css", "html_in", "move", "text", "insert", "attr") if ed.get(k)]
+        kinds = [k for k in ("css", "html_in", "move", "text", "insert", "attr", "link", "repeat", "screen") if ed.get(k)]
+        if kinds and kinds[0] == "screen" and not a.look:
+            print("look-apply: --screen is for the app's mockup (a look); a prototype adds a page: look.py proto page", file=sys.stderr)
+            return 2
         if len(kinds) > 1:
             print("look-apply: one payload per --edit: --css, --html-in/--html-out, --move, --text, --insert or --attr",
                   file=sys.stderr)
             return 2
-        if kinds and kinds[0] in STRUCT and not a.look:
-            print("look-apply: --move/--text/--insert/--attr are for a look on the app; in a --dir folder edit its files "
-                  "(--html-in/--html-out, with --in-file for a page)", file=sys.stderr)
+        if kinds and kinds[0] == "link" and a.look:
+            print("look-apply: --link is for a prototype (--dir); on the app, its own links already work", file=sys.stderr)
             return 2
     if not a.edits and not sys.stdin.isatty():
         css = sys.stdin.read().strip()
         if css:
             a.edits = [{"label": a.label, "css": css}]        # the older form: one block on stdin
-    edits = [ed for ed in a.edits if ed.get("css") or ed.get("html_in") or any(ed.get(k) for k in STRUCT)]
+    edits = [ed for ed in a.edits if ed.get("css") or ed.get("html_in") or ed.get("screen") or ed.get("link")
+             or any(ed.get(k) for k in STRUCT)]
     card = a.card or os.environ.get("HERMES_KANBAN_TASK", "")     # the command names its own card: the env can be empty
     cssf, idx, bak = vd / "style.css", vd / "index.html", None
     try:
@@ -264,6 +325,45 @@ def main():
             head += (f": {label.replace('*/', '')}" if label else "") + " */"
             with open(cssf, "a", encoding="utf-8") as fh:      # appended, never rewritten: others may add while we work
                 fh.write(f"\n{head}\n{css}\n")
+        elif a.folder and any(ed.get(k) for k in STRUCT + ("link",)):   # a prototype page: edited in the browser
+            try:
+                op = struct_op(ed)
+            except ValueError as e:
+                print(f"look-apply: {e}", file=sys.stderr)
+                return 2
+            res = page_edit(a, check_args, vd, op)
+            if res.get("error"):
+                print(f"look-apply: {res['error']}", file=sys.stderr)
+                return 2
+            where_ = res["file"]
+        elif ed.get("screen"):                                # a mock screen on the app: an insert at its route + CSS
+            m = re.fullmatch(r"\s*(#\S*)\s+in\s+(.+?)\s*=>\s*(.+)", ed["screen"], re.S)
+            if not m:
+                print("look-apply: --screen is '#/<route> in <container> => <markup>' (or => @<file in the look folder>)", file=sys.stderr)
+                return 2
+            route, box, markup = m.group(1), m.group(2), m.group(3).strip()
+            if markup.startswith("@"):
+                src = (vd / markup[1:]).resolve()
+                if not src.is_relative_to(vd.resolve()) or not src.is_file():
+                    print(f"look-apply: no file {markup[1:]} in {vd}", file=sys.stderr)
+                    return 2
+                markup = src.read_text(encoding="utf-8")
+            if re.search(r"<script|javascript:|\son[a-z]+\s*=", markup, re.I):
+                print("look-apply: that markup isn't safe to add (a script, javascript: or an inline handler)", file=sys.stderr)
+                return 2
+            sid = re.sub(r"[^\w-]", "-", route.strip("#/")) or "home"
+            ed["insert"] = f"into {box} => <section data-look-screen=\"{sid}\">{markup}</section>"
+            ed["on"] = "#" + re.escape(route.lstrip("#")) + "$"
+            op = struct_op(ed)
+            domf = vd / "dom.json"
+            ops = json.loads(domf.read_text(encoding="utf-8")) if domf.exists() else []
+            n = 1 + max([int(o["id"][1:]) for o in ops if re.fullmatch(r"e\d+", str(o.get("id", "")))] or [0])
+            ops.append({"id": f"e{n}", **op, "on": ed["on"], "label": label})
+            domf.write_text(json.dumps(ops, indent=1, ensure_ascii=False), encoding="utf-8")
+            with open(cssf, "a", encoding="utf-8") as fh:     # on that route, only the mock screen shows in the box
+                fh.write(f"\n/* round {card}: mock screen {route} */\n"
+                         f'html[data-look-route="{route}"] {box} > :not([data-look-screen]) {{ display: none !important; }}\n')
+            where_ = f"dom.json + style.css (screen {route})"
         elif any(ed.get(k) for k in STRUCT):                  # structure on a look: one more entry in its dom.json
             try:
                 op = struct_op(ed)

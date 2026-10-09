@@ -90,7 +90,30 @@ def main():
         check(f"structural edit refused, nothing written: {why}", r.returncode == 2 and (look / "dom.json").read_text() == before_ops,
               (r.returncode, r.stderr))
     r = run(home, ["--dir", str(page), "--demo", "1", "--no-see", "--edit", "x", "--move", ".a -> into .b"])
-    check("moves are for a look; a folder edits its files", r.returncode == 2 and "for a look" in r.stderr, r.stderr)
+    check("a move on a folder needs the prototype page it names", r.returncode == 2 and "pages/home.html" in r.stderr, r.stderr)
+
+    # placeholders and mock screens on a look
+    (look / "dom.json").unlink()
+    (look / "maker.html").write_text("<h2>Card maker</h2>")
+    r = run(home, ["v1", "--no-see", "--gap", "0", "--edit", "more decks", "--repeat", ".card => .name: A | B | C",
+                   "--edit", "six more", "--repeat", ".row x 6",
+                   "--edit", "card maker", "--screen", "#/card-maker in #main => @maker.html"])
+    ops = json.loads((look / "dom.json").read_text()) if (look / "dom.json").exists() else []
+    check("--repeat with words: one copy per word, into the part named", r.returncode == 0 and ops and ops[0]["op"] == "repeat"
+          and ops[0]["values"] == ["A", "B", "C"] and ops[0]["child"] == ".name", (r.returncode, r.stderr, ops[:1]))
+    check("--repeat x N", len(ops) > 1 and ops[1]["op"] == "repeat" and ops[1]["n"] == 6 and not ops[1].get("values"), ops[1:2])
+    css = (look / "style.css").read_text()
+    check("--screen: the markup goes in at its route, the app's own content there hidden", len(ops) > 2
+          and ops[2]["op"] == "insert" and "Card maker" in ops[2]["html"] and 'data-look-screen="card-maker"' in ops[2]["html"]
+          and ops[2]["on"].endswith("card\-maker$") and 'html[data-look-route="#/card-maker"] #main > :not([data-look-screen])' in css,
+          (ops[2:3], css[-200:]))
+    for args, why in ((["v1", "--edit", "x", "--link", ".a => #/b"], "--link on a look (the app's own links work)"),
+                      (["--dir", str(page), "--demo", "1", "--edit", "x", "--screen", "#/x in #main => <p>x</p>"], "--screen on a prototype"),
+                      (["v1", "--edit", "x", "--screen", "#/x in #main => @../../../.bashrc"], "--screen reading outside the look"),
+                      (["v1", "--edit", "x", "--screen", "#/x in #main => <img src=x onerror=alert(1)>"], "--screen with a handler")):
+        before_ops = (look / "dom.json").read_text()
+        r = run(home, [*args, "--no-see"])
+        check(f"refused: {why}", r.returncode == 2 and (look / "dom.json").read_text() == before_ops, (r.returncode, r.stderr))
 
     # a prototype page: --in-file points the markup edit at pages/<page>.html, and it must stay inside the folder
     (page / "pages").mkdir()

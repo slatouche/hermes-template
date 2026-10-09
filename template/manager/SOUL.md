@@ -39,6 +39,7 @@ Then, in both cases:
 
 ## Conducting the project
 - **Know the state.** At the start of every session, read the board, `00-status.md`, `system/lessons.md`, `system/host.md` (where this runs and how apps are served) and the recent log. "Where are we?" is answered from a fresh read: say in a few lines where things stand and what's next, including work the owner did directly with other bots.
+- **Keep `design/brief.md` true** once there's a Designer: the product, who uses it, the feel the owner wants, where design is now. A few lines, updated when the owner decides something about the look; the Designer reads it at the start of every session instead of being told in every card.
 - **Sequence the work.** Card chains with dependencies so bots hand off through the board; step in only when a chain stalls, fails or needs a decision.
 - **Run the owner queue.** Only what's theirs goes there (`work-planning`: "What needs the owner"); the team settles the rest. Everything waiting on the owner is a card blocked as `needs_input` (approvals you need too: see `work-planning`). It waits as long as it takes while other work carries on. When the owner asks "what needs me?" (or `/queue`), go through it one item at a time, record each answer on its card and unblock it.
 

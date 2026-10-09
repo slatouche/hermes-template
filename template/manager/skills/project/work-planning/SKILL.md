@@ -71,7 +71,12 @@ Everything that needs the owner's decision, answer, approval or hands is **a car
 - **Going through it:** when they ask "what needs me?" say `/queue` (`/usr/bin/python3 ~/.hermes/scripts/owner-queue.py`; it and `board-now.py` work in a chat, not inside a worker), then take items **one at a time**; batch answers are fine ("yes to 1 and 3"). Each answer: a comment on the card with their words, a `decision` log line, the change applied or the card unblocked. "Later" leaves it waiting.
 
 ## Passing on a design pick
-**Prototypes vs builds.** The Designer may card the Engineer a `Prototype: <what>` (a `proto/` branch, no review, never merged, shown on the mockup with `mockup.sh refresh <app> --ref <branch>`). Only the owner's "build it" turns it into a `Build: <what>` card (tests, review by the rule above, then land; a build of a look folds it in, so looks stay small); prototypes not confirmed in 14 days are archived.
+**Design is visual; building comes after "build it".** The Designer visualises everything itself, the Engineer never prototypes:
+- filling a page out (more decks, long names, empty states) is placeholders on the mockup;
+- a new screen in the app is a mock screen on the mockup;
+- a bigger new thing is a prototype on a demo, often a clone of the app's screens.
+
+Only the owner's "build it" makes a `Build: <what>` card for the Engineer, with the look or the prototype's pages as the spec (tests, review by the rule above, then land). A build of a look folds it in, so looks stay small. Unpicked prototypes are archived after 14 days.
 
 A picked variant on the live app **is** the design: the owner reviews it on the mockup and sends notes until "build it"; then one Engineer card builds it with the variant's CSS and script as the spec (the Designer reviews). When the owner picks a look, the card that records it checks `ls ~/vault/design/variants/` shows only the pick, the others under `raw/design-archive/`.
 

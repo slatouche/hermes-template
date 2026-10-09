@@ -82,7 +82,10 @@
     });
   }
   function toast(msg) {
-    var t = document.querySelector(".toast"); if (!t) return;
+    var t = document.querySelector(".toast");
+    if (!t) { t = document.createElement("div"); t.className = "toast";
+      t.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:#222;color:#fff;padding:8px 16px;border-radius:10px;z-index:99999";
+      document.body.appendChild(t); }
     t.textContent = msg; t.hidden = false; clearTimeout(t._h); t._h = setTimeout(function () { t.hidden = true; }, 1800);
   }
   document.addEventListener("click", function (e) {
@@ -104,7 +107,7 @@
   addEventListener("hashchange", function () { render(false); });
 
   function poll() {                                    // the page follows its files while the owner looks
-    var files = ["pages/" + cur + ".html", "data.json", "style.css", "tokens.css", "index.html"];
+    var files = ["pages/" + cur + ".html", "data.json", "style.css", "tokens.css", "app.css", "index.html"];
     Promise.all(files.map(grab)).then(function (got) {
       var redraw = false;
       got.forEach(function (text, i) {

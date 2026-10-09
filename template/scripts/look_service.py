@@ -129,6 +129,144 @@ AUDIT_JS = r"""
 """
 
 
+# One screen of the running app as static markup: the body without scripts or handlers, every same-origin image
+# and stylesheet listed (the caller copies them), form values kept as attributes so the page looks as it was.
+CAPTURE_JS = r"""
+(() => {
+  const body = document.body.cloneNode(true);
+  body.querySelectorAll('script,noscript,template,iframe').forEach(e => e.remove());
+  const live = document.body.querySelectorAll('input,textarea,select');
+  const copy = body.querySelectorAll('input,textarea,select');
+  live.forEach((el, i) => { const c = copy[i]; if (!c) return;
+    if (el.tagName === 'TEXTAREA') c.textContent = el.value;
+    else if (el.tagName === 'SELECT') [...c.options].forEach((o, k) => o.toggleAttribute('selected', k === el.selectedIndex));
+    else if (el.type === 'checkbox' || el.type === 'radio') c.toggleAttribute('checked', el.checked);
+    else c.setAttribute('value', el.value); });
+  const canv = document.body.querySelectorAll('canvas'), ccopy = body.querySelectorAll('canvas');
+  canv.forEach((c, i) => { try { const img = document.createElement('img'); img.src = c.toDataURL('image/png');
+    img.width = c.width; img.height = c.height; img.className = c.className; ccopy[i].replaceWith(img); } catch (e) {} });
+  const imgs = new Set(), clickable = [];
+  body.querySelectorAll('*').forEach(el => {
+    for (const a of [...el.attributes]) {
+      if (/^on/i.test(a.name)) { if (!clickable.includes(el)) clickable.push(el); el.removeAttribute(a.name); }
+      else if ((a.name === 'href' || a.name === 'src' || a.name === 'action') && /^\s*javascript:/i.test(a.value)) el.setAttribute(a.name, '#');
+    }
+    if (el.tagName === 'IMG' && el.getAttribute('src') && !el.src.startsWith('data:')) { imgs.add(el.src); el.setAttribute('src', el.src); }
+    const bg = el.getAttribute('style') || '';
+    (bg.match(/url\((['"]?)([^'")]+)\1\)/g) || []).forEach(u => { const m = /url\((['"]?)([^'")]+)\1\)/.exec(u);
+      if (m && !m[2].startsWith('data:')) imgs.add(new URL(m[2], location.href).href); });
+  });
+  clickable.forEach(el => el.setAttribute('data-was-clickable', ''));
+  const sheets = [...document.styleSheets].map(s => s.href).filter(h => h && h.startsWith(location.origin));
+  const inline = [...document.querySelectorAll('style')].map(s => s.textContent).join('\n');
+  return {html: body.innerHTML, bodyClass: document.body.className, htmlClass: document.documentElement.className,
+          htmlAttrs: [...document.documentElement.attributes].filter(a => a.name.startsWith('data-')).map(a => [a.name, a.value]),
+          title: document.title, sheets, inline, imgs: [...imgs].filter(u => u.startsWith(location.origin)).slice(0, 120),
+          origin: location.origin, clickable: clickable.length};
+})()
+"""
+
+# A prototype page's structure, edited in the browser and handed back as the page's markup (look-apply --dir with
+# --move/--text/--insert/--attr/--link): the same edits as on the app, saved into the page file.
+EDIT_JS = r"""
+((ops) => {
+  const out = document.querySelector('[data-outlet]');
+  if (!out) return {error: 'not a prototype page (no [data-outlet])'};
+  const q = s => { try { return out.querySelector(s); } catch (e) { return null; } };
+  const put = (node, where, ref) => { if (where === 'before') ref.before(node); else if (where === 'after') ref.after(node);
+    else if (where === 'start') ref.prepend(node); else ref.append(node); };
+  const status = [];
+  for (const op of ops) {
+    if (op.op === 'move') { const n = q(op.sel), r = q(op.ref); if (!n || !r) { status.push('missing ' + (!n ? op.sel : op.ref)); continue; } put(n, op.where, r); }
+    else if (op.op === 'text') { const n = q(op.sel); if (!n) { status.push('missing ' + op.sel); continue; } n.textContent = op.text; }
+    else if (op.op === 'attr') { const n = q(op.sel); if (!n) { status.push('missing ' + op.sel); continue; }
+      if (op.value === null) n.removeAttribute(op.name); else n.setAttribute(op.name, op.value); }
+    else if (op.op === 'repeat') { const all = out.querySelectorAll(op.sel); if (!all.length) { status.push('missing ' + op.sel); continue; }
+      let last = all[all.length - 1]; const want = (op.values && op.values.length) || op.n;
+      for (let i = 0; i < want; i++) { const c = all[0].cloneNode(true); c.removeAttribute('id');
+        if (op.values && op.values[i] != null) { const t = op.child ? c.querySelector(op.child) : c; if (t) t.textContent = op.values[i]; }
+        last.after(c); last = c; } }
+    else if (op.op === 'insert') { const r = q(op.ref); if (!r) { status.push('missing ' + op.ref); continue; }
+      const t = document.createElement('template'); t.innerHTML = op.html; put(t.content, op.where, r); }
+    status.push('ok');
+  }
+  return {html: out.innerHTML, status};
+})
+"""
+
+
+def _fetch(url, limit=8_000_000):
+    import urllib.request
+    with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "look-clone"}), timeout=20) as r:
+        data = r.read(limit + 1)
+    return None if len(data) > limit else data
+
+
+def clone(d, browse, base, ev):
+    """Capture the app's screens from the mockup into a prototype folder (look.py proto clone)."""
+    import hashlib
+    import re as _re
+    folder = pathlib.Path(d["folder"])
+    screens = d["screens"]                                   # [[name, route], ...]
+    (folder / "pages").mkdir(parents=True, exist_ok=True)
+    (folder / "assets").mkdir(exist_ok=True)
+    routes, report, first = {}, [], None
+    for name, route in screens:
+        routes[route] = name
+    css_seen, css_parts, assets = set(), [], {}
+    for name, route in screens:
+        dd = dict(d, route=route, look=d.get("look") or "off")
+        browse(SESSION, "open", _target_url(dd, base))
+        browse(SESSION, "wait", str(int(d.get("settle") or 1500)))
+        cap = ev(CAPTURE_JS)
+        if not isinstance(cap, dict) or "html" not in cap:
+            report.append(f"{name}: couldn't capture ({str(cap)[:120]})")
+            continue
+        first = first or cap
+        html = cap["html"]
+        for href in cap.get("sheets") or []:
+            if href in css_seen:
+                continue
+            css_seen.add(href)
+            try:
+                css = (_fetch(href) or b"").decode("utf-8", "replace")
+            except Exception as e:
+                report.append(f"stylesheet {href}: {e}")
+                continue
+            css_parts.append(f"/* from {href.split('?')[0]} */\n{css}")
+        if cap.get("inline"):
+            css_parts.append("/* inline styles */\n" + cap["inline"])
+        for u in cap.get("imgs") or []:
+            if u not in assets and len(assets) < 120:
+                try:
+                    data = _fetch(u, 3_000_000)
+                except Exception:
+                    data = None
+                if data:
+                    ext = {b"\x89PNG": ".png", b"\xff\xd8\xff": ".jpg", b"GIF8": ".gif", b"RIFF": ".webp", b"<svg": ".svg"}
+                    e = next((x for k, x in ext.items() if data.startswith(k)), ".img")
+                    fn = "assets/" + hashlib.sha1(u.encode()).hexdigest()[:12] + e
+                    (folder / fn).write_bytes(data)
+                    assets[u] = fn
+            if u in assets:                                      # markup writes & as &amp; inside attributes
+                html = html.replace(u.replace("&", "&amp;"), assets[u]).replace(u, assets[u])
+        html = html.replace(cap["origin"] + "/", "")             # what's left same-origin: relative to the prototype
+        for rt, nm in sorted(routes.items(), key=lambda x: -len(x[0])):   # links between captured screens
+            html = _re.sub(r'href="' + _re.escape(rt) + r'"', f'href="#/{"" if nm == "home" else nm}"', html)
+        (folder / "pages" / f"{name}.html").write_text(html, encoding="utf-8")
+        report.append(f"{name} ({route}): {len(html) // 1024} KB, {cap.get('clickable', 0)} clickable elements to wire")
+    (folder / "app.css").write_text("\n\n".join(css_parts), encoding="utf-8")
+    if first:
+        attrs = " ".join(f'{k}="{v}"' for k, v in first.get("htmlAttrs") or [])
+        (folder / "index.html").write_text(
+            f'<!doctype html>\n<html lang="en" class="{first.get("htmlClass", "")}" {attrs}><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{first.get("title", "")}</title>\n'
+            '<link rel="stylesheet" href="app.css"><link rel="stylesheet" href="style.css">\n'
+            '<script src="kit.js" defer></script></head>\n'
+            f'<body class="{first.get("bodyClass", "")}" data-outlet></body></html>\n', encoding="utf-8")
+    return {"report": report, "assets": len(assets), "css_kb": sum(len(c) for c in css_parts) // 1024}
+
+
 def _target_url(d, base):
     t = str(d.get("target") or "mockup")
     port = {"mockup": base + 51, "demo1": base + 52, "demo2": base + 53}.get(t)
@@ -172,7 +310,7 @@ def handle(d, browse, base, eye=None):
         if STATE["size"] != size:
             browse(SESSION, "set", "viewport", str(size[0]), str(size[1]))
             STATE["size"] = size
-        if op in ("see", "map", "audit", "go") and not d.get("keep"):
+        if op in ("see", "map", "audit", "go", "edit") and not d.get("keep"):
             url = _target_url(d, base)
             # The same address again (or one that differs only after #) doesn't reload in Chrome: reload it, so a
             # look always starts from a fresh page, not from whatever the last click left open.
@@ -184,7 +322,12 @@ def handle(d, browse, base, eye=None):
             browse(SESSION, "wait", str(int(d.get("settle") or 450)))
             STATE["url"] = url
         out = {}
-        if op == "click":
+        if op == "clone":
+            out.update(clone(d, browse, base, ev))
+        elif op == "edit":
+            res = ev(f"{EDIT_JS}({json.dumps(d.get('ops') or [])})")
+            out.update(res if isinstance(res, dict) else {"error": str(res)[:300]})
+        elif op == "click":
             browse(SESSION, "click", str(d["selector"]))
             browse(SESSION, "wait", "400")
         elif op == "back":

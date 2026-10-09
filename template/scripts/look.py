@@ -20,6 +20,11 @@ it open), so it answers in about a second; `see --ask` has the model look at the
         4 px grid, and kit.js (links, lists from data, tabs, dialogs, toasts, forms: all simulated, no scripts to
         write). Serve it as the mockup (mockup.sh proto <name>) or on a demo (demo.sh show 1 <name> "...").
   look proto page <name> <page> [--title 'Page title']      add a screen
+  look proto clone <name> <page>=<route> [<page>=<route> ...] [--look <look>]
+        a skeleton of the real app: each route of the mockup captured as a page (its markup, the app's CSS, its
+        images), links between captured screens rewired, scripts and handlers dropped. The content on screen is the
+        placeholder. Wire what was clickable with look-apply --link, reshape with --move/--text/--insert.
+        e.g. look proto clone tcg home='#/' deck='#/deck/Burn' proxy='#/deck/Burn/proxy'
 """
 import argparse
 import json
@@ -181,7 +186,44 @@ def proto_page(a):
     link = f'<a href="#/{a.page}" data-route="{a.page}">{(a.title or a.page.replace("-", " ").title())}</a>'
     if "</nav>" in t and f'data-route="{a.page}"' not in t:
         idx.write_text(t.replace("</nav>", link + "</nav>", 1), encoding="utf-8")
-    print(f"added pages/{a.page}.html and a nav link")
+        print(f"added pages/{a.page}.html and a nav link")
+    else:
+        print(f"added pages/{a.page}.html (no nav in index.html: link to it with look-apply --insert/--link, href \"#/{a.page}\")")
+    return 0
+
+
+def proto_clone(a):
+    d = DESIGN / a.name
+    if d.exists():
+        print(f"look: {d} exists already", file=sys.stderr)
+        return 2
+    screens = []
+    for s in a.screens:
+        name, _, route = s.partition("=")
+        if not name or not route or not name.replace("-", "").isalnum():
+            print(f"look: a screen is <page>=<route> (got {s!r})", file=sys.stderr)
+            return 2
+        screens.append([name, route])
+    if not any(n == "home" for n, _ in screens):
+        screens[0][0] = "home"                                 # the first screen is where the prototype opens
+    d.mkdir(parents=True)
+    w, _, h = a.size.partition("x")
+    out = call({"op": "clone", "folder": str(d), "screens": screens, "target": "mockup", "look": a.look,
+                "width": int(w), "height": int(h or 900)})
+    if out.get("error"):
+        print(f"look: {out['error']}", file=sys.stderr)
+        return 1
+    shutil.copyfile(SCRIPTS / "proto-kit.js", d / "kit.js")
+    (d / "style.css").write_text("/* Your changes to the cloned app: later rules win over app.css. */\n", encoding="utf-8")
+    (d / "data.json").write_text("{}\n", encoding="utf-8")
+    (d / "map.md").write_text(f"# {a.name}: a skeleton clone of the app\n\nScreens: "
+                              + ", ".join(f"{n} ({r})" for n, r in screens)
+                              + "\nFiles: index.html (shell), pages/<screen>.html (captured markup), app.css (the app's CSS, "
+                              "as captured), style.css (yours, wins), assets/ (images), kit.js (don't edit).\n", encoding="utf-8")
+    for line in out.get("report") or []:
+        print(line)
+    print(f"prototype {a.name}: {len(screens)} screens, {out.get('assets', 0)} images, {out.get('css_kb', 0)} KB of CSS. "
+          f"Serve it: mockup.sh proto {a.name}")
     return 0
 
 
@@ -208,10 +250,13 @@ def main():
     pr = sp.add_parser("proto"); psp = pr.add_subparsers(dest="pcmd", required=True)
     pn = psp.add_parser("new"); pn.add_argument("name"); pn.add_argument("--title", default=""); pn.add_argument("--pages", default="")
     pp = psp.add_parser("page"); pp.add_argument("name"); pp.add_argument("page"); pp.add_argument("--title", default="")
+    pc = psp.add_parser("clone"); pc.add_argument("name"); pc.add_argument("screens", nargs="+")
+    pc.add_argument("--look", default="", help="clone with this look on (default: the app as built)")
+    pc.add_argument("--size", default="1440x900")
     a = ap.parse_args()
 
     if a.cmd == "proto":
-        return proto_new(a) if a.pcmd == "new" else proto_page(a)
+        return {"new": proto_new, "page": proto_page, "clone": proto_clone}[a.pcmd](a)
     body = {"op": a.cmd}
     if a.cmd in ("see", "map", "audit"):
         w, _, h = a.size.partition("x")

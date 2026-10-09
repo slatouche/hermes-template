@@ -8,6 +8,9 @@
      {"id":"e2","op":"text","sel":"<what>","text":"<new text>"}
      {"id":"e3","op":"insert","where":"before|after|into|start","ref":"<where>","html":"<markup>"}
      {"id":"e4","op":"attr","sel":"<what>","name":"<attribute>","value":"<value or null to remove>"}
+     {"id":"e5","op":"repeat","sel":"<an element>","n":6,"child":"<inside it>","values":["A","B",...]}
+       placeholders: copies of a real element after the last one like it (a grid of decks filled out), each with
+       its own words in <child>; a copy keeps the original's markup and inline handlers, so it still clicks.
    Moving a node keeps its click handlers, so a moved button or link still works. Every op is idempotent, re-applied
    after the app re-renders (a debounced MutationObserver) and on navigation; ops whose route doesn't match are
    left alone. window.__lookRuntime.report() says which ops applied and which found nothing. */
@@ -58,6 +61,36 @@
       else if (a.getAttribute(op.name) !== String(op.value)) a.setAttribute(op.name, op.value);
       return "ok";
     }
+    if (op.op === "repeat") {
+      var all = Array.prototype.filter.call(document.querySelectorAll(op.sel), function (e) { return !e.hasAttribute("data-look-repeat"); });
+      if (!all.length) return "missing " + op.sel;
+      var have = document.querySelectorAll('[data-look-repeat="' + op.id + '"]');
+      var want = op.values && op.values.length ? op.values.length : op.n;
+      if (have.length === want) return "ok";
+      Array.prototype.forEach.call(have, function (e) { e.remove(); });
+      var last = all[all.length - 1], src = all[0];
+      for (var i = 0; i < want; i++) {
+        var c = src.cloneNode(true);
+        c.setAttribute("data-look-repeat", op.id);
+        c.removeAttribute("id");
+        Array.prototype.forEach.call(c.querySelectorAll("[id]"), function (e) { e.removeAttribute("id"); });
+        if (op.values && op.values[i] != null) {
+          var t = op.child ? c.querySelector(op.child) : c;
+          if (t) t.textContent = op.values[i];
+        }
+        // A copy has the markup but not the app's listeners: a click on it is passed to the same spot in the
+        // original, so a placeholder deck opens like a real one.
+        c.addEventListener("click", function (ev) {
+          var path = [], n = ev.target;
+          while (n && n !== ev.currentTarget) { path.unshift(Array.prototype.indexOf.call(n.parentNode.children, n)); n = n.parentNode; }
+          var t = src;
+          for (var k = 0; k < path.length && t; k++) t = t.children[path[k]];
+          if (t) { ev.preventDefault(); ev.stopPropagation(); t.click(); }
+        });
+        last.after(c); last = c;
+      }
+      return "ok";
+    }
     if (op.op === "insert") {
       if (document.querySelector('[data-look-insert="' + op.id + '"]')) return "ok";
       var ref = q(op.ref);
@@ -75,6 +108,9 @@
     if (applying) return;
     applying = true;
     obs.disconnect();
+    // The screen the owner is on, for a look's CSS: html[data-look-route="#/card-maker"] shows a mock screen there.
+    var rt = location.hash.replace(/\?.*$/, "") || "#/";
+    if (document.documentElement.getAttribute("data-look-route") !== rt) document.documentElement.setAttribute("data-look-route", rt);
     for (var i = 0; i < ops.length; i++) {
       try { status[ops[i].id] = one(ops[i]); } catch (e) { status[ops[i].id] = "error: " + e.message; }
     }
