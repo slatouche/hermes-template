@@ -147,10 +147,21 @@ def main():
         st, h, page = call("GET", "/?__variant=v1&__shot=1&__nooverlay=1")
         check("a clean picture asks for it: no overlay", b"overlay.js" not in page)
         check("the app never sees the __ switches", seen and seen[-1] == "/", seen[-1:])
+        st, _, page = call("GET", "/")
+        check("mockup as built until the Designer sets a look", b"/__mark/v/" not in page and b'"nav": [' in page)
+        check("nav: mockup here, both demos listed", b'"label": "Mockup", "port": 18151' in page and b'"here": true' in page
+              and b'"label": "Demo 1"' in page and b'"card backs"' in page, page[-600:])
+        st, _, r = call("POST", "/__mark/pick-look", {"look": "v1"}, port=DEMO)
+        st2, _, page = call("GET", "/")
+        check("a pick on a demo sets the mockup's look", st == 200 and b"/__mark/v/v1/style.css" in page, (st, r))
         st, h, _ = call("GET", "/?__variant=v1")
-        check("look remembered in a cookie", "mark_variant=v1" in h.get("Set-Cookie", ""), h.get("Set-Cookie"))
+        check("no cookie: the look isn't per browser", "Set-Cookie" not in h, h.get("Set-Cookie"))
+        st, _, lv = call("GET", "/__mark/look-version?v=v1")
+        check("look-version names the working look", json.loads(lv).get("look") == "v1", lv)
         st, _, page = call("GET", "/", port=REAL, headers={"Cookie": "mark_variant=v1"})
-        check("the mockup's look doesn't follow onto the real app", b"/__mark/v/v1/style.css" not in page)
+        check("the mockup's look never shows on the real app", b"/__mark/v/v1/style.css" not in page)
+        st, _, _ = call("POST", "/__mark/pick-look", {"look": "../x"}, port=DEMO)
+        check("an unknown look is refused", st == 400, st)
         st, _, vp = call("GET", "/__mark/variants")
         check("variants page lists the look", st == 200 and b"Variant one" in vp)
         st, _, vp = call("GET", "/__mark/variants", port=REAL)
@@ -198,7 +209,7 @@ def main():
         st, _, ver1 = call("GET", "/__mark/look-version?v=v1")
         check("look version changes so open pages refresh themselves", json.loads(ver0)["css"] != json.loads(ver1)["css"], (ver0, ver1))
         st, _, bad = call("GET", "/__mark/look-version?v=../../.hermes")
-        check("look version: no path escape", bad == b"{}", bad)
+        check("look version: no path escape", "css" not in json.loads(bad) and "js" not in json.loads(bad), bad)
         json.loads(call("POST", "/__mark/notes", {"page": f"http://127.0.0.1:{MOCK}/", "kind": "element", "selector": "#t",
                                                   "note": "BADCSS please", "draft": True}, headers={"Cookie": "mark_variant=v1"})[2])
         before = (var / "style.css").read_text()
@@ -211,7 +222,7 @@ def main():
                 "viewport": {"w": 800, "h": 600}, "scroll": {"x": 0, "y": 0}, "draft": True}
         a = json.loads(call("POST", "/__mark/notes", {**base, "note": "first note\nsecond line"}, headers={"Cookie": "mark_variant=v1"})[2])["id"]
         md = (fb / f"{a}.md").read_text()
-        check("note keeps the look from the cookie", '"variant": "v1"' in md and "design/variants/v1" in md)
+        check("note keeps the mockup's working look", '"variant": "v1"' in md and "design/variants/v1" in md)
         check("note says it was left on the mockup", "**Left on:** the mockup (test)" in md)
         check("multi-line notes are quoted on every line", "> first note\n> second line" in md)
         b = json.loads(call("POST", "/__mark/notes", {**base, "note": "another"})[2])["id"]

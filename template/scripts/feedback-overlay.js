@@ -71,7 +71,17 @@
        Same border, radius, fill, type and padding, so they read as one family; only their content tells them apart. */
     .round,.cbar,.mtools,button.mbadge{border:1px solid #2a2c33;border-radius:12px;background:#15161a;font-size:13px;
       padding:8px;box-sizing:border-box}
+    /* The design nav: Mockup · Demo 1 · Demo 2, the same three views in every project, top centre. */
+    .nav{position:fixed;top:10px;left:50%;transform:translateX(-50%);display:none;gap:2px;z-index:3;
+      border:1px solid #2a2c33;border-radius:999px;background:#15161a;padding:3px;font:12px/1.2 system-ui,sans-serif;
+      box-shadow:0 6px 20px rgba(0,0,0,.45);pointer-events:auto;max-width:calc(100vw - 24px)}
+    .nav a{color:#c9cbd2;text-decoration:none;padding:5px 11px;border-radius:999px;white-space:nowrap;overflow:hidden;
+      text-overflow:ellipsis;max-width:260px}
+    .nav a:hover{background:#23262f}.nav a.here{background:#3d6bff;color:#fff;font-weight:600}
+    .nav a.empty{color:#5d606b}.nav a small{opacity:.75;margin-left:6px;font-size:11px}
+    :host(.folded) .nav{display:none !important}
   </style>
+  <nav class="nav"></nav>
   <div class="hl"></div><div class="area"></div><div class="layer"></div>
   <div class="pop"><div class="what"></div><textarea placeholder="What's wrong, or what should change?"></textarea>
     <div class="row"><button class="del">Delete</button><button class="cancel">Cancel</button><button class="save on">Save</button></div></div>
@@ -176,6 +186,22 @@
         key === (cfg.variant || "off") ? add("b", label) : add("button", label, () => sw(key)));
       add("button", "compare", () => (location.href = "/__mark/variants"));
     }
+  }
+  // The nav badge: one tap between the mockup (the app in work, the main design view) and the two demos
+  // (throwaway visuals: options to pick from, palettes, swatches). Each shows what it holds now.
+  if (cfg && cfg.nav && cfg.nav.length) {
+    const nav = $(".nav");
+    cfg.nav.forEach((v) => {
+      const a = document.createElement("a");
+      a.href = `${location.protocol}//${location.hostname}:${v.port}/`;
+      a.textContent = v.label;
+      if (v.what) { const s = document.createElement("small"); s.textContent = v.what; a.appendChild(s); }
+      a.title = v.what ? `${v.label}: ${v.what}` : `${v.label}: nothing here yet`;
+      if (v.here) a.classList.add("here");
+      if (!v.what && !v.here) a.classList.add("empty");
+      nav.appendChild(a);
+    });
+    nav.style.display = "flex";
   }
   draggable($(".mzone"), "markZonePos");
   // The badge names the live mode, so one tap shows where the owner is: Mark or Area (blue while that mode is on),
@@ -570,6 +596,7 @@
     try { d = await (await fetch(INBOX + "/look-version?v=" + encodeURIComponent(v || ""), { cache: "no-store" })).json(); } catch (_) { return; }
     if (!d) return;
     if (d.round || roundCard) roundLine(d.round || null);        // the page's round: state, and its question
+    if (cfg && cfg.mockup && "look" in d && !/[?&]__variant=/.test(location.search) && (d.look || "") !== (v || "")) { location.reload(); return; }   // a new working look
     if (!v || d.css === undefined) return;
     if (lookSeen && d.js !== lookSeen.js) { location.reload(); return; }
     if (lookSeen && d.css !== lookSeen.css) {

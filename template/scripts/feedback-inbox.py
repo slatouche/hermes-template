@@ -41,6 +41,9 @@ SCRIPTS = HOME / ".hermes" / "scripts"
 OVERLAY = SCRIPTS / "feedback-overlay.js"
 MIRRORS = SCRIPTS / "review-mirrors.conf"
 VARIANTS = HOME / "vault" / "design" / "variants"
+MOCKUP_LOOK = VARIANTS.parent / "mockup-look"     # the one look the mockup shows: the Designer's work in progress
+BASE = 0                                          # the project's API port: the inbox listens on BASE + 99
+DESIGN_VIEWS = ((51, "Mockup"), (52, "Demo 1"), (53, "Demo 2"))   # the same three design views in every project
 MOCKUPS = SCRIPTS / "mockups.conf"
 MAX = 4000
 HOP = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailers",
@@ -1108,7 +1111,34 @@ section{{border-top:1px solid #2a2c31;padding:1rem 0}}.dim{{color:#9aa0ad;margin
 Try one, click around, Mark what you think, then Send.</p>{cards or '<p class=dim>No variants yet.</p>'}"""
 
 
-def badge(variant, mockup, demo=None, looks=True):
+def working_look():
+    """The look the mockup shows (vault/design/mockup-look names it), or None for the app as built."""
+    try:
+        name = MOCKUP_LOOK.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return name if re.fullmatch(r"[\w-]+", name or "") and (VARIANTS / name).is_dir() else None
+
+
+def design_nav(here):
+    """The nav badge: the mockup and the two demos, on their fixed ports, each with what it shows now."""
+    if not BASE:
+        return []
+    names = {rp: name for rp, _, name in mirrors()}
+    mk = set(mockups().values())
+    out = []
+    for off, label in DESIGN_VIEWS:
+        port = BASE + off
+        name = names.get(port)
+        if off == 51:
+            what = working_look() or "the app as built" if name else None
+        else:
+            what = re.sub(r"^demo \d+:\s*", "", name, flags=re.I) if name else None
+        out.append({"label": label, "port": port, "what": what, "here": port == here})
+    return out
+
+
+def badge(variant, mockup, demo=None, looks=True, nav=None):
     """What the Mark overlay's badge shows (bottom-left): on the mockup, its snapshot and every look as a one-click
     switch; on a demo slot, which demo it is. The overlay draws it in its own layer, so the app can't swallow its
     clicks, and it folds away."""
@@ -1119,7 +1149,7 @@ def badge(variant, mockup, demo=None, looks=True):
     if mockup:
         sf = HOME / "mockup" / mockup / "SNAPSHOT"
         info = sf.read_text(encoding="utf-8").strip() if sf.exists() else "a copy of the app"
-    cfg = {"variant": variant, "looks": names, "mockup": info, "demo": demo}
+    cfg = {"variant": variant, "looks": names, "mockup": info, "demo": demo, "nav": nav or []}
     data = json.dumps(cfg).replace("<", "\\u003c")
     return f"<script>window.__markBadge={data}</script>".encode()
 
@@ -1177,6 +1207,8 @@ class Base(BaseHTTPRequestHandler):
             vd = VARIANTS / v if re.fullmatch(r"[\w-]+", v or "") else None
             stamp = lambda f: f.stat().st_mtime_ns if f.exists() else 0
             out = {"css": stamp(vd / "style.css"), "js": stamp(vd / "script.js")} if vd else {}
+            if getattr(self, "kind", lambda: "")() == "mockup":
+                out["look"] = working_look()       # the Designer (or a pick on a demo) changed it: the page reloads
             if self.rounds_here():             # a mockup or a demo: this page also carries its round
                 try:
                     r = round_block(self.scope())
@@ -1212,6 +1244,25 @@ class Base(BaseHTTPRequestHandler):
                 self._send(201, json.dumps({"id": save(d)}))
             except ValueError as e:
                 self._send(400, json.dumps({"error": str(e)}))
+            return True
+        if path == "/pick-look":                # "Use this one" on a demo's portfolio: the mockup now shows that look
+            try:
+                look = str(json.loads(raw or b"{}").get("look") or "")
+            except ValueError:
+                look = ""
+            if look == "off":                   # the app as built
+                MOCKUP_LOOK.unlink(missing_ok=True)
+            elif not re.fullmatch(r"[\w-]+", look) or not (VARIANTS / look).is_dir():
+                self._send(400, '{"error":"no such look"}')
+                return True
+            else:
+                MOCKUP_LOOK.write_text(look + "\n", encoding="utf-8")
+            try:                                # the Designer learns it from the log
+                subprocess.run([str(SCRIPTS / "vault-log.sh"), "owner", "decision", f"picked look {look} for the mockup",
+                                f"design/variants/{look}"], capture_output=True, timeout=20)
+            except (OSError, subprocess.SubprocessError) as e:
+                print(f"feedback-inbox: pick not logged: {e}", file=sys.stderr)
+            self._send(200, json.dumps({"look": look}))
             return True
         if path == "/notes/send":
             try:
@@ -1329,12 +1380,11 @@ def mirror_handler(app_port, name, review_port=None):
         app_name = name
 
         def current_variant(self):
+            # The mockup always shows the Designer's working look (vault/design/mockup-look); an explicit
+            # ?__variant= (a demo's portfolio frame, a screenshot) shows another one without changing it.
             q = parse_qs(urlparse(self.path).query).get("__variant", [None])[0]
-            # Cookies are shared by every port on the host, so the look picked on the mockup would follow the owner onto
-            # the real app's link; there, only an explicit ?__variant= counts while a mockup exists.
-            if q is None and not (self.kind() == "app" and mockups()):
-                m = re.search(r"(?:^|;\s*)mark_variant=([\w-]+)", self.headers.get("Cookie", ""))
-                q = m.group(1) if m else None
+            if q is None and self.kind() == "mockup":
+                q = working_look()
             return q if q and q != "off" and (VARIANTS / q).is_dir() else None
 
         def kind(self):
@@ -1422,16 +1472,13 @@ def mirror_handler(app_port, name, review_port=None):
                     tag += f'<script src="/__mark/v/{v}/script.js" defer></script>'.encode() if (vd / "script.js").exists() else b""
                 # Looks are tried on the mockup; the real app's link offers them only when there is no mockup.
                 tag += b"" if no_overlay else badge(v, mockup, name if self.kind() == "demo" else None,
-                                                    looks=self.kind() != "app" or not mockups())
+                                                    looks=False, nav=design_nav(review_port))
                 sy = parse_qs(u.query).get("__scroll", ["0"])[0]
                 if shot and sy.isdigit() and int(sy):          # a snip: put the page at the owner's scroll position
                     tag += (f"<script>(()=>{{let n=0;const t=setInterval(()=>{{scrollTo(0,{int(sy)});if(++n>20)clearInterval(t)}},250)}})()"
                             "</script>").encode()
                 page = re.sub(rb"(?i)</body>", lambda m: tag + m.group(0), page, count=1) if re.search(rb"(?i)</body>", page) else page + tag
                 self.send_response(r.status, r.reason)
-                q = parse_qs(u.query).get("__variant", [None])[0]
-                if q is not None and not shot:         # remember the choice while the owner clicks around
-                    self.send_header("Set-Cookie", f"mark_variant={v or 'off'}; Path=/; SameSite=Lax")
                 for k, val in r.getheaders():
                     if k.lower() not in HOP and k.lower() not in ("content-security-policy", "etag", "last-modified", "cache-control"):
                         self.send_header(k, val)
@@ -1471,6 +1518,7 @@ def mirror_handler(app_port, name, review_port=None):
 if __name__ == "__main__":
     if len(sys.argv) < 2 or not sys.argv[1].isdigit():
         sys.exit("usage: feedback-inbox.py <inbox port>")
+    BASE = int(sys.argv[1]) - 99
     servers = [ThreadingHTTPServer(("0.0.0.0", int(sys.argv[1])), Inbox)]
     for rp, ap, name in mirrors():
         try:

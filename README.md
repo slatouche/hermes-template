@@ -45,12 +45,12 @@ Every project has a number and a block of 100 ports, laid out the same way in ev
 | `1NN00` | Hermes API (Desktop talks to it over SSH) | this machine only |
 | `1NN01` | the app | your network |
 | `1NN02`-`1NN09` | more apps or services, if the project has them | your network |
-| `1NN26` | the mockup (a copy of the app on copied data) | this machine only |
-| `1NN46`, `1NN47` | demo slots 1 and 2 | this machine only |
-| `1NN51`, `1NN76`, `1NN96`, `1NN97` | the Mark review links: app, mockup, demo 1, demo 2 | your network |
+| `1NN51` | **the mockup**: the app in work, with the Designer's look, the Mark toolbar and the nav. Your main design view | your network |
+| `1NN52`, `1NN53` | **demo 1 and demo 2**: throwaway visuals (options to pick from, palettes, swatches) | your network |
+| `1NN26`, `1NN46`, `1NN47` | what the mockup and the demos run on behind the scenes | this machine only |
 | `1NN99` | the feedback inbox | your network |
 
-The rule: **anything + 50 is its Mark review link.** Example, project 1: the app on `10101`, marked up on `10151`.
+Example, project 1: you use the app on `10101`, and design it on `10151` (demos `10152`, `10153`). The real app has no toolbar; notes, including bugs you spot, go on the mockup, which is the same app.
 
 ## Adopt an existing project
 A project built elsewhere (Claude Code, Codex, Cursor, another Hermes, by hand) can come in two ways.
@@ -98,8 +98,8 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 ## Working with your team
 - **Talk to the Manager** for anything: ideas, status ("where are we?"), "build it". You can also chat with a specialist directly (the Designer for design rounds); what's decided lands on the board and in the vault.
 - **What needs you** is a card blocked for you, and it waits as long as it takes. `/queue` in a Manager chat lists them; the Manager screens every new one within 15 minutes and answers the ones that aren't really yours.
-- **Mark it up:** every app the team serves has a review link with the Mark toolbar (click an element or drag an area, type, Save). Notes are drafts until you press **Send**, which hands that link's notes to the team as one round; each note records where it was left, what was inside the box and a cropped picture.
-- **Design:** the **mockup** is a copy of the app (your real data is never touched) with the Designer's looks on it; the badge switches looks. **Demo 1 and 2** show things the app doesn't have yet. When you're happy, say **"build it"**: the Engineer builds from the look, the Designer checks the app against the mockup. **Notes on the mockup go straight to the Designer** as one round: it resumes its session for that look, designs every note in one command (`look-apply.py`: CSS or markup edits that land one by one while you watch, then checks on the page, then closes the card; the mockup and demo pages you have open update themselves as each edit lands, no reload): about a minute for plain notes, a few for an image or data. The Mark toolbar shows the round working, done, or a question; answer it there and the same Designer session carries on. When the rounds stop, a wrap-up card tidies the look. Add `?test=1` to a page's address to try the toolbar without making real work.
+- **Mark it up:** the mockup and the demos carry the Mark toolbar (click an element or drag an area, type, Save). Notes are drafts until you press **Send**, which hands that link's notes to the team as one round; each note records where it was left, what was inside the box and a cropped picture.
+- **Design:** three views, the same in every project, with a nav badge between them. The **mockup** (`1NN51`) is the app in work: a copy of the app (your real data is never touched) with the Designer's working look, and your main view for feedback. **Demo 1 and 2** (`1NN52`, `1NN53`) are throwaway visuals: options side by side with "Use this one" (your pick goes straight onto the mockup), palettes, swatches, a page the app doesn't have yet. When you're happy, say **"build it"**: the Engineer builds from the look, the Designer checks the app against the mockup. **Notes on the mockup go straight to the Designer** as one round: it resumes its session for that look, designs every note in one command (`look-apply.py`: CSS or markup edits that land one by one while you watch, then checks on the page, then closes the card; the mockup and demo pages you have open update themselves as each edit lands, no reload): about a minute for plain notes, a few for an image or data. The Mark toolbar shows the round working, done, or a question; answer it there and the same Designer session carries on. When the rounds stop, a wrap-up card tidies the look. Add `?test=1` to a page's address to try the toolbar without making real work.
 - **Cards remember:** a bot coming back to a card (sent back, unblocked, out of turns) resumes its session on it, and a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
 
 ## Adding Discord later

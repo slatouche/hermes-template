@@ -1,19 +1,21 @@
 #!/bin/bash
-# The mockup: the owner's main design demo. A second copy of an app, with the Mark tool and the Designer's looks
-# (variants) on it, where the owner clicks around, marks things up and decides. Nothing they do touches the real
-# app's data, and nothing the Engineer is half-way through changes under them. New things that don't exist in the app
-# yet are shown first on a demo slot (demo.sh), then brought into the mockup once the owner likes them.
+# The mockup: the owner's main design view, always on <API port + 51> (e.g. 10151). A live copy of the app with the
+# Designer's working look on it (vault/design/mockup-look names it) and the Mark toolbar, where the owner clicks
+# around, marks things up and watches the changes land. Nothing done there touches the real app's data, and nothing
+# the Engineer is half-way through changes under it. Options to choose between go on a demo (demo.sh portfolio), never
+# on the mockup. One mockup per project: the main app.
 #
 #   mockup.sh add <name> <app port> <data path> -- <command>   once per app (the Engineer, when the app is first served)
 #   mockup.sh refresh <name> [--ref <branch>]   take a new snapshot: the code on `main` (or a prototype branch, so the
 #                               owner can try it; the badge says so) and a fresh copy of the data, then (re)start
 #   mockup.sh reset <name>      a fresh copy of the data only (the owner's "reset data" on the badge)
+#   mockup.sh look <look|off>   the look the mockup shows from now on (off: the app as built); open pages reload
 #   mockup.sh list
 #
 # <command> starts the app from the snapshot; {port}, {data} and {repo} are filled in (the mockup's port, the copied
 # data folder, ~/workspace for things git doesn't hold such as .venv). Example:
 #   mockup.sh add tcg-proxy 10301 ProxyDecks -- '{repo}/.venv/bin/python -m tcgproxy --host 127.0.0.1 --port {port} --root {data} --no-browser'
-# The mockup listens on <app port + 25>, local only; its review link (with Mark and the looks) is <app port + 75>.
+# The mockup listens on <app port + 25>, local only; the owner opens it on <API port + 51> (with Mark and the nav).
 # Code lives in ~/mockup/<name>/code (a git worktree, detached at main), data in ~/mockup/<name>/data.
 set -euo pipefail
 CONF="$HOME/.hermes/scripts/mockups.conf"
@@ -22,6 +24,9 @@ REPO="$HOME/workspace"
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}"
 die() { echo "mockup: $*" >&2; exit 1; }
 row() { grep -v '^\s*#' "$CONF" 2>/dev/null | awk -F'|' -v n="$1" '$1==n' | head -1; }
+api=$(grep -m1 '^API_SERVER_PORT=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2)
+[ -n "$api" ] || die "can't find API_SERVER_PORT in ~/.hermes/.env"
+VIEW=$((api + 51))     # the mockup's link: the same port in every project
 
 copy_data() {   # $1 data path (relative to ~/workspace or absolute), $2 mockup dir
   local src="$1"; [[ "$src" = /* ]] || src="$REPO/$src"
@@ -34,6 +39,8 @@ case "${1:-}" in
     name="${2:?name}"; aport="${3:?app port}"; data="${4:?data path}"; [ "${5:-}" = "--" ] || die "usage: add <name> <app port> <data> -- <command>"
     shift 5; cmd="$*"; [ -n "$cmd" ] || die "no command"
     [[ "$name" =~ ^[a-z0-9-]+$ ]] || die "name: lowercase letters, digits and dashes"
+    other=$(grep -v '^\s*#' "$CONF" 2>/dev/null | cut -d'|' -f1 | grep -vx "$name" | head -1 || true)
+    [ -z "$other" ] || die "this project already has its mockup ($other); there is one, of the main app"
     touch "$CONF"; grep -v "^$name|" "$CONF" > "$CONF.tmp" || true
     echo "$name|$((aport + 25))|$data|$cmd" >> "$CONF.tmp"; mv "$CONF.tmp" "$CONF"
     exec "$0" refresh "$name" ;;
@@ -56,7 +63,7 @@ case "${1:-}" in
     unit="$HOME/.config/systemd/user/$name-mockup.service"; mkdir -p "$(dirname "$unit")"
     cat > "$unit" <<EOF
 [Unit]
-Description=$name mockup (a snapshot of main with a copy of the data; review link :$((port + 50)))
+Description=$name mockup (a snapshot of main with a copy of the data; the owner's view :$VIEW)
 
 [Service]
 WorkingDirectory=$dir/code
@@ -68,16 +75,22 @@ RestartSec=3
 WantedBy=default.target
 EOF
     systemctl --user daemon-reload; systemctl --user enable -q --now "$name-mockup"
-    if ! grep -q "^$((port + 50)) $port " "$MIRRORS" 2>/dev/null; then
-      echo "$((port + 50)) $port $name mockup" >> "$MIRRORS"
+    if ! grep -q "^$VIEW $port " "$MIRRORS" 2>/dev/null; then      # anything else on the view port gives way
+      { grep -v "^$VIEW " "$MIRRORS" 2>/dev/null || true; echo "$VIEW $port $name mockup"; } > "$MIRRORS.tmp"
+      mv "$MIRRORS.tmp" "$MIRRORS"
       systemctl --user restart feedback-inbox 2>/dev/null || true
     fi
     for _ in $(seq 1 20); do curl -fs -o /dev/null "http://127.0.0.1:$port/" && break; sleep 1; done
     curl -fs -o /dev/null "http://127.0.0.1:$port/" || die "the mockup didn't answer on :$port (journalctl --user -u $name-mockup)"
-    echo "$name mockup: $(cat "$dir/SNAPSHOT"); review link :$((port + 50))" ;;
+    echo "$name mockup: $(cat "$dir/SNAPSHOT"); the owner's view :$VIEW" ;;
+  look)
+    lk="${2:?look name, or off}"; f="$HOME/vault/design/mockup-look"
+    if [ "$lk" = off ]; then rm -f "$f"; echo "mockup: the app as built"
+    else [ -d "$HOME/vault/design/variants/$lk" ] || die "no look $lk under vault/design/variants"
+      echo "$lk" > "$f"; echo "mockup: look $lk (open pages switch to it within 2 s)"; fi ;;
   list)
     grep -v '^\s*#' "$CONF" 2>/dev/null | while IFS='|' read -r name port data cmd; do
-      echo "$name  :$port (review :$((port + 50)))  $(cat "$HOME/mockup/$name/SNAPSHOT" 2>/dev/null || echo 'not started')"
+      echo "$name  :$port (the owner's view :$VIEW, look: $(cat "$HOME/vault/design/mockup-look" 2>/dev/null || echo 'as built'))  $(cat "$HOME/mockup/$name/SNAPSHOT" 2>/dev/null || echo 'not started')"
     done ;;
   *) sed -n '2,16p' "$0"; exit 1 ;;
 esac
