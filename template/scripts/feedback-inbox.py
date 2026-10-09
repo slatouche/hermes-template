@@ -13,7 +13,7 @@ Two ways in:
 Design links: the mockup (a copy of an app, mockup.sh) and two demo slots for new things (demo.sh), each with the
 Mark tool; every note records which one it was left on. Design variants (the Designer's looks on the mockup): a folder vault/design/variants/<name>/ with
 style.css (and optionally script.js for small DOM moves with placeholder content, note.md: a title line and two lines
-of why, and screenshots). On a review link, `?__variant=<name>` turns it on (a cookie keeps it while you click around),
+of why, and screenshots). The mockup shows the Designer's working look (vault/design/mockup-look); `?__variant=<name>` shows another one,
 `?__variant=off` turns it off, and /__mark/variants shows every variant side by side with a "try it live" link.
 Notes marked while a variant is on record its name.
 
@@ -1428,7 +1428,7 @@ def mirror_handler(app_port, name, review_port=None):
             if u.path == "/__mark/variants":
                 # "Try it live" goes to the mockup when there is one, so trying a look never touches real data.
                 mk = next(iter(mockups()), None)
-                base = "" if mockup or not mk else f"//{(self.headers.get('Host') or '').split(':')[0]}:{mk + 50}"
+                base = "" if mockup or not mk else f"//{(self.headers.get('Host') or '').split(':')[0]}:{BASE + 51}"
                 return self._send(200, variants_page(base), "text/html")
             if u.path == "/__mark/mockup/reset" and self.command == "POST" and mockup:
                 r = subprocess.run([str(SCRIPTS / "mockup.sh"), "reset", mockup], capture_output=True, text=True)
@@ -1458,7 +1458,7 @@ def mirror_handler(app_port, name, review_port=None):
             except OSError as e:
                 return self._send(502, f"The app on :{app_port} isn't answering ({e}).", "text/plain", cors=False)
             ctype = r.getheader("Content-Type", "")
-            if "text/html" in ctype:
+            if "text/html" in ctype and not self.headers.get("X-Live-Reload"):   # live-reload reads the raw file
                 page = r.read()
                 shot = "__shot=" in u.query               # a snapshot: strip the marker params, set no cookie
                 no_overlay = "__nooverlay=" in u.query    # an explicit ask for a picture with no overlay UI in it

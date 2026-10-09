@@ -79,7 +79,7 @@ h1{{font-size:18px;margin:56px 24px 4px}} p.sub{{margin:0 24px 18px;color:#9a9da
 .live.on{{display:flex}} .live .bar{{display:flex;align-items:center;gap:10px;padding:8px 14px;border-bottom:1px solid #2a2c33}}
 .live .bar b{{flex:1}} .live .bar button{{border:0;border-radius:8px;padding:6px 12px;font-weight:600;cursor:pointer}}
 .live .use{{background:#3d6bff;color:#fff}} .live .x{{background:#23262f;color:#e8e8ea}} .live iframe{{flex:1;border:0;background:#fff}}
-</style></head><body>
+</style></head><body data-live="reload">
 <h1>{html.escape(what)}</h1><p class="sub">Each one is the live mockup with that look. "Use this one" puts it on the mockup.</p>
 <div class="grid" id="g"></div>
 <div class="live"><div class="bar"><b></b><button class="use">Use this one</button><button class="x">Close (Esc)</button></div><iframe></iframe></div>
@@ -97,7 +97,8 @@ D.cards.forEach((c) => {{
     const r = await fetch("/__mark/pick-look", {{method: "POST", headers: {{"Content-Type": "application/json"}}, body: JSON.stringify({{look: c.look}})}});
     if (!r.ok) {{ btn.textContent = "Couldn't set it"; return; }}
     document.querySelectorAll(".card").forEach((x) => {{ x.classList.remove("done"); x.querySelector(".pick").textContent = "Use this one"; }});
-    el.classList.add("done"); el.querySelector(".pick").textContent = "On the mockup now"; btn.textContent = "On the mockup now";
+    el.classList.add("done"); btn.textContent = "On the mockup now";
+    setTimeout(() => {{ location.href = mk + "/"; }}, 400);       // straight to the mockup, now showing it
   }};
   el.querySelector(".pick").onclick = (e) => pick(e.target);
   // Try it live: the look full-window, right here on the demo (the app clickable inside it), so the nav and the

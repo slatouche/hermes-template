@@ -90,7 +90,9 @@
 
   /* ---- fetch: always fresh ---- */
   function grab(path) {
-    return fetch(path + "?__live=" + Date.now(), { cache: "no-store" })
+    // X-Live-Reload: the file as it is on disk, without what the review link adds (the nav badge names the
+    // mockup's look, so it changes when the owner picks one, and the page must not "update" on that).
+    return fetch(path + "?__live=" + Date.now(), { cache: "no-store", headers: { "X-Live-Reload": "1" } })
       .then(function (r) {
         if (r.status === 404) return null;   // a file the page doesn't have (no style.css): nothing to watch
         if (!r.ok) throw new Error("HTTP " + r.status);
@@ -189,6 +191,9 @@
   }
 
   function applyHtml(text) {
+    // A page that draws itself with a script (a portfolio, a generated gallery) can't be patched from its file: the
+    // file's body is the empty shell. It says so with <body data-live="reload"> and reloads instead.
+    if (document.body && document.body.getAttribute("data-live") === "reload") { reloadFor("the page changed"); return; }
     var doc = new DOMParser().parseFromString(text, "text/html");
     if (doc.title && doc.title !== document.title) document.title = doc.title;
     syncAttrs(document.body, doc.body);

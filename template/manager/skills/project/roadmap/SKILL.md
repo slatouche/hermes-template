@@ -32,12 +32,12 @@ Status is one of: `idea` → `shaping` → `ready` → `building` → `shipped`,
 1. **Interview just this feature** (`intake-interview`, about 3-8 questions): who uses it, what they do step by step, what "done" means, what's out. Write `product/features/<feature>.md`.
 2. **Research what's unknown** (a Researcher card: prior art, assets, licences, formats). Only what the next decision needs.
 3. **Storyboard** (a Designer card): the user's journey as 4-8 rough frames, shown on a demo slot (`demo.sh`). The owner marks it up; that's the cheapest place to change their mind.
-4. **Slices:** cut the feature into thin end-to-end increments, each one usable on its own and visible on the app's review link (slice 1 is the smallest thing worth trying: often the happy path with one option). Write them in the feature page; the owner approves the list once.
+4. **Slices:** cut the feature into thin end-to-end increments, each one usable on its own and visible on the mockup (`<API port + 51>`; slice 1 is the smallest thing worth trying: often the happy path with one option). Write them in the feature page; the owner approves the list once.
 5. Status → `ready`, then `building` when its first slice is carded (and nothing else is `building`).
 
 ## Building, slice by slice
-- Each slice is the normal chain (`work-planning`): design step if needed → build → review → land → running on the review link.
-- After each slice: a sign-off brief and the review link. The owner tries it and marks it up; their notes and any new ideas reshape the **remaining** slices (update the feature page; never patch quietly).
+- Each slice is the normal chain (`work-planning`): design step if needed → build → review → land → running on the app, and on the mockup after `mockup.sh refresh`.
+- After each slice: a sign-off brief and the mockup link. The owner tries it and marks it up; their notes and any new ideas reshape the **remaining** slices (update the feature page; never patch quietly).
 - When the slices are done: status `shipped`, a one-line entry in the log, and the next feature in order starts shaping.
 
 ## Side tracks (ad-hoc work outside the product)

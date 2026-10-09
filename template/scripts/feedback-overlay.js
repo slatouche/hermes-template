@@ -221,7 +221,7 @@
     badge.classList.toggle("on", !!mode);
     badge.textContent = (mode === "area" ? "Area" : "Mark") + " \u25be";
     badge.title = "Marking tools — Mark, Area, Pins" + (mode ? ` · ${mode === "area" ? "Area" : "Mark"} mode is on` : "")
-      + (pageName ? ` · ${pageName} · a demo of something new: nothing here touches your real data` : "");
+      + (cfg && cfg.mockup ? " · the mockup: the app in work, on a copy of your data" : cfg && cfg.demo ? ` · ${pageName}: a throwaway visual` : "");
   };
   updateBadge();
 

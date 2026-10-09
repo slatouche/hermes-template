@@ -212,14 +212,14 @@ CONF="$HOME/.hermes/scripts/review-mirrors.conf"
 api=$(grep -m1 '^API_SERVER_PORT=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2 || true)
 [ -n "$api" ] || { echo "no API_SERVER_PORT in ~/.hermes/.env" >&2; exit 1; }
 if [ -n "$DEMO" ]; then
-  PORT=$((api + 45 + DEMO + 50))                  # the demo slot's review link (see demo.sh)
+  PORT=$((api + 51 + DEMO))                       # demo 1/2 open on API port + 52/53 (see demo.sh)
   OUTDIR="$HOME/vault/design/demo-checks"
 else
   PORT=$(grep -v '^\s*#' "$CONF" 2>/dev/null | grep -viE 'design|demo|mockup' | awk 'NF>=2 && $1 ~ /^[0-9]+$/ {print $1; exit}' || true)
   MK="$HOME/.hermes/scripts/mockups.conf"
   if [ -f "$MK" ]; then
     MPORT=$(grep -v '^\s*#' "$MK" | grep -i -- "${APP:-}" | awk -F'|' 'NR==1{print $2}')
-    [ -n "${MPORT:-}" ] && PORT=$((MPORT + 50))
+    [ -n "${MPORT:-}" ] && PORT=$((api + 51))      # the mockup opens on API port + 51 (see mockup.sh)
   fi
   OUTDIR="$HOME/vault/design/variants/$V"
   [ "$V" = current ] || [ -d "$OUTDIR" ] || { echo "no look $V" >&2; exit 1; }

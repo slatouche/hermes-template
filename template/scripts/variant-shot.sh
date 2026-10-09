@@ -28,16 +28,11 @@ while [ $# -gt 0 ]; do
     *) PAGE="$1"; shift ;;
   esac
 done
-CONF="$HOME/.hermes/scripts/review-mirrors.conf"
-[ -f "$CONF" ] || { echo "no review links yet ($CONF): the app needs one first" >&2; exit 1; }
-if [ -n "$APP" ]; then PORT=$(grep -v '^\s*#' "$CONF" | grep -i -- "$APP" | awk 'NR==1{print $1}')
-else PORT=$(grep -v '^\s*#' "$CONF" | grep -viE 'design|demo|mockup' | awk 'NF>=2 && $1 ~ /^[0-9]+$/ {print $1; exit}'); fi
-[ -n "${PORT:-}" ] || { echo "no review link matches ${APP:-an app} in $CONF" >&2; exit 1; }
-SB="$HOME/.hermes/scripts/mockups.conf"       # shoot the mockup when there is one (the same snapshot the owner sees)
-if [ -f "$SB" ]; then
-  SPORT=$(grep -v '^\s*#' "$SB" | grep -i -- "${APP:-}" | awk -F'|' 'NR==1{print $2}')
-  [ -n "${SPORT:-}" ] && PORT=$((SPORT + 50))
-fi
+# Shots are taken on the mockup (API port + 51): the same app and look the owner sees.
+api=$(grep -m1 '^API_SERVER_PORT=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2)
+[ -n "$api" ] || { echo "no API_SERVER_PORT in ~/.hermes/.env" >&2; exit 1; }
+grep -qv '^\s*#' "$HOME/.hermes/scripts/mockups.conf" 2>/dev/null || { echo "no mockup yet: the app needs one first (mockup.sh add)" >&2; exit 1; }
+PORT=$((api + 51))
 CHROME=$(ls -d "$HOME"/.hermes/tools/chromium-*/chrome-linux64/chrome 2>/dev/null | tail -1)
 [ -x "${CHROME:-}" ] || { echo "no headless Chromium under ~/.hermes/tools (the browser tool installs it on first use)" >&2; exit 1; }
 
