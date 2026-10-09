@@ -87,7 +87,7 @@ def main():
     home = pathlib.Path(tempfile.mkdtemp(prefix="fitest-"))
     scripts = home / ".hermes" / "scripts"
     scripts.mkdir(parents=True)
-    for f in ("feedback-inbox.py", "feedback-overlay.js"):
+    for f in ("feedback-inbox.py", "feedback-overlay.js", "live-reload.js"):
         (scripts / f).write_bytes((SCRIPTS / f).read_bytes())
     (scripts / "review-mirrors.conf").write_text(f"{MOCK} {MOCK_APP} test mockup\n{DEMO} {DEMO_APP} demo 1: card backs\n"
                                                  f"{REAL} {REAL_APP} Test app\n")
@@ -130,6 +130,11 @@ def main():
         check("app's ETag dropped on injected pages", "ETag" not in h and h.get("Cache-Control") == "no-store", h)
         st, _, page = call("GET", "/", port=DEMO)
         check("demo badge: which demo", b'"demo": "demo 1: card backs"' in page and b'"looks": []' in page)
+        check("demo page updates itself: live-reload added", b"/__mark/live-reload.js" in page)
+        st, _, lr = call("GET", "/__mark/live-reload.js", port=DEMO)
+        check("live-reload.js served on the demo link", st == 200 and b"__liveReload" in lr, st)
+        st, _, page = call("GET", "/", port=MOCK)
+        check("mockup (a real app copy) gets no live-reload", b"live-reload.js" not in page)
         st, _, page = call("GET", "/", port=REAL)
         check("real app link: no badge without looks", b"__markBadge" not in page)
         st, _, js = call("GET", "/__mark/overlay.js")

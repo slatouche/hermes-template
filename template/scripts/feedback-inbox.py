@@ -1159,6 +1159,9 @@ class Base(BaseHTTPRequestHandler):
             js = OVERLAY.read_text(encoding="utf-8").replace("__INBOX__", base).replace("__APP__", self.app_name)
             self._send(200, js, "application/javascript")
             return True
+        if path == "/live-reload.js":          # a demo page watches its own files (added to demo pages below)
+            self._send(200, (SCRIPTS / "live-reload.js").read_text(encoding="utf-8"), "application/javascript")
+            return True
         if path == "/look-version":            # the page refreshes itself when the look it shows changes
             v = parse_qs(query).get("v", [""])[0]
             vd = VARIANTS / v if re.fullmatch(r"[\w-]+", v or "") else None
@@ -1400,6 +1403,8 @@ def mirror_handler(app_port, name, review_port=None):
                 shot = "__shot=" in u.query               # a snapshot: strip the marker params, set no cookie
                 no_overlay = "__nooverlay=" in u.query    # an explicit ask for a picture with no overlay UI in it
                 tag = b"" if no_overlay else b'<script src="/__mark/overlay.js" defer></script>'
+                if self.kind() == "demo" and not shot:   # a demo is plain files: it updates itself as a round lands
+                    tag += b'<script src="/__mark/live-reload.js" defer></script>'
                 v = self.current_variant()
                 if v:                                  # the Designer's variant on top of the live app
                     vd = VARIANTS / v
