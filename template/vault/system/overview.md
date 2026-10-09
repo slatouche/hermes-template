@@ -15,7 +15,7 @@ The Manager keeps this page true. Changes to anything here go through a proposal
 
 ## The machine
 - Host `{{HOST}}`. This project lives at `/srv/projects/{{PROJECT_NAME}}`, the home of the Linux user `agent-{{PROJECT_NAME}}`. Nothing outside it belongs to this project except the read-only registry `/srv/projects/registry.yaml`.
-- Ports: the Hermes API server on {{API_PORT}} (localhost only); apps use {{APP_PORTS}}.
+- Ports: the Hermes API server on {{API_PORT}} (localhost only); apps use {{APP_PORTS}}, laid out the same in every project: the app on the block's `01`, more services `02`-`09`, its mockup `26`, demo slots `46`/`47`, the feedback inbox `99`, and anything + 50 is its Mark review link.
 - The owner ({{OWNER}}) runs anything needing sudo, and edits `.env` files (secrets).
 
 ## The bots (Hermes profiles)

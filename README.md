@@ -28,7 +28,7 @@ Later projects: `sudo bash /opt/hermes-template/new-project.sh` (or the same one
 What it does:
 | Part | As | Steps |
 |---|---|---|
-| 1 | root | installs missing Ubuntu packages (git, Python YAML, ripgrep, ffmpeg, the headless browser's libraries); registry entry (next number → ports `1NN00-1NN99`); user `agent-<name>` with home `/srv/projects/<name>`; you added to its group; your SSH keys copied (for Hermes Desktop); linger; firewall rules for the app ports |
+| 1 | root | installs missing Ubuntu packages (git, Python YAML, ripgrep, ffmpeg, the headless browser's libraries); registry entry (the lowest free number, or `--num N`; `--test` takes 50+ → ports `1NN00-1NN99`, see Ports); user `agent-<name>` with home `/srv/projects/<name>`; you added to its group; your SSH keys copied (for Hermes Desktop); linger; firewall rules for the app ports |
 | 2 | `agent-<name>` | installs Hermes; keys; default profile config (model, kanban limits, API server); vault from the template; scripts; `workspace/` repo; the **Manager** profile (SOUL, display name, Hermes Project, Discord); kanban board; `vault-sweep` and `vault-lint` jobs; the project memory repo; the gateway service |
 
 It's safe to re-run if something fails part-way: finished steps are skipped.
@@ -36,6 +36,21 @@ It's safe to re-run if something fails part-way: finished steps are skipped.
 At the end it prints an SSH config block. Add it to `~/.ssh/config` on your PC, then:
 - **Hermes Desktop:** add an SSH connection to `p330-<name>` and open the Manager.
 - **Discord:** DM the bot or post in the project channel. The Manager sees a new project (`phase: setup`) and starts the intake interview.
+
+## Ports
+Every project has a number and a block of 100 ports, laid out the same way in every project, so a port tells you what it is. Real projects take 1-49, tests 50-99 (`--test`).
+
+| Port | What | Reached from |
+|---|---|---|
+| `1NN00` | Hermes API (Desktop talks to it over SSH) | this machine only |
+| `1NN01` | the app | your network |
+| `1NN02`-`1NN09` | more apps or services, if the project has them | your network |
+| `1NN26` | the mockup (a copy of the app on copied data) | this machine only |
+| `1NN46`, `1NN47` | demo slots 1 and 2 | this machine only |
+| `1NN51`, `1NN76`, `1NN96`, `1NN97` | the Mark review links: app, mockup, demo 1, demo 2 | your network |
+| `1NN99` | the feedback inbox | your network |
+
+The rule: **anything + 50 is its Mark review link.** Example, project 1: the app on `10101`, marked up on `10151`.
 
 ## Adopt an existing project
 A project built elsewhere (Claude Code, Codex, Cursor, another Hermes, by hand) can come in two ways.

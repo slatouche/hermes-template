@@ -12,6 +12,11 @@
 # --key-file  a root-only file with the provider key line (e.g. OPENCODE_GO_API_KEY=...), so it isn't typed.
 #             host.conf PROVIDER_KEY_FILE sets a default. The key is never printed.
 # --no-discord  don't ask for a Discord bot token (add one later; see README).
+# --num N     the project's number (its port block, see below). Default: the lowest free 1-49.
+# --test      a test project: the lowest free number from 50 (ports 15000 and up), kept apart from real ones.
+#
+# Ports: project N gets 1NN00-1NN99, the same layout every time (README, "Ports"): 1NN00 Hermes API (local),
+# 1NN01 the app, 1NN26 its mockup, 1NN46/47 the demo slots, 1NN99 the feedback inbox; + 50 = the Mark review link.
 #
 # Safe to re-run: finished steps are skipped.
 # Part 1 (root): user, folder, linger, SSH keys, registry entry, firewall.
@@ -31,7 +36,7 @@ trap 'echo "new-project: stopped on an error (above). Fix it and run the same co
 [ "$(id -u)" -eq 0 ] || die "run with sudo:  sudo bash new-project.sh"
 NAME=""
 if [ $# -gt 0 ] && [[ "$1" != --* ]]; then NAME="$1"; shift; fi
-NUM=""; IMPORT=""; NOTES=""; KEY_FILE=""; NO_DISCORD=0
+NUM=""; IMPORT=""; NOTES=""; KEY_FILE=""; NO_DISCORD=0; TEST=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --num)        NUM="${2:-}"; shift 2 ;;
@@ -39,6 +44,7 @@ while [ $# -gt 0 ]; do
     --notes)      NOTES="${2:-}"; shift 2 ;;
     --key-file)   KEY_FILE="${2:-}"; shift 2 ;;
     --no-discord) NO_DISCORD=1; shift ;;
+    --test)       TEST=1; shift ;;
     *) die "unknown option '$1'" ;;
   esac
 done
@@ -127,7 +133,9 @@ install -d -m 755 "$ROOT"
 if [ ! -f "$REGISTRY" ]; then
   cat > "$REGISTRY" <<'EOF'
 # Project registry: name -> number, Linux user, port block
-# Ports: project num NN gets 1NN00-1NN99. 1NN00 = Hermes API server (localhost only), 1NN01-1NN99 = apps.
+# Project N (1-49 real, 50-99 tests) gets ports 1NN00-1NN99, always laid out the same way:
+#   1NN00 Hermes API (localhost)   1NN01 the app   1NN02-09 more apps/services   1NN26 mockup
+#   1NN46/47 demo slots            1NN99 feedback inbox   anything + 50 = its Mark review link
 projects:
 EOF
 fi
@@ -139,7 +147,9 @@ if [ -n "$EXISTING" ]; then
   NUM="$EXISTING"; echo "already registered: num $NUM"
 else
   if [ -z "$NUM" ]; then
-    NUM="$(awk '/^    num:/{if($2+0>m)m=$2+0} END{print m+1}' "$REGISTRY")"
+    lo=1; hi=49; [ "$TEST" = 1 ] && { lo=50; hi=99; }        # real projects 1-49, tests 50-99
+    NUM="$(awk -v lo=$lo -v hi=$hi '/^    num:/{t[$2+0]=1} END{for(n=lo;n<=hi;n++) if(!t[n]){print n; exit}}' "$REGISTRY")"
+    [ -n "$NUM" ] || die "no free project number in $lo-$hi"
   fi
   [[ "$NUM" =~ ^[0-9]+$ ]] && [ "$NUM" -ge 1 ] && [ "$NUM" -le 99 ] || die "num must be 1-99"
   if awk -v n="$NUM" '/^    num:/ && $2==n {found=1} END{exit !found}' "$REGISTRY"; then
