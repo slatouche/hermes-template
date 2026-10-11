@@ -158,6 +158,9 @@ class Layer:
         self.next_op = max(nums, default=0) + 1
         used = [h.get("id") for h in self.history] + [o.get("note") for o in self.ops] + list(self.options)
         self.next_note = max([int(str(u)[1:]) for u in used if re.fullmatch(r"n\d+", str(u))], default=0) + 1
+        # Bumped on every change. A page compares it with what it last loaded and catches up on anything it missed
+        # (an edit that arrived while it was reloading). Starts from the clock, so it only grows across restarts.
+        self.version = int(time.time() * 1000)
 
     def _read(self, name):
         p = self.root / name
@@ -187,6 +190,7 @@ class Layer:
         tmp = self.root / "options.json.tmp"
         tmp.write_text(json.dumps(self.options, indent=1), encoding="utf-8")
         tmp.replace(self.root / "options.json")
+        self.version += 1
 
     def note_id(self):
         with self.lock:
@@ -751,7 +755,10 @@ def make_handler(app):
             if path == "/dv/ops":
                 with app.layer.lock:
                     return self.send(200, {"ops": app.layer.ops, "options": app.layer.options, "config": app.layer.config(),
-                                           "frozen": app.layer.state("FROZEN"), "preview": app.layer.state("PREVIEW")})
+                                           "frozen": app.layer.state("FROZEN"), "preview": app.layer.state("PREVIEW"),
+                                           "v": app.layer.version})
+            if path == "/dv/version":
+                return self.send(200, {"v": app.layer.version})
             if path == "/dv/map":
                 r = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("route", ["#/"])[0]
                 return self.send(200, {"route": r, "map": app.maps.get(r), "routes": sorted(app.maps)})

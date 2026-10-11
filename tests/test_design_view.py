@@ -141,6 +141,10 @@ def main():
         ops = json.loads(get("/dv/ops")[1])["ops"]
         check("a Designer's batches with one group share one note", code == 200 and code2 == 200 and body["note"] == body2["note"]
               and len(ops) == 3 and len({o["note"] for o in ops}) == 1, (body, body2, ops))
+        v1 = json.loads(get("/dv/version")[1])["v"]
+        post("/dv/op", {"op": {"op": "css", "rule": "h3{color:blue}"}})
+        v2 = json.loads(get("/dv/version")[1])["v"]
+        check("every change bumps the layer version (pages catch up on what they missed)", v2 > v1, (v1, v2))
         code, body = post("/dv/op", {"op": {"op": "insert", "where": "into", "ref": "body", "html": "<script>1</script>"}})
         check("an unsafe direct edit is refused with 400", code == 400, (code, body))
         post("/dv/map", {"route": "#/deck", "map": "main > .cards x10"})

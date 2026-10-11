@@ -242,8 +242,18 @@
     if (sels.length) { var first = q(sels[sels.length - 1]); if (first && first.scrollIntoView) first.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
   }
 
+  // Load the layer, or catch up with it: edits the page missed (one that streamed in while it was reloading) are
+  // applied; if an edit it already shows has gone (an undo it missed), only a fresh page is exact, so it reloads.
+  var syncedV = null;
   function load() {
     return fetch("/dv/ops", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
+      var now = {};
+      (d.ops || []).forEach(function (o) { now[o.id] = 1; });
+      Object.keys(d.options || {}).forEach(function (s) {
+        Object.keys(d.options[s].choices || {}).forEach(function (c) { (d.options[s].choices[c].ops || []).forEach(function (o) { now[o.id] = 1; }); });
+      });
+      if (ready && current().some(function (o) { return !now[o.id]; })) { location.reload(); return; }
+      syncedV = d.v;
       ops = d.ops || []; options = d.options || {}; cfg = Object.assign(cfg, d.config || {});
       if (active && !(options[active.set] && options[active.set].choices[active.choice])) { active = null; sessionStorage.removeItem("dv-opt"); }
       ready = true; apply(); postMap();
@@ -444,6 +454,7 @@
   window.__dv = {
     map: map,
     route: route,
+    sync: load,
     at: at,
     selectorFor: selectorFor,
     describe: describe,
@@ -465,5 +476,12 @@
   };
   addEventListener("hashchange", function () { setTimeout(apply, 0); tell({ dv: "route", route: route() }); postMap(); });
   addEventListener("load", postMap);
+  setTimeout(function () { if (ready) load(); }, 1000);   // anything that landed while this page was loading
+  document.addEventListener("visibilitychange", function () { if (!document.hidden && ready) load(); });   // back on the tab
+  setInterval(function () {                               // a cheap check that nothing was missed since
+    if (document.hidden || !ready) return;
+    fetch("/dv/version", { cache: "no-store" }).then(function (r) { return r.json(); })
+      .then(function (d) { if (syncedV !== null && d.v !== syncedV) load(); }).catch(function () {});
+  }, 3000);
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", load); else load();
 })();
