@@ -143,6 +143,10 @@ else
 fi
 cp "$T"/scripts/* "$H/scripts/" 2>/dev/null || true
 chmod +x "$H"/scripts/*.sh "$H"/scripts/*.py
+# The design view's page files and the starter front end a new project's app begins from.
+rm -rf "$H/design-view" "$H/starter"
+cp -r "$T/design-view" "$H/design-view"
+cp -r "$T/starter" "$H/starter"
 # Files import-project.sh needs later: the team rules (rendered) and the onboarding status page.
 render "$T/workspace/AGENTS.md" > "$H/scripts/templates/team-rules.md"
 render "$T/import/00-status.md" > "$H/scripts/templates/00-status-onboarding.md"
@@ -331,6 +335,19 @@ if [ -n "${IMPORT_SRC:-}" ] && [ "$(git -C "$HOME/workspace" rev-list --count HE
 elif [ -n "${IMPORT_NOTES:-}" ] && [ ! -f "$HOME/vault/raw/predecessor/.notes-imported" ]; then
   step "Import notes $IMPORT_NOTES"            # a re-run after the notes step failed: the code is already in
   /usr/bin/python3 "$H/scripts/import-survey.py" --notes "$IMPORT_NOTES"
+fi
+
+# ---------- the design view (API port + 51) ----------
+# A new project starts from the starter front end, so design can begin from nothing. An imported project gets it
+# once the Manager knows where its front end is: design-view.sh up --app <folder>.
+if [ -z "${IMPORT_SRC:-}" ]; then
+  step "Design view"
+  if [ ! -e "$HOME/workspace/frontend" ]; then
+    cp -r "$H/starter/frontend" "$HOME/workspace/frontend"
+    git -C "$HOME/workspace" add frontend
+    git -C "$HOME/workspace" commit -q -m "Starter front end: theme, components, one screen (design starts here)"
+  fi
+  bash "$H/scripts/design-view.sh" up || echo "warning: the design view didn't start (design-view.sh log)"
 fi
 
 # ---------- the gateway (messaging, cron, kanban dispatcher, API) ----------

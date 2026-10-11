@@ -1,0 +1,314 @@
+/* shell.js: the toolbar above the app.
+   Notes: type, optionally with marks (Mark = click elements; Box = draw round an area; Arrow = from this to there).
+   Direct tools, no designer and no wait: Move (drag an element somewhere) and Text (click text and type).
+   Shows what the designer is doing as it happens; the options on show (switch live, or side by side); undo;
+   and the build: Agreed (freezes the mockup and starts the build), Mockup/Built (compare), Ship (merge). */
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var frame = $("app"), ov = $("ov"), marks = [], tool = null, busy = {}, t0 = {}, tick = 0, counts = {};
+  var optsState = {}, active = null, build = { frozen: null, preview: null }, viewing = "mockup";
+  var SVG = "http://www.w3.org/2000/svg";
+
+  function dv() { try { return frame.contentWindow.__dv; } catch (e) { return null; } }
+  function say(text, mode) { $("status").textContent = text; $("dot").className = mode || ""; }
+  function post(path, body) {
+    return fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body || {}) })
+      .then(function (r) { return r.json(); });
+  }
+
+  // ---- tools --------------------------------------------------------------------------------------------------------
+  function setTool(t) {
+    tool = tool === t ? null : t;
+    Array.prototype.forEach.call(document.querySelectorAll("[data-tool]"), function (b) { b.classList.toggle("on", b.getAttribute("data-tool") === tool); });
+    var d = dv(); if (d) d.pick(tool === "mark");
+    ov.setAttribute("class", tool && tool !== "mark" ? "active " + tool : "");
+  }
+  Array.prototype.forEach.call(document.querySelectorAll("[data-tool]"), function (b) {
+    b.onclick = function () { setTool(b.getAttribute("data-tool")); };
+  });
+  function clearDrawn(cls) { Array.prototype.forEach.call(ov.querySelectorAll(cls || "rect, line"), function (n) { n.remove(); }); }
+  function shape(name, attrs) { var n = document.createElementNS(SVG, name); for (var k in attrs) n.setAttribute(k, attrs[k]); ov.appendChild(n); return n; }
+  function local(ev) { var r = ov.getBoundingClientRect(); return { x: ev.clientX - r.left, y: ev.clientY - r.top }; }
+  function sel(el) { var d = dv(); return el && d ? d.selectorFor(el) : null; }
+
+  var drag = null;
+  ov.addEventListener("mousedown", function (ev) {
+    var d = dv(); if (!d || !tool) return;
+    var p = local(ev);
+    if (tool === "text") {
+      ov.setAttribute("class", "");                       // let the click and typing reach the page
+      var ok = d.editText(p.x, p.y, function (r) {
+        setTool("text"); setTool("text");                  // back on, ready for the next
+        if (r) direct({ op: "text", sel: r.sel, text: r.text }, "Text: " + r.text.slice(0, 40));
+      });
+      if (!ok) { setTool("text"); setTool("text"); say("Text: click right on some text"); }
+      ev.preventDefault(); return;
+    }
+    var el = null;
+    if (tool === "move") {
+      el = movable(d.at(p.x, p.y));
+      clearDrawn("rect.hover");
+      if (!el) return;
+      var r = el.getBoundingClientRect();
+      drag = { tool: "move", el: el, ghost: shape("rect", { "class": "drag", x: r.left, y: r.top, width: r.width, height: r.height }), dx: p.x - r.left, dy: p.y - r.top, w: r.width, h: r.height };
+    } else if (tool === "box") {
+      drag = { tool: "box", x: p.x, y: p.y, shape: shape("rect", { "class": "box", x: p.x, y: p.y, width: 1, height: 1 }) };
+    } else if (tool === "arrow") {
+      drag = { tool: "arrow", x: p.x, y: p.y, from: d.at(p.x, p.y), shape: shape("line", { "class": "arrow", x1: p.x, y1: p.y, x2: p.x, y2: p.y, "marker-end": "url(#head)" }) };
+    }
+    ev.preventDefault();
+  });
+  // What Move picks up: the nearest list item around the pointer (an element with look-alike siblings: a card, a row,
+  // a button in a bar), else the element itself.
+  function movable(el) {
+    var body = frame.contentDocument.body, n = el;
+    function like(a, b) { return a.tagName === b.tagName && a.className === b.className; }
+    while (n && n !== body && n.parentElement) {
+      var sibs = Array.prototype.filter.call(n.parentElement.children, function (s) { return s !== n && like(s, n); });
+      if (sibs.length) return n;
+      n = n.parentElement;
+    }
+    return el;
+  }
+  ov.addEventListener("mousemove", function (ev) {
+    if (!drag && tool === "move") {                        // show what would be picked up
+      var hp = local(ev), hd = dv(), he = hd && movable(hd.at(hp.x, hp.y));
+      clearDrawn("rect.hover");
+      if (he) { var hr = he.getBoundingClientRect(); shape("rect", { "class": "drag hover", x: hr.left, y: hr.top, width: hr.width, height: hr.height }); }
+      return;
+    }
+    if (!drag) return;
+    var p = local(ev), d = dv();
+    if (drag.tool === "box") {
+      drag.shape.setAttribute("x", Math.min(p.x, drag.x)); drag.shape.setAttribute("y", Math.min(p.y, drag.y));
+      drag.shape.setAttribute("width", Math.abs(p.x - drag.x)); drag.shape.setAttribute("height", Math.abs(p.y - drag.y));
+    } else if (drag.tool === "arrow") {
+      drag.shape.setAttribute("x2", p.x); drag.shape.setAttribute("y2", p.y);
+    } else if (drag.tool === "move") {
+      drag.ghost.setAttribute("x", p.x - drag.dx); drag.ghost.setAttribute("y", p.y - drag.dy);
+      clearDrawn("line.drop");
+      var place = d.dropPlace(p.x, p.y, drag.el);
+      drag.place = place;
+      if (place) {
+        var q = place.rect, before = place.where === "before";
+        if (place.row) shape("line", { "class": "drop", x1: before ? q.x - 3 : q.x + q.w + 3, x2: before ? q.x - 3 : q.x + q.w + 3, y1: q.y, y2: q.y + q.h });
+        else shape("line", { "class": "drop", x1: q.x, x2: q.x + q.w, y1: before ? q.y - 3 : q.y + q.h + 3, y2: before ? q.y - 3 : q.y + q.h + 3 });
+      }
+    }
+  });
+  ov.addEventListener("mouseup", function (ev) {
+    if (!drag) return;
+    var p = local(ev), d = dv(), g = drag; drag = null;
+    if (g.tool === "move") {
+      g.ghost.remove(); clearDrawn("line.drop");
+      if (g.place && g.place.ref) direct({ op: "move", sel: sel(g.el), where: g.place.where, ref: g.place.ref }, "Moved " + sel(g.el));
+      return;
+    }
+    if (g.tool === "box") {
+      var x1 = Math.min(p.x, g.x), y1 = Math.min(p.y, g.y), x2 = Math.max(p.x, g.x), y2 = Math.max(p.y, g.y);
+      if (x2 - x1 < 6 || y2 - y1 < 6) { g.shape.remove(); return; }
+      var doc = frame.contentDocument, inside = [];
+      Array.prototype.forEach.call(doc.body.querySelectorAll("*"), function (el) {
+        var r = el.getBoundingClientRect();
+        if (r.width && r.height && r.left >= x1 - 2 && r.top >= y1 - 2 && r.right <= x2 + 2 && r.bottom <= y2 + 2 &&
+            !inside.some(function (o) { return o.contains(el); })) inside.push(el);
+      });
+      var host = d.at((x1 + x2) / 2, (y1 + y2) / 2);
+      while (host && host.parentElement) { var hr = host.getBoundingClientRect(); if (hr.left <= x1 && hr.top <= y1 && hr.right >= x2 && hr.bottom >= y2) break; host = host.parentElement; }
+      addMark({ kind: "area", sel: sel(host) || "body", rect: { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) },
+                inside: inside.slice(0, 12).map(sel), label: "area" }, g.shape);
+    } else if (g.tool === "arrow") {
+      if (Math.hypot(p.x - g.x, p.y - g.y) < 12) { g.shape.remove(); return; }
+      var to = d.at(p.x, p.y);
+      addMark({ kind: "arrow", from: sel(g.from), to: sel(to), label: "arrow" }, g.shape);
+    }
+  });
+  ov.addEventListener("wheel", function (ev) { try { frame.contentWindow.scrollBy(ev.deltaX, ev.deltaY); } catch (e) {} ev.preventDefault(); }, { passive: false });
+
+  function direct(op, label) {
+    var d = dv();
+    post("/dv/op", { op: op, label: label, route: d ? d.route() : "#/" }).then(function (r) {
+      say(r.error ? "Not applied: " + r.error : label + " · instant", r.error ? "err" : "");
+    });
+  }
+
+  // ---- marks and notes ----------------------------------------------------------------------------------------------
+  function addMark(m, drawn, add) {
+    if (!add && m.kind === undefined) { marks = marks.filter(function (x) { return x.kind; }); }
+    m.drawn = drawn || null;
+    marks.push(m); drawMarks(); $("note").focus();
+  }
+  function drawMarks() {
+    var box = $("marks"); box.innerHTML = "";
+    marks.forEach(function (m, i) {
+      var c = document.createElement("span"); c.className = "chip";
+      c.textContent = m.kind === "area" ? "▭ area" : m.kind === "arrow" ? "➚ " + (m.from || "?") : m.sel;
+      c.title = "click to remove\n" + JSON.stringify({ sel: m.sel, from: m.from, to: m.to });
+      c.onclick = function () { if (m.drawn) m.drawn.remove(); marks.splice(i, 1); drawMarks(); };
+      box.appendChild(c);
+    });
+  }
+  addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin || !ev.data || !ev.data.dv || ev.source !== frame.contentWindow) return;
+    var m = ev.data;
+    if (m.dv === "picked") {
+      if (!m.add) { marks = marks.filter(function (x) { return x.kind; }); var d = dv(); if (d) d.unpickAll(); }
+      marks.push(m.mark); drawMarks(); $("note").focus();
+    } else if (m.dv === "loaded" || m.dv === "active") {
+      if (m.options) optsState = m.options;
+      active = m.active; drawOpts();
+      var d2 = dv(); if (d2 && tool === "mark") d2.pick(true);
+    }
+  });
+  function send() {
+    var text = $("note").value.trim();
+    if (!text) return;
+    var d = dv();
+    var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
+                 map: d ? d.map() : "", route: d ? d.route() : "#/" };
+    $("note").value = "";
+    post("/dv/note", body).then(function (r) { if (r.error) say("Not sent: " + r.error, "err"); })
+      .catch(function () { say("Not sent: the design view didn't answer", "err"); });
+    marks = []; drawMarks(); clearDrawn(); if (tool === "mark") setTool("mark");
+    var d3 = dv(); if (d3) d3.unpickAll();
+  }
+  $("send").onclick = send;
+  $("note").addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  $("undo").onclick = function () {
+    post("/dv/undo", { last: true }).then(function (r) { say(r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo"); });
+  };
+
+  // ---- options: live switch, or side by side --------------------------------------------------------------------------
+  function drawOpts() {
+    var box = $("opts"), sets = Object.keys(optsState || {});
+    box.innerHTML = "";
+    if (!sets.length) { box.hidden = true; return; }
+    box.hidden = false;
+    var set = active ? active.set : sets[sets.length - 1], s = optsState[set];
+    var lbl = document.createElement("span"); lbl.className = "lbl"; lbl.textContent = "Options:"; box.appendChild(lbl);
+    function btn(text, on, fn, cls) {
+      var b = document.createElement("button"); b.title = text;
+      b.textContent = text.length > 24 ? text.slice(0, 23) + "…" : text;
+      b.className = (on ? "on " : "") + (cls || ""); b.onclick = fn; box.appendChild(b);
+    }
+    btn("Current", !active, function () { var d = dv(); if (d) d.setOption(null, null); });
+    Object.keys(s.choices || {}).sort().forEach(function (k) {
+      btn(k + " · " + (s.choices[k].name || k).replace(/\s*\(.*$/, ""), active && active.set === set && active.choice === k,
+          function () { var d = dv(); if (d) d.setOption(set, k); });
+    });
+    btn("⧉ Side by side", false, function () { compare(set); });
+    if (active) btn("✓ Use " + active.choice, false, function () { pick(active.set, active.choice); }, "go");
+  }
+  function pick(set, choice) {
+    post("/dv/pick", { set: set, choice: choice }).then(function () { $("compare").hidden = true; var d = dv(); if (d) d.setOption(null, null); });
+  }
+  function compare(set) {
+    var s = optsState[set], box = $("compare"), d = dv();
+    var keys = ["none"].concat(Object.keys(s.choices || {}).sort());
+    box.innerHTML = ""; box.hidden = false;
+    box.style.gridTemplateColumns = "repeat(" + Math.min(keys.length, 2) + ", 1fr)";
+    var close = document.createElement("button"); close.className = "close"; close.textContent = "✕ Close";
+    close.onclick = function () { box.hidden = true; box.innerHTML = ""; };
+    box.appendChild(close);
+    var hash = d ? d.route() : "#/", y = 0;
+    try { y = frame.contentWindow.scrollY; } catch (e) {}
+    var fullW = frame.clientWidth, fullH = frame.clientHeight;
+    keys.forEach(function (k) {
+      var tile = document.createElement("div"); tile.className = "tile" + (active && active.choice === k ? " on" : "");
+      var head = document.createElement("header"), name = document.createElement("span");
+      name.textContent = k === "none" ? "Current" : k + " · " + (s.choices[k].name || "");
+      head.appendChild(name);
+      if (k !== "none") { var use = document.createElement("button"); use.textContent = "✓ Use this"; use.onclick = function () { pick(set, k); }; head.appendChild(use); }
+      var view = document.createElement("div"); view.className = "view";
+      var f = document.createElement("iframe");
+      f.src = "/app/?dvopt=" + encodeURIComponent(k === "none" ? "none" : set + ":" + k) + hash;
+      f.width = fullW; f.height = fullH;
+      view.appendChild(f); tile.appendChild(head); tile.appendChild(view); box.appendChild(tile);
+      f.onload = function () {
+        var scale = view.clientWidth / fullW;
+        f.style.transform = "scale(" + scale + ")";
+        view.style.height = Math.round(fullH * scale) + "px";
+        setTimeout(function () { try { f.contentWindow.scrollTo(0, y); } catch (e) {} }, 300);
+      };
+    });
+  }
+
+  // ---- the build: Agreed -> building -> Mockup/Built -> Ship -------------------------------------------------------------
+  function drawBuild() {
+    var box = $("build"); box.innerHTML = "";
+    function btn(text, cls, fn, title) { var b = document.createElement("button"); b.textContent = text; b.className = cls || ""; b.onclick = fn; if (title) b.title = title; box.appendChild(b); return b; }
+    function lbl(t) { var s = document.createElement("span"); s.className = "lbl"; s.textContent = t; box.appendChild(s); }
+    var frozen = !!build.frozen;
+    $("note").disabled = frozen; $("send").disabled = frozen;
+    $("note").placeholder = frozen ? "Agreed — the mockup is frozen while it's built" : "Tell the designer what to change…";
+    if (build.preview) {
+      lbl("Built:");
+      btn("Mockup", viewing === "mockup" ? "on" : "", function () { view("mockup"); });
+      btn("Built", viewing === "built" ? "on" : "", function () { view("built"); });
+      btn("🚀 Ship", "go", function () {
+        if (!confirm("Ship it? This merges " + build.preview.branch + " into main, the live app updates, and the mockup starts again from the new app.")) return;
+        say("Shipping…", "busy");
+        post("/dv/ship").then(function (r) { say(r.error ? "Ship failed: " + r.error : "Shipped. The mockup now starts from the new app.", r.error ? "err" : ""); });
+      }, "Merge the built design into the live app");
+    } else if (frozen) {
+      lbl("Agreed · being built" + (build.frozen.card && build.frozen.card.id ? " (" + build.frozen.card.id + ")" : ""));
+      btn("Unfreeze", "", function () { if (confirm("Unfreeze the mockup? The build card stays; tell the Manager if it should stop.")) post("/dv/unfreeze"); });
+    } else {
+      btn("✓ Agreed", "go", function () {
+        if (!confirm("Agree the whole mockup and start the build? Notes pause until it's built and shipped.")) return;
+        post("/dv/agree").then(function (r) { if (r.error) say(r.error, "err"); });
+      }, "The whole mockup is right: build it for real");
+    }
+  }
+  function view(which) {
+    viewing = which;
+    frame.src = which === "built" ? "/preview/" + (dv() ? dv().route() : "") : "/app/";
+    drawBuild();
+  }
+  function loadState() {
+    fetch("/dv/ops", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
+      build = { frozen: d.frozen, preview: d.preview };
+      if (!build.preview && viewing === "built") view("mockup"); else drawBuild();
+    }).catch(function () {});
+  }
+  loadState();
+
+  // ---- live status --------------------------------------------------------------------------------------------------
+  function elapsed(id) { return ((Date.now() - (t0[id] || Date.now())) / 1000).toFixed(1) + " s"; }
+  function liveTick() {
+    clearInterval(tick);
+    tick = setInterval(function () {
+      var ids = Object.keys(busy);
+      if (!ids.length) { clearInterval(tick); return; }
+      say(busy[ids[0]] + " · " + elapsed(ids[0]) + (ids.length > 1 ? " · " + (ids.length - 1) + " more waiting" : ""), "busy");
+    }, 200);
+  }
+  function countUp(id) { counts[id] = (counts[id] || 0) + 1; return counts[id] + (counts[id] === 1 ? " edit" : " edits"); }
+  var es = new EventSource("/dv/events");
+  es.onmessage = function (m) {
+    var e; try { e = JSON.parse(m.data); } catch (x) { return; }
+    if (viewing === "mockup") { try { frame.contentWindow.postMessage({ dvEvent: e }, location.origin); } catch (x) {} }
+    if (e.type === "received") { t0[e.note] = Date.now(); busy[e.note] = (e.queued ? "Queued: " : "Received: ") + e.text; liveTick(); }
+    else if (e.type === "doing") { t0[e.note] = t0[e.note] || Date.now(); busy[e.note] = "Reading: " + e.text; liveTick(); }
+    else if (e.type === "verdict") { busy[e.note] = e.verdict + ": " + e.plan; }
+    else if (e.type === "op" && busy[e.note]) { busy[e.note] = busy[e.note].replace(/ \(\d+ edits?\)$/, "") + " (" + countUp(e.note) + ")"; }
+    else if (e.type === "option") { optsState[e.set] = optsState[e.set] || { choices: {} }; optsState[e.set].choices[e.choice] = { name: e.name, ops: [] }; if (!active) active = { set: e.set, choice: e.choice }; drawOpts(); }
+    else if (e.type === "done") {
+      if (!busy[e.note] && e.verdict === "direct") return;
+      delete busy[e.note];
+      var extra = e.card ? " → card for the " + e.card.to + (e.card.id ? " (" + e.card.id + ")" : "") : "";
+      var bad = e.refused && e.refused.length ? " · " + e.refused.length + " edit(s) refused" : "";
+      say((e.s ? "Done in " + e.s + " s · " : "Done · ") + e.verdict + ": " + (e.plan || "") + (e.edits ? " · " + e.edits + " edits" : "") + extra + bad,
+          e.refused && e.refused.length ? "err" : "");
+    }
+    else if (e.type === "error") { delete busy[e.note]; say("Failed: " + e.message, "err"); }
+    else if (e.type === "frozen" || e.type === "preview" || e.type === "reload-ops" || e.type === "ship-failed") {
+      loadState();
+      if (e.type === "preview") say("Built: compare Mockup and Built, then Ship when it's right.");
+      if (e.type === "ship-failed") say("Ship failed: the merge needs the Manager" + (e.card && e.card.id ? " (" + e.card.id + ")" : ""), "err");
+    }
+  };
+  es.onerror = function () { say("Lost the design view — retrying…", "err"); };
+  es.onopen = function () { if ($("status").textContent.indexOf("Lost") === 0) say("Ready"); };
+})();

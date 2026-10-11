@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{PROJECT}} · design</title>
+<link rel="stylesheet" href="/dv/shell.css">
+</head>
+<body>
+<header id="bar">
+  <div class="row">
+    <span class="proj">{{PROJECT}}</span>
+    <span class="tools" id="tools">
+      <button data-tool="mark" title="Mark: click elements for your note (shift-click adds more)">◎ Mark</button>
+      <button data-tool="box" title="Box: draw around an area for your note">▭ Box</button>
+      <button data-tool="arrow" title="Arrow: drag from one thing to where it should go, for your note">➚ Arrow</button>
+      <button data-tool="move" title="Move: drag an element to a new place (instant, no designer)">✥ Move</button>
+      <button data-tool="text" title="Text: click a piece of text and type (instant, no designer)">T Text</button>
+    </span>
+    <span id="marks"></span>
+    <input id="note" placeholder="Tell the designer what to change…" autocomplete="off">
+    <button id="send" class="primary">Send</button>
+    <button id="undo" title="Take back the last note's changes">↶ Undo last</button>
+  </div>
+  <div class="row sub">
+    <span id="dot"></span><span id="status">Ready</span>
+    <span id="opts" hidden></span>
+    <span id="build"></span>
+  </div>
+</header>
+<div id="stage">
+  <iframe id="app" src="/app/"></iframe>
+  <svg id="ov" xmlns="http://www.w3.org/2000/svg"><defs><marker id="head" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#ff9f1c"/></marker></defs></svg>
+  <div id="compare" hidden></div>
+</div>
+<script src="/dv/shell.js"></script>
+</body>
+</html>

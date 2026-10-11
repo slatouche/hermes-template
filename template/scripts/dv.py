@@ -1,0 +1,160 @@
+#!/usr/bin/python3
+"""dv.py: the Designer's (and Manager's) handle on the design view. Every command is one quick call.
+
+  dv.py map [#/route]                  the screen's structure, as the owner last saw it (selectors to use in edits)
+  dv.py layer                          the design layer's edits so far, one per line
+  dv.py apply --group <card> [--label "<what>"] [<edit json> ...]   add edits (or one JSON edit per line on stdin);
+                                       they stream into the owner's open mockup at once, and undo together
+  dv.py undo <note id> [...]           take back notes (ids from `dv.py notes`)
+  dv.py notes                          the last notes and what each did
+  dv.py behaviors                      the ready-made interactions (behavior edits) and their options
+  dv.py propose <name> <file.js> "<why>"   propose a new behavior: saved to vault/design/behaviors/proposed/ and a
+                                       review card goes to the Manager (only approved ones are served)
+  dv.py export                         the build sheet: the layer grouped for folding into the real front end
+  dv.py preview <frontend dir> --branch <branch>   the build is ready: the owner can compare Mockup/Built and Ship
+
+Edits are the same as the quick path's: token, css, move, text, insert, attr, repeat, remove, link, behavior, screen
+(see `dv.py help-edits`). Nothing here writes the app's code.
+"""
+import json
+import pathlib
+import re
+import shutil
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+HOME = pathlib.Path.home()
+EDITS = """Edits (one JSON object each):
+{"op":"token","name":"--x","value":"..."}            change a theme token (preferred)
+{"op":"css","rule":"<selector> { ... }"}               a rule, written with the tokens
+{"op":"move","sel":"<what>","where":"before|after|into|start","ref":"<where>"}
+{"op":"text","sel":"<what>","text":"..."}     {"op":"attr","sel":"<what>","name":"<attr>","value":"..."}
+{"op":"insert","where":"before|after|into|start","ref":"<where>","html":"<plain markup>"}
+{"op":"repeat","sel":"<the list's items>","n":8,"fill":{"<part>":["a","b"],"img@src":["url","url"]}}
+   one per list: the list ends up with n items (copies of its first real one; copies click like it), and fill sets
+   each item's parts in order (text, or an attribute after @). Several repeats of one list share the same copies.
+{"op":"remove","sel":"<what>"}  (hides it)     {"op":"link","sel":"<what is clicked>","to":"#/route"}
+{"op":"screen","route":"#/name","label":"Menu label"}  then inserts with "ref":"@screen:#/name" (adds a nav link;
+   the screen shows at its route in the app's screen area, the app's own content there hidden)
+{"op":"behavior","name":"<name>","sel":"...", ...options}   see `dv.py behaviors`
+Any edit may add "on":"#/route" (one screen only). Edits apply in order and are re-applied whenever the app redraws.
+Markup: no scripts, no on* handlers, no javascript: URLs. `dv.py apply` prints how each edit fared on the owner's
+open page: that is your check."""
+BEHAVIORS = """Ready-made behaviors (set up once per element the sel matches; they work on placeholder copies too):
+  sortable  sel=<the lists> [item=<an item inside a list>]  drag items to reorder, and between every list sel matches
+            (a FLIP animation). Main deck <-> sideboard: give both lists one shared selector, e.g.
+            {"op":"behavior","name":"sortable","sel":"[data-ui=cards], [data-ui=side-cards]","item":"[data-ui=card-row]"}
+  toggle    sel=<button> target=<what shows> [class=<class to toggle>]  click shows/hides target (hidden attribute)
+  dialog    sel=<button> target=<dialog markup, inserted with hidden>  click opens it as a modal; backdrop, Escape
+            or an element with data-close closes it
+  tabs      sel=<the tab row> panels=<the panels> [class=active]  the nth tab shows the nth panel
+  toast     sel=<button> text=<message>  click shows a short message (a simulated save, export, ...)"""
+
+
+def base():
+    env = (HOME / ".hermes" / ".env").read_text()
+    port = int(re.search(r"^API_SERVER_PORT=(\d+)", env, re.M).group(1)) + 51
+    return f"http://127.0.0.1:{port}"
+
+
+def call(path, body=None, raw=False):
+    req = urllib.request.Request(base() + path, data=json.dumps(body).encode() if body is not None else None,
+                                 headers={"Content-Type": "application/json"}, method="POST" if body is not None else "GET")
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            data = r.read().decode()
+    except urllib.error.HTTPError as e:
+        data = e.read().decode()
+        sys.exit(f"dv: {json.loads(data).get('error', data) if data.startswith('{') else data}")
+    except urllib.error.URLError:
+        sys.exit("dv: the design view isn't running (design-view.sh up)")
+    return data if raw else json.loads(data)
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    if cmd == "help-edits":
+        print(EDITS)
+    elif cmd == "map":
+        r = call("/dv/map?route=" + urllib.parse.quote(rest[0] if rest else "#/"))
+        print(r["map"] or f"(no map of {r['route']} yet; screens seen: {', '.join(r['routes']) or 'none'})")
+    elif cmd == "layer":
+        for o in call("/dv/ops")["ops"]:
+            print(json.dumps({k: v for k, v in o.items() if k != "id"})[:300])
+    elif cmd == "notes":
+        for n in call("/dv/status")["notes"]:
+            print(f"{n['id']}: {n['note'][:100]} -> {n.get('verdict')}: {(n.get('plan') or '')[:80]} ({len(n.get('ops') or [])} edits)")
+    elif cmd == "apply":
+        group, label, edits = "", "", []
+        i = 0
+        while i < len(rest):
+            if rest[i] == "--group":
+                group, i = rest[i + 1], i + 2
+            elif rest[i] == "--label":
+                label, i = rest[i + 1], i + 2
+            else:
+                edits.append(rest[i])
+                i += 1
+        if not edits:
+            edits = [ln for ln in sys.stdin.read().splitlines() if ln.strip()]
+        try:
+            ops = [json.loads(e) for e in edits]
+        except ValueError as e:
+            sys.exit(f"dv: not JSON: {e}")
+        r = call("/dv/op", {"ops": ops, "group": group, "label": label or f"{len(ops)} edits"})
+        print(f"applied {len(r['ops'])} edits as {r['note']}")
+        # The owner's open page reports how each edit fared; that's the check (no browser needed).
+        seen = {}
+        for _ in range(16):
+            time.sleep(0.25)
+            seen = {k: v for k, v in call("/dv/report?ids=" + ",".join(r["ops"])).items() if v}
+            if len(seen) == len(r["ops"]):
+                break
+        if not seen:
+            print("no mockup page is open to confirm them; they apply when the owner opens it")
+        for i, op in zip(r["ops"], ops):
+            st = (seen.get(i) or {}).get("status", "not on the open screen")
+            if st != "ok":
+                print(f"  {i} {op.get('op')}: {st}")
+        if seen and all((seen.get(i) or {}).get("status") == "ok" for i in r["ops"]):
+            print("all landed on the owner's page")
+    elif cmd == "undo":
+        print(call("/dv/undo", {"notes": rest}))
+    elif cmd == "behaviors":
+        print(BEHAVIORS)
+        for p in sorted((HOME / "vault" / "design" / "behaviors").glob("*.js")):
+            m = re.search(r"/\*\s*(.*?)(?:\*/|\n)", p.read_text(errors="replace"))
+            print(f"  {p.stem:<9} {(m.group(1).strip() if m else '')[:160]}  (approved)")
+    elif cmd == "propose":
+        if len(rest) < 3 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,40}", rest[0]):
+            sys.exit('dv: propose <name> <file.js> "<why>"')
+        dest = HOME / "vault" / "design" / "behaviors" / "proposed"
+        dest.mkdir(parents=True, exist_ok=True)
+        shutil.copy(rest[1], dest / f"{rest[0]}.js")
+        out = subprocess.run(["hermes", "kanban", "create", f"Review proposed behavior: {rest[0]}", "--assignee", "manager",
+                              "--body", f"The Designer proposes a new mockup behavior '{rest[0]}': {rest[2]}\n\n"
+                              f"File: vault/design/behaviors/proposed/{rest[0]}.js\nReview it for speed, safety (no network, "
+                              f"storage or eval; registers window.__dvBehaviors.{rest[0]} = function (el, op)) and fit. "
+                              f"Approve by moving it to vault/design/behaviors/{rest[0]}.js; from then on every note can use it."],
+                             capture_output=True, text=True)
+        print(f"proposed {rest[0]}; review card: {out.stdout.strip()[:120] or out.stderr.strip()[:120]}")
+    elif cmd == "export":
+        print(call("/dv/export", raw=True))
+    elif cmd == "preview":
+        if len(rest) < 3 or rest[1] != "--branch":
+            sys.exit("dv: preview <frontend dir> --branch <branch>")
+        print(call("/dv/preview", {"dir": str(pathlib.Path(rest[0]).resolve()), "branch": rest[2]}))
+    else:
+        sys.exit(f"dv: unknown command {cmd} (dv.py help)")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

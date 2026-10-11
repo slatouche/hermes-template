@@ -45,12 +45,34 @@ Every project has a number and a block of 100 ports, laid out the same way in ev
 | `1NN00` | Hermes API (Desktop talks to it over SSH) | this machine only |
 | `1NN01` | the app | your network |
 | `1NN02`-`1NN09` | more apps or services, if the project has them | your network |
-| `1NN51` | **the mockup**: the app in work, with the Designer's look, the Mark toolbar and the nav. Your main design view | your network |
-| `1NN52`, `1NN53` | **demo 1 and demo 2**: throwaway visuals (options to pick from, palettes, swatches) | your network |
-| `1NN26`, `1NN46`, `1NN47` | what the mockup and the demos run on behind the scenes | this machine only |
+| `1NN51` | **the design view**: the app's real front end with the design layer on top, under a toolbar (notes, marking, options, Agreed/Ship). Your one design page | your network |
+| `1NN52`, `1NN53` | older projects only: demo 1 and demo 2 of the previous design setup | your network |
+| `1NN26`, `1NN46`, `1NN47` | older projects only: what the previous mockup and demos ran on | this machine only |
 | `1NN99` | the feedback inbox | your network |
 
-Example, project 1: you use the app on `10101`, and design it on `10151` (demos `10152`, `10153`). The real app has no toolbar; notes, including bugs you spot, go on the mockup, which is the same app.
+Example, project 1: you use the app on `10101`, and design it on `10151`. The real app has no toolbar; notes, including bugs you spot, go on the design view, which shows the same app.
+
+## The design view
+One page per project (`1NN51`), the same everywhere: a toolbar above the app, the app below it, never covered.
+- **Notes:** type what you want. **Mark** (click elements), **Box** (draw round an area) or **Arrow** (from this to there) to point. Each note is one direct model call: a verdict in about 2 s, then the edits stream onto the page one by one, each flashing where it lands. Typical: first change in 2–3 s, a whole new screen in about 10 s. Nothing goes through a chat session, so nothing grows or slows down over a day of notes.
+- **Instant tools, no designer:** **Move** (drag an element somewhere) and **Text** (click text and type).
+- **What a note becomes:**
+  - **quick:** done on the spot;
+  - **options:** 3 live versions, switched in the toolbar or shown **side by side**; "Use" folds one in and the rest vanish;
+  - **screen:** a new simulated page with its own nav link;
+  - **background:** the same call again with thinking on, about a minute, still live;
+  - **function:** a card for the Manager, because it needs real code;
+  - **ask:** a one-line question in the toolbar.
+- **Interactions:** behaviors (`sortable`, `toggle`, `dialog`, `tabs`, `toast`) make the mockup clickable without code. A new kind of interaction is proposed as a file and the Manager approves it; after that every note can use it.
+- **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **Undo last**, or say what to undo ("undo the colour changes").
+- **Agreed → Built → Ship:**
+  1. **Agreed** freezes the mockup and gives the Manager a build card.
+  2. The Designer folds the layer into the real front end on a branch, and the Engineer wires what must really work.
+  3. You compare **Mockup** and **Built**.
+  4. **Ship** merges into main. The layer empties and the design view starts again from the new app.
+- **Bots use `dv.py`** (on their PATH): map a screen, apply edits (they stream into your open page and report whether they landed), propose a behavior, export the build sheet, set the built preview.
+- **New projects** start from the starter front end (`workspace/frontend`: `theme.css` tokens, `ui.css` components, `screens/*.html`, logic-only `app.js`, one `api.js` door to the back end), so design can begin from nothing and stays quick to change.
+- **Imported projects** get it with `design-view.sh up --app <front-end folder>` once the Manager knows where the front end lives.
 
 ## Adopt an existing project
 A project built elsewhere (Claude Code, Codex, Cursor, another Hermes, by hand) can come in two ways.
@@ -98,8 +120,8 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 ## Working with your team
 - **Talk to the Manager** for anything: ideas, status ("where are we?"), "build it". You can also chat with a specialist directly (the Designer for design rounds); what's decided lands on the board and in the vault.
 - **What needs you** is a card blocked for you, and it waits as long as it takes. `/queue` in a Manager chat lists them; the Manager screens every new one within 15 minutes and answers the ones that aren't really yours.
-- **Mark it up:** the mockup and the demos carry the Mark toolbar (click an element or drag an area, type, Save). Notes are drafts until you press **Send**, which hands that link's notes to the team as one round; each note records where it was left, what was inside the box and a cropped picture.
-- **Design:** three views, the same in every project, with a nav badge between them. The **mockup** (`1NN51`) is the app in work: a copy of the app (your real data is never touched) with the Designer's working look, and your main view for feedback. **The mockup can also be a **prototype** (`mockup.sh proto`): a navigable skeleton site with sample data and simulated behaviour, before the app exists. **Demo 1 and 2** (`1NN52`, `1NN53`) are throwaway visuals: options side by side with "Use this one" (your pick goes straight onto the mockup), palettes, swatches, a page the app doesn't have yet. When you're happy, say **"build it"**: the Engineer builds from the look, the Designer checks the app against the mockup. **Notes on the mockup go straight to the Designer** as one round: it resumes its session for that look, designs every note in one command (`look-apply.py`: CSS or markup edits that land one by one while you watch, then checks on the page, then closes the card; the mockup and demo pages you have open update themselves as each edit lands, no reload): about a minute for plain notes, a few for an image or data. The Mark toolbar shows the round working, done, or a question; answer it there and the same Designer session carries on. When the rounds stop, a wrap-up card tidies the look. Add `?test=1` to a page's address to try the toolbar without making real work.
+- **Design:** on the design view (`1NN51`, see [The design view](#the-design-view)): notes, marks and instant edits on a live copy of the app, options side by side, then **Agreed**, **Built**, **Ship**. Bugs you spot there go in a note too: the quick judge sends anything that needs real code to the Manager.
+- **Older projects** (made before the design view) keep the previous setup (the Mark toolbar on the mockup and demos, `look-apply.py` rounds by the Designer) until they are moved over with `design-view.sh up --app <front-end folder>`.
 - **Cards remember:** a bot coming back to a card (sent back, unblocked, out of turns) resumes its session on it, and a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
 
 ## Adding Discord later

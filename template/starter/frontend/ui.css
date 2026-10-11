@@ -1,0 +1,29 @@
+/* Components, written only with the theme's tokens. */
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: var(--fs-14)/1.45 var(--font); }
+a { color: var(--accent); }
+.topbar { height: var(--topbar-h); display: flex; align-items: center; gap: var(--sp-5); padding: 0 var(--sp-5);
+  background: var(--panel); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 10; }
+.brand { display: flex; align-items: center; gap: var(--sp-2); }
+.brand h1 { font-size: var(--fs-16); margin: 0; }
+.logo { color: var(--accent); }
+.nav { display: flex; gap: var(--sp-1); }
+.nav a { color: var(--muted); text-decoration: none; padding: var(--sp-2) var(--sp-3); border-radius: var(--r-sm); }
+.nav a:hover, .nav a.active { color: var(--text); background: var(--panel-2); }
+.screen { max-width: var(--content-w); margin: 0 auto; padding: var(--sp-5); }
+.head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+.head h2 { font-size: var(--fs-20); margin: 0; }
+.muted { color: var(--muted); }
+.btn { display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); border-radius: var(--r-sm);
+  border: 1px solid var(--border); background: var(--panel); color: var(--text); font: inherit; cursor: pointer; }
+.btn:hover { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--r-md); padding: var(--sp-4); box-shadow: var(--shadow); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: var(--sp-4); }
+.stack { display: flex; flex-direction: column; gap: var(--sp-3); }
+.row { display: flex; align-items: center; gap: var(--sp-3); }
+.field { display: flex; flex-direction: column; gap: var(--sp-1); }
+.field label { font-size: var(--fs-12); color: var(--muted); }
+.input, select, textarea { padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--panel); color: var(--text); font: inherit; }
+.empty { text-align: center; padding: var(--sp-6); color: var(--muted); border: 1px dashed var(--border); border-radius: var(--r-lg); }
+.tag { display: inline-block; font-size: var(--fs-12); padding: 2px var(--sp-2); border-radius: 999px; background: var(--panel-2); border: 1px solid var(--border); color: var(--muted); }
