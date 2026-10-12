@@ -36,7 +36,7 @@ def main():
         x = subprocess.run([sys.executable, str(ROOT / "scripts" / "tidy.py"), *a], capture_output=True, text=True, env=env)
         return x.returncode, x.stdout + x.stderr
 
-    agents = ("# t: agent guide\n\n## Cards\n- **Rule A.** Do the card.\n- **Rule B.** Never pkill -f.\n"
+    agents = ("# t: agent guide\n\n## This project\nTCG-style app: decks in ProxyDecks/.\n\n## Cards\n- **Rule A.** Do the card.\n- **Rule B.** Never pkill -f.\n"
               "- **Rule A again.** Do only the card.\n\n<!-- team:start -->\n| Bot | Owns | Ask |\n|---|---|---|\n"
               "| Manager | front door | anything |\n| Engineer | code | building |\n<!-- team:end -->\n")
     w("workspace/AGENTS.md", agents)
@@ -81,7 +81,7 @@ def main():
     mp = (stage / "meaning-map.md").read_text()
     mp = mp.replace("- U1 ?", "- U1 rewritten").replace("- U2 ?", "- U2 moved: `vault/system/team-habits.md`") \
            .replace("- U3 ?", "- U3 merged: U1").replace("- U4 ?", "- U4 kept").replace("- U5 ?", "- U5 kept") \
-           .replace("- U6 ?", "- U6 removed: x")
+           .replace("- U6 ?", "- U6 removed: x").replace("- U7 ?", "- U7 kept")
     (stage / "meaning-map.md").write_text(mp)
     code, out = tidy("check", prop)
     check("check: removed needs a reason", code == 1 and "removed needs its reason" in out, out)
@@ -106,6 +106,7 @@ def main():
     check("apply: the new files are in place", code == 0 and "Rule A again" not in new_agents and "Never pkill -f: it can match" in r("vault/system/team-habits.md"), out)
     tr = r(".hermes/scripts/templates/team-rules.md")
     check("apply: the template copy follows AGENTS.md but keeps its own team table", "Rule A again" not in tr and "| Engineer |" not in tr, tr)
+    check("apply: the template copy never takes the project's own section", "This project" not in tr and "ProxyDecks" not in tr, tr)
     check("apply: AGENTS.md committed, vault files checkpointed, logged, noted", "Tidy team-rules" in subprocess.run(
         ["git", "-C", str(home / "workspace"), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout
           and "team-habits" in r("commits.txt") and "rollback" in r("log.txt") and "Merged rule A" in r("vault/system/optimiser/applied.md"))

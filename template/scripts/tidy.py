@@ -224,16 +224,23 @@ def regenerate_souls(files):
     return done
 
 
+def shared_part(text):
+    """The team rules without what's this project's own: its "## This project" section (the shared rules are what
+    an import is rendered from, and what the 6.5 KB budget is about)."""
+    return re.sub(r"^## This project\b.*?(?=^## |\Z)", "", text, count=1, flags=re.M | re.S)
+
+
 def sync_team_rules():
-    """The team rules' template copy (import-project.sh renders new imports from it) follows AGENTS.md, keeping its
-    own team table."""
+    """The team rules' template copy (import-project.sh renders new imports from it) follows AGENTS.md's shared part:
+    never this project's own section, and with its own team table."""
     tr = H / "scripts" / "templates" / "team-rules.md"
     ag = (HOME / "workspace" / "AGENTS.md").read_text(encoding="utf-8")
     if not tr.exists():
         return
     old = tr.read_text(encoding="utf-8")
     m = re.search(r"<!-- team:start -->.*?<!-- team:end -->", old, re.S)
-    new = re.sub(r"<!-- team:start -->.*?<!-- team:end -->", lambda _: m.group(0), ag, flags=re.S) if m else ag
+    new = shared_part(ag)
+    new = re.sub(r"<!-- team:start -->.*?<!-- team:end -->", lambda _: m.group(0), new, flags=re.S) if m else new
     tr.write_text(new, encoding="utf-8")
 
 

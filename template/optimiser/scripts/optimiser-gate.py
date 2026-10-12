@@ -7,7 +7,8 @@ builds (~/.hermes/builds: stages, failures), bot-written skills, memory fill and
 Wakes the Optimiser only when there is something to look at:
   - an outlier card (over twice its bot's median and over 10 min), a slow tool call (over 20 s), a big context;
   - a card shape repeated 3+ times (a step done per piece of work that may belong once, or in a script);
-  - work done by the wrong role (a Tester or Designer card that builds);
+  - work done by the wrong role (a Tester or Designer card that builds; not a builder's card under review);
+  - a system change marked applied with no owner's yes behind it (only a tidy may be applied without one);
   - the owner's replies slow (p90 over 3 min), a send-back or a block, a build that failed or got stuck;
   - a skill written or changed by a bot, a memory over 85% full, a model change, or 10+ cards done;
   - a file every bot loads (AGENTS.md: 8 KB; a SOUL: 10 KB) at 90% of its limit: what to move or merge is a proposal.
@@ -42,7 +43,6 @@ API = re.compile(r"API call #\d+.*?in=(\d+).*?out=(\d+).*?latency=([\d.]+)s")
 TOOL = re.compile(r"tool (\w+) completed \(([\d.]+)s")
 CHAT = re.compile(r"(?:tui|desktop) turn finished.*?duration=([\d.]+)s")
 TURN = re.compile(r"conversation turn:.*?platform=(\w+).*?msg='(.{0,70})")
-BUILD_WORDS = re.compile(r"^(build|add|fix|implement|land|wire|serve|make)\b", re.I)
 
 
 def kanban(*args):
@@ -200,7 +200,8 @@ def main():
         tl = [x for x in tools if s <= x[0] <= e]
         r = {"id": t["id"], "who": t.get("assignee"), "title": (t.get("title") or "")[:60],
              "min": (t["completed_at"] - t["started_at"]) / 60, "steps": len(cs), "model_s": sum(c[3] for c in cs),
-             "tool_s": sum(x[2] for x in tl), "ctx": max([c[1] for c in cs] or [0]), "tools": collections.Counter(x[1] for x in tl)}
+             "tool_s": sum(x[2] for x in tl), "ctx": max([c[1] for c in cs] or [0]), "tools": collections.Counter(x[1] for x in tl),
+             "review": bool(re.search(r"Review:(?:\*\*)?\s*tester", t.get("body") or "", re.I))}
         rows.append(r)
         per_bot[r["who"]].append(r)
         for x in tl:
@@ -215,7 +216,29 @@ def main():
     for r in rows:
         shapes[(r["who"], shape(r["title"]))].append(r)
     repeated = {k: v for k, v in shapes.items() if len(v) >= 3 and k[1]}
-    wrong = [r for r in rows if r["who"] in ("tester", "researcher", "architect") and BUILD_WORDS.match(r["title"])]
+    # building = committing to the product's code (a builder's commits name their card); a card reassigned to the
+    # Tester for its review, or a Tester fixing its own vault page, isn't building
+    committed = set(re.findall(r"t_[0-9a-f]{6,}", subprocess.run(
+        ["git", "-C", str(HOME / "workspace"), "log", "--all", "-n", "2000", "--format=%s%n%b"],
+        capture_output=True, text=True).stdout))
+    wrong = [r for r in rows if r["who"] in ("tester", "researcher", "architect") and r["id"] in committed
+             and not r["review"]]
+
+    # system changes applied with no owner's yes behind it (a tidy is the one kind the Manager applies alone)
+    log_text = (HOME / "vault" / "log.md").read_text(errors="replace") if (HOME / "vault" / "log.md").exists() else ""
+    unapproved = []
+    for f in sorted((HOME / "vault" / "system" / "changes").glob("*.md")):
+        if f.stat().st_mtime < since:
+            continue
+        text = f.read_text(errors="replace")
+        if not re.search(r"^status:\s*applied", text, re.M) or re.search(r"^kind:\s*tidy", text, re.M):
+            continue
+        by_card = any((t.get("title") or "").startswith("Owner:") and t.get("status") in ("done", "archived")
+                      and f.stem in (t.get("body") or "") + (t.get("result") or "") for t in tasks)
+        by_log = any(f.stem in line and re.search(r"\b(owner|seb)\b.*\b(yes|approved|agreed)\b", line, re.I)
+                     for line in log_text.splitlines())
+        if not (by_card or by_log):
+            unapproved.append(f.stem)
 
     # the owner's chats
     chats = [c for (_, _, ch) in logs.values() for c in ch if c[0] > since]
@@ -242,7 +265,7 @@ def main():
     state_now = {"last_run": NOW, "skills": seen, "model": model or state.get("model"), "sizes": sizes,
                  "tidied": tidied, "tidy_next": tidy_next}
     wake = (outliers or slow_tools or big or repeated or wrong or slow_chat or troubled or bad_builds or skills or full
-            or model_changed or len(done) >= 10 or near or tidy)
+            or model_changed or len(done) >= 10 or near or tidy or unapproved)
     if not wake:
         save(state_now)
         print(json.dumps({"wakeAgent": False}))
@@ -269,6 +292,11 @@ def main():
         for (who, sh), rs in sorted(repeated.items(), key=lambda kv: -len(kv[1]))[:8]:
             print(f"  - {who} '{sh}…' x{len(rs)}, median {statistics.median(r['min'] for r in rs):.1f} min "
                   f"({', '.join(r['id'] for r in rs[:5])})")
+    if unapproved:
+        print("- APPLIED WITHOUT THE OWNER'S YES (a system change needs one; only a tidy doesn't): raise each with the "
+              "owner as an Owner: card, with how to roll it back:")
+        for x in unapproved:
+            print(f"  - system/changes/{x}")
     if wrong:
         print("- building done by a role that doesn't build:")
         for r in wrong[:8]:
