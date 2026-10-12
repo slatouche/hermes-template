@@ -82,6 +82,7 @@ Edits, each a JSON object on its own line:
 {"op":"remove","sel":"<what>"}
 {"op":"link","sel":"<what is clicked>","to":"#/route"}           clicking it goes to that screen (prototype navigation)
 {"op":"undo","notes":["n3"]}                                  take back earlier notes (ids from "Notes so far")
+{"op":"redo","notes":["n3"]}                                  bring back notes that were taken back
 Any edit may add "on":"#/route" to apply on one screen only.
 Ready-made interactions (behavior edits; quick, not background):
 {"op":"behavior","name":"sortable","sel":"<the lists>","item":"<an item>"}   drag to reorder, and between all those lists
@@ -120,7 +121,7 @@ def check_op(op):
     k = op["op"]
     need = {"token": ("name", "value"), "css": ("rule",), "move": ("sel", "where", "ref"), "text": ("sel", "text"),
             "insert": ("where", "ref", "html"), "attr": ("sel", "name", "value"), "repeat": ("sel",),
-            "remove": ("sel",), "screen": ("route", "label"), "undo": ("notes",), "link": ("sel", "to"),
+            "remove": ("sel",), "screen": ("route", "label"), "undo": ("notes",), "redo": ("notes",), "link": ("sel", "to"),
             "behavior": ("name", "sel")}.get(k)
     if need is None:
         raise ValueError(f"unknown edit '{k}'")
@@ -163,7 +164,7 @@ def check_op(op):
             if f not in ("op", "name", "sel", "id", "note", "on") and (not isinstance(v, (str, int, float, bool))
                                                                        or "javascript:" in str(v).lower() or "<" in str(v)):
                 raise ValueError(f"bad behavior option {f}")
-    if k == "undo" and not (isinstance(op["notes"], list) and all(re.fullmatch(r"n\d+", str(n)) for n in op["notes"])):
+    if k in ("undo", "redo") and not (isinstance(op["notes"], list) and all(re.fullmatch(r"n\d+", str(n)) for n in op["notes"])):
         raise ValueError("undo needs note ids")
     if op.get("on") is not None and not re.fullmatch(r"#/[A-Za-z0-9_/-]*", str(op["on"])):
         raise ValueError("bad on")
@@ -180,6 +181,7 @@ class Layer:
         self.lock = threading.RLock()
         self.ops = self._read("ops.jsonl")
         self.history = self._read("history.jsonl")
+        self.undone = self._read("undone.jsonl")
         self.options = json.loads((self.root / "options.json").read_text()) if (self.root / "options.json").exists() else {}
         self.frozen = (self.root / "FROZEN").exists()
         nums = [int(o["id"][1:]) for o in self.ops if re.fullmatch(r"e\d+", str(o.get("id")))]
@@ -239,19 +241,51 @@ class Layer:
             if option:
                 self.options[option[0]]["choices"][option[1]]["ops"].append(op)
             elif op["op"] == "undo":
-                gone = set(op["notes"])
-                self.ops = [o for o in self.ops if o.get("note") not in gone]
+                self._take_back(op["notes"])
+            elif op["op"] == "redo":
+                self._bring_back(op["notes"])
             else:
                 self.ops.append(op)
             note["ops"].append(op["id"])
             self._save()
             return op
 
+    # Undo keeps what it took away (undone.jsonl, newest last), so redo can put exactly those edits back.
+    def _take_back(self, ids):
+        ids = [i for i in ids if any(o.get("note") == i for o in self.ops)]
+        for i in ids:
+            self.undone.append({"note": i, "ops": [o for o in self.ops if o.get("note") == i], "at": time.strftime("%H:%M:%S")})
+        self.undone = self.undone[-50:]
+        self.ops = [o for o in self.ops if o.get("note") not in set(ids)]
+        self._save_undone()
+        return ids
+
+    def _bring_back(self, ids):
+        back = [u for u in self.undone if u["note"] in set(ids)]
+        self.undone = [u for u in self.undone if u not in back]
+        for u in back:
+            self.ops.extend(u["ops"])
+        self._save_undone()
+        return [u["note"] for u in back]
+
+    def _save_undone(self):
+        tmp = self.root / "undone.jsonl.tmp"
+        tmp.write_text("".join(json.dumps(u) + "\n" for u in self.undone), encoding="utf-8")
+        tmp.replace(self.root / "undone.jsonl")
+
     def undo_notes(self, ids):
         with self.lock:
-            ids = set(ids)
-            self.ops = [o for o in self.ops if o.get("note") not in ids]
+            done = self._take_back(ids)
             self._save()
+            return done
+
+    def redo_notes(self, ids=None):
+        """Bring back taken-back notes (the most recent undo when none are named)."""
+        with self.lock:
+            ids = ids or ([self.undone[-1]["note"]] if self.undone else [])
+            done = self._bring_back(ids)
+            self._save()
+            return done
 
     def last_note_with_ops(self):
         with self.lock:
@@ -306,10 +340,10 @@ class Layer:
         with self.lock:
             dest = self.root / "archive" / stamp
             dest.mkdir(parents=True, exist_ok=True)
-            for name in ("ops.jsonl", "options.json", "history.jsonl", "FROZEN", "PREVIEW"):
+            for name in ("ops.jsonl", "options.json", "history.jsonl", "undone.jsonl", "FROZEN", "PREVIEW"):
                 if (self.root / name).exists():
                     (self.root / name).replace(dest / name)
-            self.ops, self.options, self.history = [], {}, []
+            self.ops, self.options, self.history, self.undone = [], {}, [], []
             self._save()
             self.frozen = False
 
@@ -473,7 +507,7 @@ class App:
                 "\n\n## The design layer so far (edits on top of the app)\n" + self.layer.summary())
 
     def ask(self, n):
-        undo = n.get("undo")
+        undo, redo = n.get("undo"), n.get("redo")
         line = lambda h: f'{h["id"]}: {h["note"][:160]} -> {h.get("verdict")}: {(h.get("plan") or "")[:100]}'
         if undo:
             # Only what is still on the page can be taken back: two lists, so "the last 3" counts the right notes.
@@ -481,6 +515,11 @@ class App:
             showing = [h for h in self.layer.history if h["id"] in live][-20:][::-1]
             notes = ("Changes still on the page, newest first (only these can be undone; \"the last N\" means 1 to N of "
                      "this list):\n" + ("\n".join(f"{i}. {line(h)}" for i, h in enumerate(showing, 1)) or "(none)"))
+        elif redo:
+            byid = {h["id"]: h for h in self.layer.history}
+            back = [byid[u["note"]] for u in self.layer.undone if u["note"] in byid][-20:][::-1]
+            notes = ("Changes that were taken back, newest first (only these can be brought back; \"the last N\" means 1 "
+                     "to N of this list):\n" + ("\n".join(f"{i}. {line(h)}" for i, h in enumerate(back, 1)) or "(none)"))
         else:
             notes = "\n".join(map(line, self.layer.history[-6:])) or "(none)"
         def mark(m):
@@ -497,6 +536,8 @@ class App:
         what = (f"Note {n['id']} is an UNDO request: take back what the owner names, as one quick part. Whole notes: an "
                 f"undo edit with their ids (\"the last 3\" = items 1 to 3 of the list). Part of a note (\"put the "
                 f"button back\"): edits that restore just that. Owner: {n['text'] or 'the last note'}") if undo \
+            else (f"Note {n['id']} is a REDO request: bring back what the owner names, as one quick part: a redo edit "
+                  f"{{\"op\":\"redo\",\"notes\":[...]}} with ids from the list. Owner: {n['text'] or 'the last undo'}") if redo \
             else f"Note {n['id']}: {n['text']}"
         return (f"Screen: {n.get('route') or '#/'}\nMap of the screen:\n{page[:9000]}\n\n"
                 f"Marked:\n{marks}\n\nNotes so far:\n{notes}\n\n{what}")
@@ -772,8 +813,8 @@ class App:
             edits += 1
             if got is not None and not option:
                 got.append(op["id"])
-            if op["op"] == "undo":
-                self.events.send("reload-ops", why=f"undid {', '.join(op['notes'])}")
+            if op["op"] in ("undo", "redo"):
+                self.events.send("reload-ops", why=f"{op['op']} {', '.join(op['notes'])}")
                 continue
             self.events.send("op", note=n["id"], op=op, option=option and {"set": option[0], "choice": option[1]},
                              s=round(time.monotonic() - t0, 2))
@@ -1042,7 +1083,7 @@ def make_handler(app):
                 if not text:
                     return self.send(400, {"error": "empty note"})
                 nid = app.layer.note_id()
-                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6], "ask": bool(d.get("ask")), "undo": bool(d.get("undo")),
+                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6], "ask": bool(d.get("ask")), "undo": bool(d.get("undo")), "redo": bool(d.get("redo")),
                                "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/")})
                 waiting = app.notes.qsize() - (0 if app.status["busy"] else 1)
                 app.events.send("received", note=nid, text=text[:140], queued=max(0, waiting))
@@ -1078,8 +1119,8 @@ def make_handler(app):
                 for op in checked:
                     op = app.layer.add(op, rec)
                     done.append(op)
-                    if op["op"] == "undo":
-                        app.events.send("reload-ops", why="undo")
+                    if op["op"] in ("undo", "redo"):
+                        app.events.send("reload-ops", why=op["op"])
                     else:
                         app.events.send("op", note=rec["id"], op=op, s=0)
                 if fresh:
@@ -1107,9 +1148,14 @@ def make_handler(app):
                 ids = [i for i in ids if i]
                 if not ids:
                     return self.send(200, {"undone": []})
-                app.layer.undo_notes(ids)
+                ids = app.layer.undo_notes(ids)
                 app.events.send("reload-ops", why=f"undid {', '.join(ids)}")
                 return self.send(200, {"undone": ids})
+            if path == "/dv/redo":                                   # bring back taken-back notes (the last undo by default)
+                ids = app.layer.redo_notes([str(i) for i in d.get("notes") or []] or None)
+                if ids:
+                    app.events.send("reload-ops", why=f"redid {', '.join(ids)}")
+                return self.send(200, {"redone": ids})
             if path == "/dv/pick":
                 ok = app.layer.pick(str(d.get("set")), str(d.get("choice")))
                 if ok:

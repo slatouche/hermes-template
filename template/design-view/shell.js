@@ -188,13 +188,13 @@
     }
   });
   function send(ask) {
-    var text = $("note").value.trim(), undo = undoMode;
-    if (undo) setUndo(false);
-    if (undo && !text) { undoLast(); return; }               // undo mode, nothing typed: take back the last note
+    var text = $("note").value.trim(), mode = undoMode;
+    if (mode) setUndo(false);
+    if (mode && !text) { if (mode === "undo") undoLast(); else redoLast(); return; }   // nothing typed: the last one
     if (!text) return;
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
-                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true && !undo, undo: undo };
+                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true && !mode, undo: mode === "undo", redo: mode === "redo" };
     if (ask === true) showAnswer("Asking: " + text.slice(0, 80), "Thinking it through…", []);
     $("note").value = "";
     post("/dv/note", body).then(function (r) { if (r.error) say("Not sent: " + r.error, "err"); })
@@ -225,21 +225,29 @@
   });
   // Undo mode: the note box asks what to undo. Enter on an empty box takes back the last note; words ("the last 3",
   // "put the Import button back") go to the designer as an undo request. Esc (or a sent note) leaves the mode.
-  var undoMode = false, notePlaceholder = $("note").placeholder;
-  function setUndo(on) {
-    undoMode = on;
-    $("undo").classList.toggle("on", on);
-    $("note").classList.toggle("undo", on);
-    $("note").placeholder = on ? "Enter: undo the last note · or say what to undo (\"the last 3\", \"put the Import button back\")" : notePlaceholder;
-    if (on) $("note").focus();
+  var undoMode = false, notePlaceholder = $("note").placeholder;   // false, "undo" or "redo"
+  var HINT = {
+    undo: "Enter: undo the last note · or say what to undo (\"the last 3\", \"put the Import button back\")",
+    redo: "Enter: bring back the last undo · or say what to bring back (\"the green button\", \"the last 2\")"
+  };
+  // Undo or Redo puts the note box in that mode; nothing happens until Enter or Send. Clicking the same button again,
+  // or Esc, leaves the mode.
+  function setUndo(mode) {
+    undoMode = mode || false;
+    $("undo").classList.toggle("on", undoMode === "undo");
+    $("redo").classList.toggle("on", undoMode === "redo");
+    $("note").classList.toggle("undo", !!undoMode);
+    $("note").placeholder = undoMode ? HINT[undoMode] : notePlaceholder;
+    if (undoMode) $("note").focus();
   }
   function undoLast() {
     post("/dv/undo", { last: true }).then(function (r) { say(r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo"); });
   }
-  $("undo").onclick = function () {
-    if (undoMode && !$("note").value.trim()) { setUndo(false); undoLast(); return; }   // clicked twice: just undo
-    setUndo(!undoMode);
-  };
+  function redoLast() {
+    post("/dv/redo", {}).then(function (r) { say(r.redone && r.redone.length ? "Brought back " + r.redone.join(", ") : "Nothing to redo"); });
+  }
+  $("undo").onclick = function () { setUndo(undoMode === "undo" ? false : "undo"); };
+  $("redo").onclick = function () { setUndo(undoMode === "redo" ? false : "redo"); };
 
   // ---- options: live switch, or side by side --------------------------------------------------------------------------
   function drawOpts() {

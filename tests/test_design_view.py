@@ -83,6 +83,18 @@ def main():
     check("edits get ids in order and keep their note", [(o["id"], o["note"]) for o in layer.ops] == [("e1", "n1"), ("e2", "n2")], layer.ops)
     layer.undo_notes([layer.last_note_with_ops()])
     check("undo last removes only the last note's edits", [o["note"] for o in layer.ops] == ["n1"], layer.ops)
+    nu = layer.new_note("to undo and redo", [], "#/")
+    layer.add({"op": "css", "rule": ".u{color:blue}"}, nu)
+    layer.finish(nu)
+    kept = [o for o in layer.ops if o["note"] == nu["id"]]
+    layer.undo_notes([nu["id"]])
+    check("undo keeps what it took back", nu["id"] not in {o["note"] for o in layer.ops}
+          and layer.undone and layer.undone[-1]["note"] == nu["id"], layer.undone[-1:])
+    check("redo puts exactly those edits back", layer.redo_notes() == [nu["id"]]
+          and [o for o in layer.ops if o["note"] == nu["id"]] == kept
+          and nu["id"] not in {u["note"] for u in layer.undone}, layer.ops[-2:])
+    layer.undo_notes([nu["id"]])
+    check("undo and redo survive a restart", m.Layer(home / "vault" / "design" / "layer").undone[-1]["note"] == nu["id"])
     n3 = layer.new_note("options", [], "#/")
     sid = layer.new_option_set(n3)
     for letter in "AB":
