@@ -19,7 +19,8 @@
     </span>
     <span id="marks"></span>
     <input id="note" placeholder="Tell the designer what to change…" autocomplete="off">
-    <button id="send" class="primary">Send</button>
+    <button id="send" class="primary" title="Send a note: it gets done (a question in a note gets judged, then done)">Send</button>
+    <button id="ask" title="Ask: an answer and suggestions, nothing on the page changes">Ask</button>
     <button id="undo" title="Take back the last note's changes">↶ Undo last</button>
   </div>
   <div class="row sub">
@@ -27,6 +28,7 @@
     <span id="opts" hidden></span>
     <span id="build"></span>
   </div>
+  <div id="answer" hidden><div class="head"><b id="answer-title"></b><button id="answer-close" title="Close">✕</button></div><div id="answer-text"></div><div id="answer-sugg"></div></div>
 </header>
 <div id="stage">
   <iframe id="app" src="/app/"></iframe>

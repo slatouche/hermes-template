@@ -42,7 +42,7 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
 
 First the plan: split the note into parts, one line each, then a line END.
-PART 1 <quick|options|screen|background|function|ask> | <one short line for the owner: what you'll do>
+PART 1 <quick|options|screen|background|function|review|ask> | <one short line for the owner: what you'll do>
 PART 2 ...
 END
 Splitting: one part per separate ask; asks about the same element or area are one part; a note with one ask is one
@@ -56,6 +56,9 @@ part; at most 5 parts. Kinds:
 - background: interaction work no ready-made behavior covers (custom animation choreography, multi-step flows, new
   kinds of widget).
 - function: it needs real behaviour or data (parsing, saving, importing, accounts). The plan line is for the Manager.
+- review: the note asks a question about what's on the page ("why is there…", "should this…", "does this make
+  sense?"). That is the owner asking you to judge it: think about whether it's right, what should be there instead,
+  and change it if it isn't. Never do a review part yourself here; it is thought through separately.
 - ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question.
 
 Then the work, under END:
@@ -95,6 +98,10 @@ element's own style="...", a css edit for those properties needs !important. Do 
 visible and clickable; it is a mockup."""
 
 PART_RULES = {
+    "review": "The owner asked a question about this: judge it. Think it through: is what they pointed at right for "
+              "this app and its users, and if not, what should be there instead? Your FIRST line must be WHY <your judgement in "
+              "one or two plain sentences, and what you are changing, or why it is fine as it is>. Then the edits that "
+              "carry it out (none if it is fine). No plan, no END.",
     "options": "Do only this part now: give 3 choices. A line OPTION A <short name>, its edits, then OPTION B and OPTION "
                "C; each set stands alone and touches only what this part is about. No plan, no END.",
     "screen": "Do only this part now: a line SCREEN #/<route> <menu label>, then insert edits with \"ref\":\"@screen\" "
@@ -369,6 +376,11 @@ def first_comment(p):
     return (m.group(1).strip() if m else "")[:140]
 
 
+ANSWER_RULES = """You are the designer of a live web app, answering the owner's question about it. Nothing on the page
+changes: you only answer. Think it through, then write a short, plain answer (at most 6 lines, no headings, no
+markdown lists longer than 4 items). If there are changes worth making, end with up to 3 lines, each:
+SUGGEST <a note the owner could send to make that change, written as the owner would write it>"""
+
 DEEP_RULES = """
 ## This note needs more than a quick change: you have time to think it through
 The plan called it background work. Build that part now, as edits (no plan, no END this time): every
@@ -481,7 +493,7 @@ class App:
             self.status["queued"] = self.notes.qsize()
             self.status["busy"] = n["id"]
             try:
-                self.run_note(n)
+                (self.run_answer if n.get("ask") else self.run_note)(n)
             except Exception as e:                                      # a failed note never stops the worker
                 self.events.send("error", note=n["id"], message=f"{type(e).__name__}: {str(e)[:200]}")
             self.status["busy"] = None
@@ -569,6 +581,35 @@ class App:
                          refused=tally["refused"], card=cards[0] if len(cards) == 1 else None, cards=cards,
                          s=rec["s"], tokens=rec["tokens"])
 
+    def run_answer(self, n):
+        """The Ask button: the designer's answer to a question, with suggestions the owner can send as notes. Nothing
+        on the page changes."""
+        mc = model_config()
+        if not mc:
+            raise RuntimeError("no model config/key for the design view")
+        rec = self.layer.new_note(n["text"], n.get("marks"), n.get("route"), nid=n["id"])
+        rec["verdict"], t0 = "answer", time.monotonic()
+        self.events.send("doing", note=n["id"], text=n["text"][:140])
+        msgs = [{"role": "system", "content": self.pack().replace(RULES.split("\n\nEdits, each")[0], ANSWER_RULES)},
+                {"role": "user", "content": self.ask(n)}]
+        lines, sugg, usage = [], [], {}
+        for kind, val in stream_lines(mc, msgs, session=f"dv-{self.project}-deep", max_tokens=6000, thinking=True):
+            if kind == "usage":
+                usage = val
+                continue
+            if val.upper().startswith("SUGGEST "):
+                sugg.append(val[8:].strip()[:200])
+            else:
+                lines.append(val)
+            self.events.send("answer", note=n["id"], title="Answer", text="\n".join(lines), suggest=sugg, kind="answer",
+                             s=round(time.monotonic() - t0, 2))
+        rec["answer"], rec["suggest"], rec["plan"] = "\n".join(lines), sugg, (lines[0] if lines else "")[:200]
+        rec["s"] = round(time.monotonic() - t0, 2)
+        rec["tokens"] = {"in": usage.get("prompt_tokens"), "cached": usage.get("prompt_cache_hit_tokens"), "out": usage.get("completion_tokens")}
+        self.layer.finish(rec)
+        self.events.send("done", note=n["id"], verdict="answer", plan="answered (see the panel)", edits=0, s=rec["s"],
+                         tokens=rec["tokens"])
+
     def run_part(self, mc, rec, n, t0, p, parts, add_up, cards):
         """One part of a note that isn't quick, in parallel with the rest: options, a new screen, or background work
         (the deep path: thinking on, the other screens' maps)."""
@@ -590,7 +631,16 @@ class App:
             else:
                 msgs = [{"role": "system", "content": self.pack()},
                         {"role": "user", "content": self.ask(n) + focus + PART_RULES[p["kind"]]}]
-                e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0, mode="edits", part=p)
+                think = p["kind"] == "review"                              # a judgement: worth the thinking time
+                whys = len(rec.get("why") or [])
+                e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
+                                                       max_tokens=8000 if think else 3000, thinking=think),
+                                          rec, n, t0, mode="edits", part=p)
+                if think and len(rec.get("why") or []) == whys:          # a review always says what it decided
+                    self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
+                                     text=(f"Changed it ({e} edit{'s' if e != 1 else ''}); no reason was given."
+                                           if e else "Looked at it and left it as it is; no reason was given."),
+                                     s=round(time.monotonic() - t0, 2))
             add_up(e, r, u)
             self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="done", edits=e,
                              s=round(time.monotonic() - t0, 2))
@@ -654,14 +704,14 @@ class App:
                 proposal = {"name": m.group(1), "why": m.group(2).strip(), "js": ""}
                 continue
             if not planned:
-                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|options|screen|background|function|ask)>?\s*\|?\s*(.*)", line, re.I)
+                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|options|screen|background|function|review|ask)>?\s*\|?\s*(.*)", line, re.I)
                 if m and len(plan) < 5:
                     plan.append({"k": int(m.group(1)), "kind": m.group(2).lower(), "text": m.group(3).strip()})
                     continue
                 m = re.match(r"VERDICT\s+<?(\w+)>?\s*\|?\s*(.*)", line, re.I)       # the single-verdict form still works
                 if m and not plan:
                     kind_ = m.group(1).lower()
-                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "options", "screen", "background", "function", "ask")
+                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "options", "screen", "background", "function", "review", "ask")
                                  else "quick", "text": m.group(2).strip()})
                     finish_plan()
                     continue
@@ -669,6 +719,12 @@ class App:
                     finish_plan()
                     continue
                 finish_plan()                 # the work started without an END line
+            if line.upper().startswith("WHY ") and part:
+                why = line[4:].strip()
+                rec.setdefault("why", []).append(why)
+                self.events.send("answer", note=n["id"], title=f"Why ({part['text'][:60]})", text=why, kind="review",
+                                 s=round(time.monotonic() - t0, 2))
+                continue
             m = re.match(r"OPTION\s+([A-Z])\b\s*[:|-]?\s*(.*)", line)
             if m:
                 if sid is None:
@@ -969,7 +1025,7 @@ def make_handler(app):
                 if not text:
                     return self.send(400, {"error": "empty note"})
                 nid = app.layer.note_id()
-                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6],
+                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6], "ask": bool(d.get("ask")),
                                "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/")})
                 waiting = app.notes.qsize() - (0 if app.status["busy"] else 1)
                 app.events.send("received", note=nid, text=text[:140], queued=max(0, waiting))

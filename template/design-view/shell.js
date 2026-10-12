@@ -186,20 +186,40 @@
       var d2 = dv(); if (d2 && tool === "mark") d2.pick(true);
     }
   });
-  function send() {
+  function send(ask) {
     var text = $("note").value.trim();
     if (!text) return;
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
-                 map: d ? d.map() : "", route: d ? d.route() : "#/" };
+                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true };
+    if (ask === true) showAnswer("Asking: " + text.slice(0, 80), "Thinking it through…", []);
     $("note").value = "";
     post("/dv/note", body).then(function (r) { if (r.error) say("Not sent: " + r.error, "err"); })
       .catch(function () { say("Not sent: the design view didn't answer", "err"); });
     marks = []; drawMarks(); clearDrawn(); if (tool === "mark") setTool("mark");
     var d3 = dv(); if (d3) d3.unpickAll();
   }
-  $("send").onclick = send;
-  $("note").addEventListener("keydown", function (e) { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); } });
+  $("send").onclick = function () { send(false); };
+  $("ask").onclick = function () { send(true); };
+
+  // ---- the answer panel: the Ask button's answer, and a review's reasoning ("why") ------------------------------------
+  function showAnswer(title, text, sugg, append) {
+    $("answer").hidden = false;
+    $("answer-title").textContent = title;
+    if (append) {
+      var div = document.createElement("div"); div.className = "why"; div.textContent = text; $("answer-text").appendChild(div);
+    } else $("answer-text").textContent = text;
+    var box = $("answer-sugg"); box.innerHTML = "";
+    (sugg || []).forEach(function (sg) {
+      var b = document.createElement("button"); b.textContent = "Do it: " + sg; b.title = "Send this as a note";
+      b.onclick = function () { $("note").value = sg; send(false); };
+      box.appendChild(b);
+    });
+  }
+  $("answer-close").onclick = function () { $("answer").hidden = true; };
+  $("note").addEventListener("keydown", function (e) {     // Enter sends; Ctrl+Enter asks
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.ctrlKey || e.metaKey); }
+  });
   $("undo").onclick = function () {
     post("/dv/undo", { last: true }).then(function (r) { say(r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo"); });
   };
@@ -353,6 +373,10 @@
       var bad = e.refused && e.refused.length ? " · " + e.refused.length + " edit(s) refused" : "";
       say((e.s ? "Done in " + e.s + " s · " : "Done · ") + e.verdict + ": " + (e.plan || "") + (e.edits ? " · " + e.edits + " edits" : "") + extra + bad,
           e.refused && e.refused.length ? "err" : "");
+    }
+    else if (e.type === "answer") {
+      if (e.kind === "review") showAnswer(e.title, e.text, [], !$("answer").hidden && $("answer-title").textContent.indexOf("Why") === 0);
+      else showAnswer(e.title, e.text, e.suggest);
     }
     else if (e.type === "error") { delete busy[e.note]; say("Failed: " + e.message, "err"); }
     else if (e.type === "frozen" || e.type === "preview" || e.type === "reload-ops" || e.type === "ship-failed") {

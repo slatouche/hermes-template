@@ -55,6 +55,8 @@ Example, project 1: you use the app on `10101`, and design it on `10151`. The re
 ## The design view
 One page per project (`1NN51`), the same everywhere: a toolbar above the app, the app below it, never covered.
 - **Notes:** type what you want. **Mark** (click elements), **Box** (draw round an area) or **Arrow** (from this to there) to point. Each note is one direct model call: a verdict in about 2 s, then the edits stream onto the page one by one, each flashing where it lands. Typical: first change in 2–3 s, a whole new screen in about 10 s. Nothing goes through a chat session, so nothing grows or slows down over a day of notes.
+- **Questions and Ask:** a question in a note ("why are there two Import buttons?") is a **review**. The designer thinks it through (10–20 s), shows its reasoning in a panel, and changes it, or keeps it and says why. **Ask** (or Ctrl+Enter) gets an answer and "Do it" suggestions, with no changes to the page.
+- **Several things in one note** are split into parts, each on its own path at the same time. Quick ones land first.
 - **Instant tools, no designer:** **Move** (drag an element somewhere) and **Text** (click text and type).
 - **What a note becomes:**
   - **quick:** done on the spot;

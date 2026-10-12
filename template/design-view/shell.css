@@ -45,3 +45,11 @@ iframe#app { position: absolute; inset: 0; width: 100%; height: 100%; border: 0;
 #compare .view { position: relative; flex: 1; overflow: hidden; min-height: 300px; }
 #compare .view iframe { position: absolute; top: 0; left: 0; border: 0; transform-origin: 0 0; background: #fff; }
 #compare .close { position: fixed; bottom: 16px; right: 20px; z-index: 6; background: #25272c; color: #e8e8ea; border: 1px solid #34373d; border-radius: 6px; padding: 6px 12px; font: inherit; cursor: pointer; }
+#answer { background: #101114; border: 1px solid #2a2c31; border-radius: 8px; padding: 8px 10px; margin-top: 2px; max-height: 40vh; overflow: auto; }
+#answer .head { display: flex; align-items: center; gap: 8px; color: #fff; }
+#answer .head b { flex: 1; font-weight: 600; }
+#answer .head button { padding: 1px 7px; }
+#answer-text { white-space: pre-wrap; color: #d6d7db; margin-top: 4px; line-height: 1.45; }
+#answer-text .why { margin-top: 4px; }
+#answer-sugg { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+#answer-sugg button { background: #1d2a3a; border-color: #2d4a6a; color: #cfe4ff; text-align: left; white-space: normal; }
