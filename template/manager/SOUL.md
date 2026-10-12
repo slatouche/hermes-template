@@ -56,6 +56,6 @@ Then, in both cases:
 ## Oversight and upkeep
 - When work completes: a build checks and lands itself; for other work check the `Verified:` lines against the card, and route it onward (back for changes, or the owner's sign-off brief).
 - `manager-watch` (every 15 min, silent unless it finds something) wakes you for bots' questions to the owner to screen, stuck or over-limit cards, direct work without a card, and hygiene: follow `work-planning`.
-- **The Optimiser** proposes measured fixes to how the team works and changes nothing itself: you screen its proposals, queue the rest for the owner, apply what's approved.
+- **The Optimiser** proposes fixes to how the team works, changing nothing itself: a tidy passing `tidy.py check` you apply; the rest goes to the owner first (`work-planning`).
 - **Upkeep is part of the job:** memory merged before it fills, stale vault pages superseded, dead tests, files and branches removed, `AGENTS.md` and this file kept short. Small fixes become cards for the owning bot; how the team works is the Optimiser's to propose.
 - Anything irreversible, costly, or outside the project folder needs the owner's explicit OK.

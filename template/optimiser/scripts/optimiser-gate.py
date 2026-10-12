@@ -11,6 +11,10 @@ Wakes the Optimiser only when there is something to look at:
   - the owner's replies slow (p90 over 3 min), a send-back or a block, a build that failed or got stuck;
   - a skill written or changed by a bot, a memory over 85% full, a model change, or 10+ cards done;
   - a file every bot loads (AGENTS.md: 8 KB; a SOUL: 10 KB) at 90% of its limit: what to move or merge is a proposal.
+Every night it also picks tonight's tidy slice (tidy.py slices: the team rules, one bot's SOUL source, skills and
+memory, the vault's system pages): the next one in the rotation whose files changed since it was last audited. The
+Optimiser rewrites it so each thing is said once, in the place it belongs, with nothing lost (the optimise skill).
+A project where nothing changed since every slice's last audit has no tidy to do.
 Otherwise the last line is {"wakeAgent": false} and the night costs nothing.
 
   optimiser-gate.py              the pack (Hermes cron, optimiser profile, nightly)
@@ -135,6 +139,23 @@ def main():
                 fill = int(100 * p.stat().st_size / cap)
                 memory.append(f"{'default' if prof == H else prof.name} {fn} {fill}%")
                 full |= fill > 85
+    # tonight's tidy: the next slice (in rotation) whose files changed since its last audit
+    tidy, tidied = None, dict(state.get("tidied") or {})
+    try:
+        sl = json.loads(subprocess.run(["/usr/bin/python3", str(H / "scripts" / "tidy.py"), "slices", "--json"],
+                                       capture_output=True, text=True, timeout=60, env=ENV).stdout or "{}")
+    except (ValueError, OSError, subprocess.TimeoutExpired):
+        sl = {}
+    order = list(sl)
+    start = int(state.get("tidy_next", 0)) % len(order) if order else 0
+    for k in order[start:] + order[:start]:
+        h = hashlib.md5("".join(f + ((HOME / f).read_text(errors="replace") if (HOME / f).exists() else "")
+                                for f in sl[k]).encode()).hexdigest()
+        if tidied.get(k) != h:
+            tidy, tidied[k] = (k, sl[k]), h
+            break
+    tidy_next = (order.index(tidy[0]) + 1) if tidy else state.get("tidy_next", 0)
+
     # what every session loads: its size against the limit, and growth since the last run
     sizes, near = {}, []
     loaded = [("AGENTS.md", HOME / "workspace" / "AGENTS.md", 8192)] + [
@@ -149,7 +170,7 @@ def main():
     model = subprocess.run(["hermes", "config", "get", "model.default"], capture_output=True, text=True, env=ENV).stdout.strip().splitlines()
     model = model[-1].strip() if model else ""
     if "--baseline" in sys.argv:
-        save({**state, "skills": seen, "model": model, "last_run": NOW, "sizes": sizes})
+        save({**state, "skills": seen, "model": model, "last_run": NOW, "sizes": sizes, "tidied": tidied})
         return 0
     model_changed = bool(model and state.get("model") and state["model"] != model)
 
@@ -218,9 +239,10 @@ def main():
                        "fix_cards": len(b.get("fix_cards") or []), "stages": {k: round(v / 60, 1) for k, v in stages.items()}})
     bad_builds = [b for b in builds if b["fails"] or b["state"] == "stuck"]
 
-    state_now = {"last_run": NOW, "skills": seen, "model": model or state.get("model"), "sizes": sizes}
+    state_now = {"last_run": NOW, "skills": seen, "model": model or state.get("model"), "sizes": sizes,
+                 "tidied": tidied, "tidy_next": tidy_next}
     wake = (outliers or slow_tools or big or repeated or wrong or slow_chat or troubled or bad_builds or skills or full
-            or model_changed or len(done) >= 10 or near)
+            or model_changed or len(done) >= 10 or near or tidy)
     if not wake:
         save(state_now)
         print(json.dumps({"wakeAgent": False}))
@@ -228,6 +250,10 @@ def main():
 
     day = lambda x: time.strftime("%Y-%m-%d %H:%M", time.localtime(x))
     print(f"Optimiser evidence since {day(since)}:")
+    if tidy:
+        print(f"- TONIGHT'S TIDY: {tidy[0]} (the optimise skill, 'Nightly tidy'): `tidy.py new {tidy[0]}`; files:")
+        for f in tidy[1]:
+            print(f"  - {f} ({(HOME / f).stat().st_size} bytes)")
     print(f"- cards done: {len(done)}")
     for who, rs in sorted(per_bot.items()):
         print(f"  - {who}: {len(rs)} cards, median {statistics.median(r['min'] for r in rs):.1f} min (max {max(r['min'] for r in rs):.1f}); "

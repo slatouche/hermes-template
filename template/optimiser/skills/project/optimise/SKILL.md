@@ -15,6 +15,17 @@ metadata:
 
 Use when the nightly `optimiser-review` job wakes you with an evidence pack, when the Manager cards you a question ("why is X slow?"), or when the owner asks "what have we learned?". The aim: a team that gets faster and more reliable and stays lean. Every change is earned by evidence, tested on a copy, and where possible removes something.
 
+Each night has up to two parts: **the nightly tidy** (when the pack names TONIGHT'S TIDY; do it first) and **findings** (sections 1-6, when the pack has evidence).
+
+## Nightly tidy (one slice a night)
+The slice is the team rules, one bot (its SOUL's source, its team page, skills it wrote, its memory) or the vault's system pages. Make it as good as it can be: each thing said once, in the place it belongs, in the plainest words, with every rule's intent and outcome kept. Rewrite freely; lose nothing.
+1. `~/.hermes/scripts/tidy.py new <slice>` stages it: copies to edit in `<stage>/new/`, the meaning map's skeleton (every unit, numbered) and the proposal page. Edit only the copies.
+2. Read `references/placement.md`, then go through every unit: does it belong here (who needs it, how often?), is it said elsewhere too, is it still true, could it be shorter or clearer, is it a procedure a skill or script should hold? Move what belongs elsewhere into the staged copy of its destination (stage it first: `tidy.py add <stage> <path>`); merge duplicates; rewrite for plain, positive, concrete instructions; bring structure in line with `vault/system/roles/_guide.md`. A bot's SOUL is generated from its role page: edit the role page (or working file), never the SOUL.
+3. Fill the meaning map: each `U<n>` of each file you changed gets `kept`, `rewritten`, `moved: `<path>``, `merged: U<n>` or `removed: <why>` (removed only when it's untrue, duplicated or followed anyway, and say which).
+4. Anything a bot loads changed (team rules, a SOUL source, memory): run its eval before and with the change, `run-eval.sh <bot>` and `run-eval.sh <bot> --trial <stage>` (team rules: the Manager's and one specialist's), and compare answer by answer. Worse on any prompt: undo that part. Write `Eval verdict: no worse` (or `better`) with both results' paths.
+5. `tidy.py check <proposal>` must pass. Fill in "What changed and why" (first line: the gist and the bytes saved per session), set `status: proposed`, and give the Manager one card: `Apply tidy: <slice>` (`Shape: quick`). Nothing better to say? No proposal: delete the stage and note "tidy <slice>: clean" in `system/optimiser/`.
+A tidy changes wording and place, never what a rule means. A change of meaning (a rule dropped because it's wrong, a new habit) is a normal proposal for the owner (section 6), not a tidy.
+
 ## 1. Read the evidence (no guessing)
 - The pack (`optimiser-gate.py`): per bot, cards done with their steps, model and tool seconds and context size; outliers; repeated card shapes; work done by the wrong role; the owner's chat reply times; builds and how each stage went; send-backs and blocks; skills changed; memory fill; a model change.
 - Open what the pack points at: `hermes kanban show <id>` (comments, block reasons, handoffs), the bot's own log (`references/card-speed.md` has the greps), the build's history (`~/.hermes/builds/<slug>.json`).

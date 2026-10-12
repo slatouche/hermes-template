@@ -95,6 +95,15 @@ def main():
     bs = builds()
     if bs:
         lines.append("builds: " + "; ".join(bs))
+    try:                                                 # tidies applied in the last day: tell the owner in a line
+        since = time.strftime("%Y-%m-%d %H:%M", time.localtime(time.time() - 86400))
+        tidies = [l[2:] for l in (HOME / "vault" / "system" / "optimiser" / "applied.md").read_text(errors="replace").splitlines()
+                  if l.startswith("- ") and l[2:18] >= since]
+        if tidies:
+            lines.append("applied by the Optimiser's tidy since yesterday (tell the owner in one line):")
+            lines += ["  " + t[:200] for t in tidies[-3:]]
+    except OSError:
+        pass
     try:
         log = [l for l in (HOME / "vault" / "log.md").read_text(errors="replace").splitlines() if re.match(r"^\d{4}-", l)]
         lines.append("last log lines:")
