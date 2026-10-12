@@ -437,6 +437,31 @@ def model_config():
 BEHAVIORS = HOME / "vault" / "design" / "behaviors"
 
 
+AGREED_HEAD = """---
+title: "Agreed designs"
+type: note
+status: active
+owner: manager
+updated: {day}
+summary: "Each design the owner agreed in the design view and that went live, with its notes (written by the design view)."
+tags: [design]
+---
+# Agreed designs
+"""
+
+
+def agreed_page(path):
+    """agreed.md is a vault page like any other: the standard header, kept current (vault-lint checks every page)."""
+    day = time.strftime("%Y-%m-%d")
+    text = path.read_text(encoding="utf-8") if path.exists() else ""
+    if not text.startswith("---\n"):
+        text = AGREED_HEAD.format(day=day) + ("\n" + text.lstrip("\n") if text.strip() else "")
+    else:
+        text = re.sub(r"^updated:.*$", f"updated: {day}", text, count=1, flags=re.M)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def behavior_check(path, name):
     """behavior-check.py's verdict on a proposed behavior, as a dict (ok, fails, notes)."""
     try:
@@ -534,6 +559,11 @@ class App:
         self.reports = {}                   # edit id -> how it fared on the owner's open page
         self.pending = {}                   # note id -> the designer's open question about it
         self.status = {"busy": None, "queued": 0}
+        if (self.layer.root / "agreed.md").exists():          # an older page without the vault's header gets it
+            try:
+                agreed_page(self.layer.root / "agreed.md")
+            except OSError:
+                pass
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.watch_app, daemon=True).start()
         self.build = {}
@@ -560,7 +590,8 @@ class App:
         brief_p = HOME / "vault" / "design" / "brief.md"
         brief = brief_p.read_text(encoding="utf-8", errors="replace")[:4000] if brief_p.exists() else "(no brief yet)"
         agreed_p = self.layer.root / "agreed.md"
-        agreed = agreed_p.read_text(encoding="utf-8", errors="replace")[:3000] if agreed_p.exists() else "(nothing agreed yet)"
+        agreed = (re.sub(r"\A---\n.*?\n---\n", "", agreed_p.read_text(encoding="utf-8", errors="replace"), count=1, flags=re.S)[:3000]
+                  if agreed_p.exists() else "(nothing agreed yet)")
         extra = "\n".join(f'{{"op":"behavior","name":"{p.stem}","sel":"..."}}   {first_comment(p)}'
                           for p in approved_behaviors())
         return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
@@ -619,7 +650,8 @@ class App:
         """One note: a single call that plans first (its parts, each with a kind) and then streams the edits for the
         quick parts. The moment the plan is in, every other part starts at the same time on its own: options and new
         screens as their own calls, background work on the deep path, function changes as Manager cards. Then the
-        check: quick edits the page says didn't take get one repair call. One note, one record, one "done"."""
+        check: edits the owner's page says didn't take (it names what holds them; every option choice is checked in
+        a hidden frame) get a repair call, and a second only when the first fixed some. One note, one record, one "done"."""
         if self.layer.frozen:
             self.events.send("done", note=n["id"], verdict="frozen", plan="The mockup is frozen while it's built.", s=0)
             return
@@ -1069,6 +1101,7 @@ class App:
         """The agreed design is live in the main app: archive the layer, and the mockup starts from the new app."""
         stamp = time.strftime("%Y%m%d-%H%M%S")
         agreed = self.layer.root / "agreed.md"
+        agreed_page(agreed)
         with agreed.open("a", encoding="utf-8") as f:
             f.write(f"\n## Live {stamp}\n" + "\n".join(f"- {h['note'][:140]}" for h in self.layer.history
                                                        if h.get("verdict") not in ("ask", "frozen")) + "\n")

@@ -234,6 +234,8 @@ EOF
     sed -e "s/<role>/$ROLE/g" -e "s/^title: .*/title: \"Eval: $DNAME\"/" -e "s/^summary: .*/summary: \"$DNAME's fixed eval, run before and after changing its SOUL or skills.\"/"       -e "s/^updated: .*/updated: $(date +%F)/" "$EV/_role.md" > "$EV/$ROLE.md"
   fi
   CHANGED+=("vault/system/evals/$ROLE.md")
+  # The index links every page: regenerate it now so the new pages aren't orphans until the next sweep.
+  /usr/bin/python3 "$HOME/.hermes/scripts/vault-index.py" "$HOME/vault" >/dev/null 2>&1 && CHANGED+=("vault/index.md") || true
   install_kit
   CHANGED+=(".hermes/profiles/$ROLE/SOUL.md" ".hermes/profiles/$ROLE/config.yaml" ".hermes/profiles/$ROLE/profile.yaml"
             ".hermes/profiles/$ROLE/memories/MEMORY.md" ".hermes/profiles/$ROLE/memories/USER.md")

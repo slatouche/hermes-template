@@ -249,6 +249,10 @@ def main():
               and any((home / "vault" / "design" / "layer2" / "archive").iterdir()), (code, st["frozen"], len(st["ops"])))
         code, body = post("/dv/landed", {})
         check("landed with nothing agreed is refused", code == 409, (code, body))
+        ag = (home / "vault" / "design" / "layer2" / "agreed.md").read_text(encoding="utf-8")
+        check("agreed.md is a vault page: the standard header, then what went live",
+              ag.startswith("---\n") and all(f"\n{k}:" in ag.split("\n---\n")[0] for k in ("title", "type", "status", "owner", "updated", "summary"))
+              and "## Live " in ag, ag[:200])
     finally:
         srv.terminate()
         srv.wait(5)
@@ -268,6 +272,8 @@ def main():
     stub = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub)
     threading.Thread(target=stub.serve_forever, daemon=True).start()
     s2 = socket.socket(); s2.bind(("127.0.0.1", 0)); port2 = s2.getsockname()[1]; s2.close()
+    (home / "vault" / "design" / "layer3").mkdir(parents=True, exist_ok=True)
+    (home / "vault" / "design" / "layer3" / "agreed.md").write_text("\n## Shipped 2026-10-01\n- an older entry\n")
     # for a real Agreed: a product repo, build.py, and a fake board on the PATH (no Hermes here)
     (home / "workspace").mkdir(exist_ok=True)
     subprocess.run("git init -q -b main && git config user.email t@t && git config user.name t && "
@@ -311,6 +317,9 @@ elif a[1] == "create":
         check("...and POST with its body and status", code == 201 and p["got"] == '{"name":"New"}', (code, p))
         o2 = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops", timeout=5).read())
         check("with a back-end copy the toolbar offers the Data refresh", o2.get("data") is True, o2.get("data"))
+        ag3 = (home / "vault" / "design" / "layer3" / "agreed.md").read_text(encoding="utf-8")
+        check("an older agreed.md gets the vault header at startup, its entries kept", ag3.startswith("---\n")
+              and "an older entry" in ag3, ag3[:150])
 
         # ---- Agreed for real (not a test copy): build.py makes the build, the Manager gets the plan card ---------
         def post2(path, body):

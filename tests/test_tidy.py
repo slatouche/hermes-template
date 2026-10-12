@@ -110,6 +110,8 @@ def main():
         ["git", "-C", str(home / "workspace"), "log", "-1", "--format=%s"], capture_output=True, text=True).stdout
           and "team-habits" in r("commits.txt") and "rollback" in r("log.txt") and "Merged rule A" in r("vault/system/optimiser/applied.md"))
     check("apply: the proposal says applied", "status: applied" in r(prop))
+    check("apply: applied.md is a vault page (the standard header)", r("vault/system/optimiser/applied.md").startswith("---\n")
+          and "\nsummary:" in r("vault/system/optimiser/applied.md"))
     code, out = tidy("rollback", prop)
     check("rollback: every file as it was", code == 0 and r("workspace/AGENTS.md") == agents and "Never pkill -f: it can" not in r("vault/system/team-habits.md"), out)
 

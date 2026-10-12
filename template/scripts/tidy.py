@@ -41,6 +41,18 @@ HOME = pathlib.Path(os.environ.get("PROJECT_HOME") or pathlib.Path.home())
 H = HOME / ".hermes"
 STAGE = HOME / "scratch" / "tidy"
 KINDS = ("kept", "rewritten", "moved", "merged", "removed")
+APPLIED_HEAD = """---
+title: "Tidies applied"
+type: system
+status: active
+owner: optimiser
+updated: {day}
+summary: "Each Optimiser tidy the Manager applied: when, what, and the command that rolls it back (written by tidy.py)."
+tags: [system, tidy]
+---
+# Tidies applied
+
+"""
 PROTECTED = {"AGENTS.md", "SOUL.md", "CLAUDE.md", "HERMES.md", ".hermes.md", ".cursorrules"}   # Hermes guards these
 LOADED = re.compile(r"^(workspace/AGENTS\.md|\.hermes/profiles/[^/]+/(SOUL\.md|memories/(MEMORY|USER)\.md)|vault/system/roles/[^/]+\.md)$")
 
@@ -344,6 +356,9 @@ def cmd_apply(path, owner_present=False):
                     f"(rollback: tidy.py rollback {p.name})", f"system/changes/{p.stem}"], capture_output=True)
     applied = HOME / "vault" / "system" / "optimiser" / "applied.md"
     applied.parent.mkdir(parents=True, exist_ok=True)
+    if not applied.exists() or not applied.read_text(encoding="utf-8").startswith("---\n"):
+        old = applied.read_text(encoding="utf-8") if applied.exists() else ""
+        applied.write_text(APPLIED_HEAD.format(day=datetime.date.today()) + old.lstrip("\n"), encoding="utf-8")
     first = re.search(r"^## What changed and why\n+(.+)$", text, re.M)
     with applied.open("a", encoding="utf-8") as fh:
         fh.write(f"- {datetime.datetime.now():%Y-%m-%d %H:%M} tidy {man['slice']}: {(first.group(1) if first else '')[:160]} "
