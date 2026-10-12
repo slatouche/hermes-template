@@ -268,6 +268,29 @@ def main():
     stub = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub)
     threading.Thread(target=stub.serve_forever, daemon=True).start()
     s2 = socket.socket(); s2.bind(("127.0.0.1", 0)); port2 = s2.getsockname()[1]; s2.close()
+    # for a real Agreed: a product repo, build.py, and a fake board on the PATH (no Hermes here)
+    (home / "workspace").mkdir(exist_ok=True)
+    subprocess.run("git init -q -b main && git config user.email t@t && git config user.name t && "
+                   "git commit -q --allow-empty -m init", shell=True, cwd=home / "workspace", check=True)
+    (home / ".hermes" / "scripts").mkdir(parents=True, exist_ok=True)
+    shutil.copy(ROOT / "scripts" / "build.py", home / ".hermes" / "scripts" / "build.py")
+    (home / ".hermes" / "scripts" / "vault-log.sh").write_text("#!/bin/bash\n")
+    (home / ".local" / "bin").mkdir(parents=True, exist_ok=True)
+    (home / ".local" / "bin" / "hermes").write_text(r'''#!/usr/bin/python3
+import json, os, sys, time, pathlib
+f = pathlib.Path(os.environ["HOME"]) / "board.json"
+board = json.loads(f.read_text()) if f.exists() else []
+a = sys.argv[1:]
+if a[1] == "list":
+    print(json.dumps(board))
+elif a[1] == "create":
+    rest = [x for x in a[3:] if x != "--json"]
+    o = dict(zip(rest[0::2], rest[1::2]))
+    c = {"id": "t_%04d" % (len(board) + 1), "title": a[2], "assignee": o.get("--assignee"), "body": o.get("--body", ""),
+         "status": "todo", "created_at": time.time()}
+    board.append(c); f.write_text(json.dumps(board)); print(json.dumps({"id": c["id"]}))
+''')
+    (home / ".local" / "bin" / "hermes").chmod(0o755)
     srv2 = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "design-view.py"), "--project", "t", "--port", str(port2),
                              "--app", str(app_dir), "--layer", str(home / "vault" / "design" / "layer3"), "--bind", "127.0.0.1",
                              "--api-proxy", f"http://127.0.0.1:{stub.server_address[1]}"],
@@ -288,6 +311,39 @@ def main():
         check("...and POST with its body and status", code == 201 and p["got"] == '{"name":"New"}', (code, p))
         o2 = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops", timeout=5).read())
         check("with a back-end copy the toolbar offers the Data refresh", o2.get("data") is True, o2.get("data"))
+
+        # ---- Agreed for real (not a test copy): build.py makes the build, the Manager gets the plan card ---------
+        def post2(path, body):
+            req = urllib.request.Request(f"http://127.0.0.1:{port2}{path}", data=json.dumps(body).encode(),
+                                         headers={"Content-Type": "application/json"}, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    return r.status, json.loads(r.read())
+            except urllib.error.HTTPError as e:
+                return e.code, json.loads(e.read() or b"{}")
+        post2("/dv/op", {"op": {"op": "token", "name": "--bg", "value": "#111"}})
+        code, r = post2("/dv/agree", {})
+        b = json.loads((home / ".hermes" / "builds" / f"{r.get('build')}.json").read_text()) if r.get("build") else {}
+        board = json.loads((home / "board.json").read_text()) if (home / "board.json").exists() else []
+        check("Agreed starts a build: branch, worktree, frozen layer", code == 200 and b.get("branch", "").startswith("design/")
+              and pathlib.Path(b.get("worktree", "/nope")).is_dir() and json.loads(urllib.request.urlopen(
+                  f"http://127.0.0.1:{port2}/dv/ops").read())["frozen"]["build"] == r.get("build"), (code, r, b))
+        check("...and the Manager's plan card names the build and its worktree, recorded as the plan card",
+              len(board) == 1 and board[0]["assignee"] == "manager" and f"Build: {r.get('build')}" in board[0]["body"]
+              and b.get("worktree", "?") in board[0]["body"] and b.get("plan_card") == board[0]["id"], (board, b.get("plan_card")))
+        time.sleep(6)
+        st = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops").read()).get("build") or {}
+        check("the toolbar follows the build's stage", st.get("state") == "planning" and st.get("rows"), st)
+        b["state"] = "live"                                  # as build.py leaves it once it went live
+        (home / ".hermes" / "builds" / f"{r['build']}.json").write_text(json.dumps(b))
+        time.sleep(6)
+        o3 = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops").read())
+        check("live: the mockup unfreezes onto the new app and the layer is archived", not o3["frozen"] and o3["ops"] == [], o3["frozen"])
+        post2("/dv/op", {"op": {"op": "token", "name": "--bg", "value": "#222"}})
+        code, r2 = post2("/dv/agree", {})
+        code, u = post2("/dv/unfreeze", {})
+        b2 = json.loads((home / ".hermes" / "builds" / f"{r2['build']}.json").read_text())
+        check("Unfreeze stops the build: nothing goes live", code == 200 and b2["state"] == "aborted", (code, u, b2["state"]))
     finally:
         srv2.terminate(); srv2.wait(5); stub.shutdown()
     shutil.rmtree(home, ignore_errors=True)                  # the temporary HOME: nothing left behind

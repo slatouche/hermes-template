@@ -150,6 +150,9 @@ if root.is_dir():
             d.rmdir()
     print(f"removed {len(removed)} skill(s) copied from the Manager" + (f": {', '.join(removed)}" if removed else ""))
 EOF
+  # Nor the Manager's plugins (the state pack is for the Manager's chats).
+  rm -rf "$P/plugins"
+  hermes -p "$ROLE" config set --force plugins.enabled '[]' >/dev/null 2>&1 || true
 
   # The SOUL is the role file's body (everything after the frontmatter), or the role's working file when it has one
   # (<role>.working.md: what the bot needs every session; the role file stays its reference, read when needed).

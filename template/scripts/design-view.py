@@ -25,6 +25,7 @@ import pathlib
 import queue
 import re
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -924,7 +925,7 @@ class App:
         archived and the mockup starts from the new app (watch_build)."""
         if self.layer.frozen:
             return {"error": "already agreed and frozen"}
-        stamp = time.strftime("%Y%m%d-%H%M")
+        stamp = time.strftime("%Y%m%d-%H%M%S")
         slug = f"design-{stamp}"
         if self.a.no_cards:                                       # a test copy: no branch, no card
             self.layer.set_state("FROZEN", {"at": stamp, "build": slug, "card": self.kanban("x", "manager", ""), "t": time.time()})

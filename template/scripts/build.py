@@ -48,6 +48,7 @@ OPEN = ("planning", "building", "checking", "reviewing", "landing")
 MAX_FAILS = 3
 CHECK_TIMEOUT = 180
 BUILD_LINE = re.compile(r"^\s*(?:\*\*)?Build:(?:\*\*)?\s*([a-z0-9][a-z0-9._-]*)\s*$", re.M | re.I)
+PAIR = re.compile(r"`([^`]+)`\s+(?:→|->|=>)\s+(?:`([^`]*)`|([^`;(—]+?)(?=\s+\(|;|\s+—\s|$))")
 REVIEW_LINE = re.compile(r"Review:(?:\*\*)?\s*tester\b", re.I)
 ENV = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""),
            XDG_RUNTIME_DIR=os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
@@ -151,20 +152,15 @@ def parse_checks(body):
         if not item:
             continue
         text = item.group(1).strip()
-        arrow = re.search(r"\s(?:→|->|=>)\s", text)
-        cmd = re.match(r"^`([^`]+)`", text) or re.search(r"`([^`]+)`", text[:arrow.start()] if arrow else text)
-        if not (cmd and arrow):
-            if text and not text.lower().startswith("not covered"):
-                manual.append(text[:160])
-            continue
-        rest = text[arrow.end():].strip()
-        exp = re.match(r"^`([^`]*)`", rest)
-        expect = exp.group(1) if exp else re.split(r"\s+\(|;|\s+—\s+", rest)[0].strip().rstrip(".,;")
-        expect = expect.strip().strip('"').strip("'") if not exp else expect
-        if not expect:
+        live = bool(re.search(r"\(live\)", text, re.I))
+        found = 0
+        for m in PAIR.finditer(text):                            # one item may hold several: `a` → `x`; `b` → `y`
+            expect = m.group(2) if m.group(2) is not None else m.group(3).strip().rstrip(".,;").strip('"').strip("'")
+            if expect:
+                checks.append({"cmd": m.group(1).strip(), "expect": expect, "live": live})
+                found += 1
+        if not found and text and not text.lower().startswith("not covered"):
             manual.append(text[:160])
-            continue
-        checks.append({"cmd": cmd.group(1).strip(), "expect": expect, "live": bool(re.search(r"\(live\)", text, re.I))})
     return checks, manual
 
 
@@ -182,23 +178,38 @@ def run_check(c, cwd):
     except subprocess.TimeoutExpired:
         rc, out, err = 124, "", f"(timed out after {CHECK_TIMEOUT} s)"
     ex = re.fullmatch(r"exit\s*(?:code\s*)?(\d+)", c["expect"].strip(), re.I)
+    exp, got = norm(c["expect"]), norm(out)
     if ex:
         ok = rc == int(ex.group(1))
+    elif re.fullmatch(r"-?\d+(?:\.\d+)?", exp):                 # a number: the whole number, never 10 for 0
+        ok = bool(re.search(r"(?<![\w.])" + re.escape(exp) + r"(?![\w.])", got)) and (rc == 0 or got == exp)
     else:
-        ok = norm(c["expect"]) in norm(out) and (rc == 0 or norm(out) == norm(c["expect"]))
+        ok = exp in got and (rc == 0 or got == exp)
     return ok, rc, (out + ("\n" + err if err.strip() else "")).strip()
 
 
-def check_card(card, cwd, live=False):
-    """Run a card's checks (the pre-landing ones, or the live ones). -> rows of (ok, check, rc, output)."""
+def check_card(card, cwd, live=False, waived=()):
+    """Run a card's checks (the pre-landing ones, or the live ones), less any a later card of the build made out of
+    date on purpose (waived, and listed as such). -> rows of (ok, check, rc, output), the items not run."""
     checks, manual = parse_checks(card.get("body") or "")
     rows = []
     for c in checks:
         if c["live"] != live:
             continue
+        if c["cmd"] in waived:
+            manual.append(f"WAIVED (out of date: {waived[c['cmd']]}): {c['cmd'][:100]}")
+            continue
         ok, rc, out = run_check(c, cwd)
         rows.append((ok, c, rc, out))
     return rows, manual
+
+
+def outdated(text):
+    """`outdated: <command> — <why>` lines in a fix card's result: checks a later card of the build changed on purpose."""
+    out = {}
+    for m in re.finditer(r"^\s*[-*]?\s*outdated:\s*`([^`]+)`\s*(?:[—:-]+\s*(.*))?$", text or "", re.M | re.I):
+        out[m.group(1).strip()] = (m.group(2) or "no reason given").strip()[:160]
+    return out
 
 
 def table(card, rows, manual):
@@ -256,6 +267,10 @@ def fail(b, why, detail, board):
                        f"## Outcome\nThe build `{b['slug']}` passes its checks again: {why}.\n\n"
                        f"## What failed (all of it, from one run)\n```\n{detail[-6000:]}\n```\n\n"
                        f"## Constraints\nFix it on the build's branch `{b['branch']}` in `{b['worktree']}` and commit there. "
+                       f"A failing check that a later card of this build made out of date on purpose (it changed that very "
+                       f"thing as its own card asked) is not a defect: leave the code, and put one line in your result per "
+                       f"such check: outdated: `<the exact command>` — <which card changed it, and why>. The build then "
+                       f"skips it and lists it as waived. "
                        f"Don't merge, restart or re-run the whole build: when this card is done the build checks "
                        f"itself again and lands.\n\n## Stop when\nThe failing checks pass in the worktree and the fix is committed.",
                        wt=b["worktree"])
@@ -281,9 +296,12 @@ def do_checking(b, board):
     else:
         report.append("(no scripts/run-tests.sh in this repo: no suite run)")
     stage(b, "checking", "re-running every card's checks")
+    by = {c["id"]: c for c in board}
+    for fid in b.get("fix_cards") or []:                         # checks a fix card says are out of date
+        b.setdefault("waived", {}).update(outdated((by.get(fid) or {}).get("result")))
     bad, tables = False, []
     for c in members(b, board):
-        rows, manual = check_card(c, cwd)
+        rows, manual = check_card(c, cwd, waived=b.get("waived") or {})
         tables.append(table(c, rows, manual))
         bad |= any(not r[0] for r in rows)
     b["check_report"] = "\n".join(report + tables)
@@ -356,7 +374,7 @@ def do_landing(b, board):
     if not down:
         stage(b, "landing", "checking the running app")
         for c in members(b, board):
-            rows, manual = check_card(c, REPO, live=True)
+            rows, manual = check_card(c, REPO, live=True, waived=b.get("waived") or {})
             if rows:
                 tables.append(table(c, rows, []))
                 live_rows += rows
@@ -373,7 +391,8 @@ def do_landing(b, board):
     git("branch", "-D", b["branch"])
     stage(b, "live", f"live at {merged[:10]}" + (f"; restarted {', '.join(units)}" if units else ""))
     comment(b.get("plan_card"), f"Build {b['slug']} is live: merged {merged[:10]} into {b['base']}"
-            + (f", restarted {', '.join(units)}" if units else "") + ".")
+            + (f", restarted {', '.join(units)}" if units else "") + "."
+            + "".join(f"\nWaived (out of date): {k} — {v}" for k, v in (b.get("waived") or {}).items()))
     vault_log(f"Build {b['slug']} is live ({merged[:10]}): {b.get('title') or b['branch']}")
 
 

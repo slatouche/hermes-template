@@ -118,21 +118,32 @@ it works
 - `false` → exit 1
 - `curl -s http://h:1/` → 200 (live)
 - the button looks right
+3. `grep -c a f.txt` → `8`; `grep -c b g.txt` → `23` (two on one line)
+4. (live) `curl -s x/stats` → `"decks": 8`
 Not covered: taste
 ## Constraints
 - `rm -rf /` → nothing (not a check: outside Verification)
 """
     cs, manual = b.parse_checks(body)
-    check("checks: five runnable items read from Verification only", len(cs) == 5, cs)
+    check("checks: every runnable check read from Verification only", len(cs) == 8, cs)
     check("checks: backticked expectation kept as written", cs[0]["expect"] == '{"ok": true}', cs[0])
     check("checks: plain expectation stops at a parenthesis", cs[1]["expect"] == "yes", cs[1])
     check("checks: trailing full stop dropped", cs[2]["expect"] == "4", cs[2])
-    check("checks: (live) marks a running-app check", [c["live"] for c in cs] == [False] * 4 + [True], cs)
+    check("checks: (live) marks a running-app check", [c["live"] for c in cs] == [False] * 4 + [True, False, False, True], cs)
+    check("checks: two checks on one line are both read", [c["expect"] for c in cs[5:7]] == ["8", "23"], cs[5:7])
+    check("checks: a (live) item with a quoted expectation", cs[7] == {"cmd": "curl -s x/stats", "expect": '"decks": 8', "live": True}, cs[7])
     check("checks: an item with no command is listed, not run", manual == ["the button looks right"], manual)
     ok, rc, out = b.run_check({"cmd": "false", "expect": "exit 1"}, home)
     check("checks: `exit <n>` compares the exit code", ok and rc == 1)
     ok, *_ = b.run_check({"cmd": "echo '{\"ok\":   true}'", "expect": '{"ok": true}'}, home)
     check("checks: whitespace differences don't fail a check", ok)
+    ok10, *_ = b.run_check({"cmd": "echo 10", "expect": "0"}, home)
+    ok0, *_ = b.run_check({"cmd": "echo '  0'", "expect": "0"}, home)
+    okin, *_ = b.run_check({"cmd": "echo 'decks: 8 total'", "expect": "8"}, home)
+    check("checks: a number matches only as a whole number", not ok10 and ok0 and okin, (ok10, ok0, okin))
+    w = b.outdated("Fixed the strip.\noutdated: `grep -c placehold.co x.html` — t_2 replaced the placeholders\n- OUTDATED: `wc -l y`")
+    check("checks: outdated lines in a fix card's result are read", w == {"grep -c placehold.co x.html": "t_2 replaced the placeholders",
+                                                                       "wc -l y": "no reason given"}, w)
 
     # ---- a build of two cards goes live in one check and one landing ---------------------------------------------
     b.cmd_start(["feat", "--title", "Two things"])
@@ -194,6 +205,26 @@ Not covered: taste
     setc(fixes[0]["id"], status="done")
     tick()
     check("fail: fixed -> live", state("fix1")["state"] == "live" and (repo / "four.txt").exists(), state("fix1")["step"])
+
+    # ---- a later card changed what an earlier card checked: the fix card says so, the build waives it -------------
+    b.cmd_start(["waive"])
+    b.cmd_ready(["waive"])
+    wt = pathlib.Path(state("waive")["worktree"])
+    ca = card("Fold", "Build: waive\n## Verification\n- `grep -c PLACEHOLDER strip.html` → `4`\n")
+    cb = card("Wire", "Build: waive\n## Verification\n- `grep -c data-bind strip.html` → `4`\n")
+    (wt / "strip.html").write_text("data-bind\n" * 4)
+    sh("git add -A && git commit -qm strip", wt)
+    setc(ca, status="done")
+    setc(cb, status="done")
+    tick()
+    fx = [c for c in board() if c["title"].startswith("Fix build waive")]
+    check("waive: the superseded check fails the build once", len(fx) == 1 and "outdated:" in fx[0]["body"])
+    setc(fx[0]["id"], status="done", result="Nothing to fix.\noutdated: `grep -c PLACEHOLDER strip.html` — Wire replaced the placeholders")
+    tick()
+    s = state("waive")
+    plan_comments = s.get("waived")
+    check("waive: then it's skipped, recorded, and the build goes live", s["state"] == "live"
+          and "grep -c PLACEHOLDER strip.html" in (s.get("waived") or {}) and "WAIVED" in s.get("check_report", ""), (s["state"], plan_comments))
 
     # ---- the running app fails after landing: main goes back, a fix card ------------------------------------------
     b.cmd_start(["bad-live"])
