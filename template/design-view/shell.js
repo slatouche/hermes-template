@@ -335,6 +335,10 @@
     var box = $("build"); box.innerHTML = "";
     function btn(text, cls, fn, title) { var b = document.createElement("button"); b.textContent = text; b.className = cls || ""; b.onclick = fn; if (title) b.title = title; box.appendChild(b); return b; }
     function lbl(t) { var s = document.createElement("span"); s.className = "lbl"; s.textContent = t; box.appendChild(s); }
+    if (build.data) btn("↻ Data", "", function () {        // the design copy's data, made the app's real data again
+      if (!confirm("Refresh the design view's data from the app's real data?\n\nAnything created, changed or deleted in the design view's copy is lost. Your real data is only read.")) return;
+      post("/dv/reset-data").then(function (r) { if (r.error) say(r.error, "err"); });
+    }, "Refresh the design copy's data from the app's real data (your real data is only read)");
     var frozen = !!build.frozen;
     $("note").disabled = frozen; $("send").disabled = frozen;
     $("note").placeholder = frozen ? "Agreed — the mockup is frozen while it's built" : "Tell the designer what to change…";
@@ -364,7 +368,7 @@
   }
   function loadState() {
     fetch("/dv/ops", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
-      build = { frozen: d.frozen, preview: d.preview };
+      build = { frozen: d.frozen, preview: d.preview, data: d.data };
       if (!build.preview && viewing === "built") view("mockup"); else drawBuild();
     }).catch(function () {});
   }
@@ -426,6 +430,10 @@
           e.refused && e.refused.length ? "err" : "");
     }
     else if (e.type === "question") { showQuestion(e); }
+    else if (e.type === "data") {
+      if (e.state === "started") { t0.data = Date.now(); busy.data = "Refreshing the data from the app's real data (" + (e.why || "asked") + ")"; liveTick(); }
+      else { delete busy.data; say(e.state === "done" ? "Data refreshed in " + e.s + " s: the page shows the app's current data" : "Data refresh failed: " + (e.text || ""), e.state === "done" ? "" : "err"); }
+    }
     else if (e.type === "answer") {
       if (e.kind === "review") showAnswer(e.title, e.text, [], !$("answer").hidden && $("answer-title").textContent.indexOf("Why") === 0);
       else showAnswer(e.title, e.text, e.suggest);

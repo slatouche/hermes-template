@@ -927,6 +927,42 @@ class App:
                                                           if h.get("verdict") not in ("ask", "frozen")) + "\n")
         self.layer.archive(stamp)
         self.events.send("reload-ops", why="shipped: the mockup now starts from the new app")
+        if self.a.api_proxy:                                    # a fresh start: the new app on today's data
+            self.reset_data(why="after Ship")
+
+    def reset_data(self, why="asked"):
+        """Make the design copy's data the app's real data again (design-view.sh reset-data: the real data is only
+        read), in the background, telling the page as it goes. One at a time."""
+        if not self.a.api_proxy:
+            return {"error": "this design view uses placeholder data; there's no copy to refresh"}
+        if self.status.get("data") == "refreshing":
+            return {"error": "already refreshing"}
+        self.status["data"] = "refreshing"
+        self.events.send("data", state="started", why=why)
+
+        def run():
+            t0 = time.monotonic()
+            try:
+                r = subprocess.run(["bash", str(HOME / ".hermes" / "scripts" / "design-view.sh"), "reset-data"],
+                                   capture_output=True, text=True, timeout=3600,
+                                   env=dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}"))
+                ok, out = r.returncode == 0, (r.stdout + r.stderr).strip().splitlines()[-1:] or [""]
+            except Exception as e:
+                ok, out = False, [str(e)]
+            for _ in range(60):                                  # the copy's back end takes a moment to answer
+                try:
+                    urllib.request.urlopen(self.a.api_proxy, timeout=2)
+                    break
+                except urllib.error.HTTPError:
+                    break
+                except (urllib.error.URLError, OSError):
+                    time.sleep(0.5)
+            self.status["data"] = None
+            self.events.send("data", state="done" if ok else "failed", text=out[0][:200], s=round(time.monotonic() - t0, 1))
+            if ok:
+                self.events.send("app-changed")                  # the page reloads onto the refreshed data
+        threading.Thread(target=run, daemon=True).start()
+        return {"ok": True}
 
     def export(self):
         """The build sheet: the layer, grouped the way a build uses it."""
@@ -1026,7 +1062,7 @@ def make_handler(app):
                 with app.layer.lock:
                     return self.send(200, {"ops": app.layer.ops, "options": app.layer.options, "config": app.layer.config(),
                                            "frozen": app.layer.state("FROZEN"), "preview": app.layer.state("PREVIEW"),
-                                           "v": app.layer.version})
+                                           "v": app.layer.version, "data": bool(app.a.api_proxy)})
             if path == "/dv/version":
                 return self.send(200, {"v": app.layer.version})
             if path == "/dv/map":
@@ -1181,6 +1217,9 @@ def make_handler(app):
                 return self.send(400 if "error" in r else 200, r)
             if path == "/dv/ship":
                 r = app.ship()
+                return self.send(409 if "error" in r else 200, r)
+            if path == "/dv/reset-data":                             # the toolbar's Data button
+                r = app.reset_data()
                 return self.send(409 if "error" in r else 200, r)
             if path == "/dv/shipped":                                # after a Manager resolved a failed merge
                 app.shipped()

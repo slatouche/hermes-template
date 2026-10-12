@@ -198,6 +198,9 @@ def main():
         r = subprocess.run([sys.executable, str(ROOT / "scripts" / "dv.py"), "apply", "--group", "t_xyz"], input='{"op":"token","name":"--bg","value":"#000"}\n',
                            capture_output=True, text=True, env=dict(os.environ, HOME=str(home)))
         check("dv.py apply sends stdin edits", r.returncode == 0 and "applied 1 edits" in r.stdout, r.stdout + r.stderr)
+        code, body = post("/dv/reset-data", {})
+        ops_now = json.loads(get("/dv/ops")[1])
+        check("placeholder data: no Data refresh, and the toolbar is told so", code == 409 and ops_now.get("data") is False, (code, body))
         code, sheet = get("/dv/export")
         check("the build sheet groups tokens and rules", code == 200 and "--bg: #000;" in sheet and "h1{color:red}" in sheet, sheet[:400])
         code, body = post("/api/decks", {"name": "New"})
@@ -261,6 +264,8 @@ def main():
             code, p = r.status, json.loads(r.read())
         check("with a back-end copy, /api GET passes through (query kept)", g == {"method": "GET", "path": "/api/decks?x=1", "got": ""}, g)
         check("...and POST with its body and status", code == 201 and p["got"] == '{"name":"New"}', (code, p))
+        o2 = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops", timeout=5).read())
+        check("with a back-end copy the toolbar offers the Data refresh", o2.get("data") is True, o2.get("data"))
     finally:
         srv2.terminate(); srv2.wait(5); stub.shutdown()
     shutil.rmtree(home, ignore_errors=True)                  # the temporary HOME: nothing left behind

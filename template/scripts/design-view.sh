@@ -29,10 +29,15 @@ APP=""; API_CMD=""; DATA=""
 # shellcheck disable=SC1090
 [ -f "$CONF" ] && . "$CONF"
 
-copy_data() {        # a fresh copy of the app's data for the design copy; the original is only read
+copy_data() {        # the design copy's data made identical to the app's; the original is only read
   [ -n "$DATA" ] && [ -e "$DATA" ] || die "no data folder to copy ($DATA)"
-  rm -rf "$DATA_COPY.new"; cp -a "$DATA" "$DATA_COPY.new"; rm -rf "$DATA_COPY"; mv "$DATA_COPY.new" "$DATA_COPY"
-  echo "copied $DATA -> $DATA_COPY"
+  local t0=$SECONDS
+  if command -v rsync >/dev/null; then              # only what changed: seconds after the first time
+    mkdir -p "$DATA_COPY"; rsync -a --delete "${DATA%/}/" "$DATA_COPY/"
+  else
+    rm -rf "$DATA_COPY.new"; cp -a "$DATA" "$DATA_COPY.new"; rm -rf "$DATA_COPY"; mv "$DATA_COPY.new" "$DATA_COPY"
+  fi
+  echo "copied $DATA -> $DATA_COPY in $((SECONDS - t0)) s"
 }
 api_up() {           # the copy of the app's back end the design view passes /api calls to
   [ -e "$DATA_COPY" ] || copy_data
@@ -105,7 +110,8 @@ EOF
     ;;
   reset-data)
     [ -n "$API_CMD" ] || die "this design view has no back-end copy (it uses mock data)"
-    copy_data; systemctl --user restart design-api; echo "data reset" ;;
+    systemctl --user stop design-api 2>/dev/null || true   # nothing writes the copy while it's refreshed
+    copy_data; systemctl --user start design-api; echo "data reset" ;;
   down)    systemctl --user disable -q --now design-view design-api 2>/dev/null || true; echo "stopped" ;;
   restart) systemctl --user restart design-view; [ -n "$API_CMD" ] && systemctl --user restart design-api; echo "restarted" ;;
   status)  systemctl --user is-active design-view 2>/dev/null || true; [ -f "$CONF" ] && cat "$CONF" ;;

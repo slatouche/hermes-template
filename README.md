@@ -64,6 +64,7 @@ One page per project (`1NN51`), the same everywhere: a toolbar above the app, th
   - **function:** a card for the Manager, because it needs real code;
   - **ask:** a one-line question in the toolbar.
 - **Interactions:** behaviors (`sortable`, `toggle`, `dialog`, `tabs`, `toast`) make the mockup clickable without code. A new kind of interaction is proposed as a file and the Manager approves it; after that every note can use it.
+- **Data:** an app with a back end runs a design copy on a copy of its data, so nothing you try touches your real data. **↻ Data** refreshes the copy from your real data (only changes are copied; your real data is only read), and Ship does it automatically. An app without a back end uses placeholder data.
 - **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **Undo last**, or say what to undo ("undo the colour changes").
 - **Agreed → Built → Ship:**
   1. **Agreed** freezes the mockup and gives the Manager a build card.
