@@ -43,14 +43,15 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
 
 First the plan: split the note into parts, one line each, then a line END.
-PART 1 <quick|options|screen|background|function|review|ask> | <one short line for the owner: what you'll do>
+PART 1 <quick|options|screen|background|function|review|ask|prefer> | <one short line for the owner: what you'll do>
 PART 2 ...
 END
 Splitting: one part per separate ask; asks about the same element or area are one part; a note with one ask is one
 part; at most 5 parts. Kinds:
 - quick: a visible change you can make now with the edits below (style, spacing, colour, move, text, add or repeat
   elements, placeholder content, a ready-made behavior, undo of named notes). A small taste remark ("a bit warmer",
-  "tighter") is quick: make your best call.
+  "tighter") is quick: make your best call. So is a problem the owner points out ("looks broken", "still wrong",
+  "too big"): fix it; that is not a question.
 - options: the owner asks for choices ("options", "try some", "which"), or a big matter of taste with several good
   answers (a whole new look for something).
 - screen: a new screen or panel that doesn't exist yet.
@@ -58,8 +59,12 @@ part; at most 5 parts. Kinds:
   kinds of widget).
 - function: it needs real behaviour or data (parsing, saving, importing, accounts). The plan line is for the Manager.
 - review: the note asks a question about what's on the page ("why is there…", "should this…", "does this make
-  sense?"). That is the owner asking you to judge it: think about whether it's right, what should be there instead,
-  and change it if it isn't. Never do a review part yourself here; it is thought through separately.
+  sense?", "is this right?"). That is the owner asking you to judge it: think about whether it's right, what should
+  be there instead, and change it if it isn't. Only for a question, never for a problem stated (that's quick). Never
+  do a review part yourself here; it is thought through separately.
+- prefer: a standing instruction about how you work with the owner, not about the page ("stop explaining unless
+  you need me", "always tell me the percentage", "use British spelling"). The plan line is the instruction in a few
+  words; it is kept and applies to every later note. To drop one they gave before: "drop: <it>".
 - ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question; when there are a
   few clear answers, add them after it, each after " :: " (e.g. "Which one should go? :: the toolbar button :: the
   nav link"). The owner's answer comes back as a new note with your question and their original note.
@@ -104,7 +109,7 @@ visible and clickable; it is a mockup."""
 PART_RULES = {
     "review": "The owner asked a question about this: judge it. Think it through: is what they pointed at right for "
               "this app and its users, and if not, what should be there instead? Your FIRST line must be WHY <your judgement in "
-              "one or two plain sentences, and what you are changing, or why it is fine as it is>. Then the edits that "
+              "one plain sentence: what you are changing, or why it is fine as it is>. Then the edits that "
               "carry it out (none if it is fine). No plan, no END.",
     "options": "Do only this part now: give 3 choices. A line OPTION A <short name>, its edits, then OPTION B and OPTION "
                "C (more when the owner asks for a range); each set stands alone and touches only what this part is "
@@ -594,7 +599,13 @@ class App:
                   if agreed_p.exists() else "(nothing agreed yet)")
         extra = "\n".join(f'{{"op":"behavior","name":"{p.stem}","sel":"..."}}   {first_comment(p)}'
                           for p in approved_behaviors())
-        return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
+        try:
+            prefs = json.loads((self.layer.root / "prefs.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prefs = []
+        standing = ("\n\n## The owner's standing instructions (keep to these in every answer and edit)\n"
+                    + "\n".join(f"- {x}" for x in prefs)) if prefs else ""
+        return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + standing + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
                 "\n\n## App theme tokens\n" + self.tokens() + "\n\n## App component classes\n" + self.classes() +
                 "\n\n## The design layer so far (edits on top of the app)\n" + self.layer.summary())
 
@@ -687,6 +698,10 @@ class App:
                     c = self.card(rec, p)
                     cards.append(c)
                     self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="card", card=c,
+                                     s=round(time.monotonic() - t0, 2))
+                elif p["kind"] == "prefer":
+                    said_ = self.prefer(p["text"])
+                    self.events.send("part", note=n["id"], k=p["k"], kind="prefer", state="done", text=said_,
                                      s=round(time.monotonic() - t0, 2))
                 elif p["kind"] == "ask":
                     q, *choices = [x.strip() for x in p["text"].split("::")]
@@ -796,24 +811,55 @@ class App:
                 msgs = [{"role": "system", "content": self.pack()},
                         {"role": "user", "content": self.ask(n) + focus + PART_RULES[p["kind"]]}]
                 think = p["kind"] == "review"                              # a judgement: worth the thinking time
-                whys = len(rec.get("why") or [])
                 e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
                                                        max_tokens=8000 if think else 3000, thinking=think),
                                           rec, n, t0, mode="edits", part=p)
                 if p["kind"] == "options":
                     e2, r2 = self.check_options(mc, msgs, rec, n, t0, f"{n['id']}-{p['k']}", p)
                     e, r = e + e2, r + r2
-                if think and len(rec.get("why") or []) == whys:          # a review always says what it decided
-                    self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
-                                     text=(f"Changed it ({e} edit{'s' if e != 1 else ''}); no reason was given."
-                                           if e else "Looked at it and left it as it is; no reason was given."),
-                                     s=round(time.monotonic() - t0, 2))
+                if think:
+                    # The reasoning is shown only when it's needed: the owner asked why, or nothing was changed (so
+                    # they know why it stays). A review that changed something says so in a line, no panel.
+                    why = p.get("why") or ("Looked at it and left it as it is." if not e else "")
+                    asked_why = re.search(r"\bwhy\b|\bhow come\b", n["text"], re.I)
+                    if why and (not e or asked_why):
+                        self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
+                                         text=why, s=round(time.monotonic() - t0, 2))
+                    elif why:
+                        self.events.send("part", note=n["id"], k=0, kind="review", state="done",
+                                         text="Changed: " + why[:140], s=round(time.monotonic() - t0, 2))
+                        if len(parts) == 1:                                # the note's "done" line says what changed
+                            rec["plan"] = "Changed: " + why[:140]
             add_up(e, r, u)
             self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="done", edits=e,
                              s=round(time.monotonic() - t0, 2))
         except Exception as ex:
             self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="failed",
                              text=f"{type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
+
+    def prefer(self, text):
+        """A standing instruction from the owner (how to work with them, not about the page): kept in the layer's
+        prefs.json and given with every later note. "drop: <it>" removes the one that matches best."""
+        f = self.layer.root / "prefs.json"
+        try:
+            prefs = json.loads(f.read_text(encoding="utf-8")) if f.exists() else []
+        except ValueError:
+            prefs = []
+        t = text.strip().strip('"')
+        if t.lower().startswith("drop:"):
+            words = set(re.findall(r"\w+", t[5:].lower()))
+            best = max(prefs, key=lambda x: len(words & set(re.findall(r"\w+", x.lower()))), default=None)
+            if best and words & set(re.findall(r"\w+", best.lower())):
+                prefs.remove(best)
+                said_ = f"Dropped: {best}"
+            else:
+                said_ = "No standing instruction like that to drop"
+        else:
+            prefs = [x for x in prefs if x.lower() != t.lower()] + [t]
+            prefs = prefs[-12:]
+            said_ = f"Kept from now on: {t}"
+        f.write_text(json.dumps(prefs, indent=1), encoding="utf-8")
+        return said_
 
     def check_options(self, mc, msgs, rec, n, t0, sid, p=None):
         """Every choice of an option set is checked: the toolbar renders each in a hidden frame at the owner's view
@@ -922,14 +968,14 @@ class App:
                 proposal = {"name": m.group(1), "why": m.group(2).strip(), "js": ""}
                 continue
             if not planned:
-                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|options|screen|background|function|review|ask)>?\s*\|?\s*(.*)", line, re.I)
+                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|options|screen|background|function|review|ask|prefer)>?\s*\|?\s*(.*)", line, re.I)
                 if m and len(plan) < 5:
                     plan.append({"k": int(m.group(1)), "kind": m.group(2).lower(), "text": m.group(3).strip()})
                     continue
                 m = re.match(r"VERDICT\s+<?(\w+)>?\s*\|?\s*(.*)", line, re.I)       # the single-verdict form still works
                 if m and not plan:
                     kind_ = m.group(1).lower()
-                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "options", "screen", "background", "function", "review", "ask")
+                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "options", "screen", "background", "function", "review", "ask", "prefer")
                                  else "quick", "text": m.group(2).strip()})
                     finish_plan()
                     continue
@@ -940,8 +986,7 @@ class App:
             if line.upper().startswith("WHY ") and part:
                 why = line[4:].strip()
                 rec.setdefault("why", []).append(why)
-                self.events.send("answer", note=n["id"], title=f"Why ({part['text'][:60]})", text=why, kind="review",
-                                 s=round(time.monotonic() - t0, 2))
+                part["why"] = why
                 continue
             m = re.match(r"OPTION\s+([A-Z])\b\s*[:|-]?\s*(.*)", line)
             if m and into:                                         # a repair of one choice: no new choices

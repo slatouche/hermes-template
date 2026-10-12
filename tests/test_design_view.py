@@ -151,6 +151,21 @@ def main():
     app.consume(stream("OPTION A Bold", '{"op":"css","rule":"h1{font-weight:800}"}'), rec, n, time.monotonic(), mode="edits", part=part)
     check("a part's options get their own set (note-part), kept apart from the note's", f"{rec['id']}-2" in app.layer.options,
           list(app.layer.options))
+    plans.clear()
+    app.consume(stream("PART 1 prefer | no reasoning unless you need a decision from me", "END"), rec, n, time.monotonic(),
+                on_plan=plans.append)
+    check("a standing instruction is its own kind of part", plans and plans[0][0]["kind"] == "prefer", plans)
+    said = app.prefer("no reasoning unless you need a decision from me")
+    app.prefer("tell me the percentage each time")
+    check("a standing instruction is kept and goes with every later note",
+          said.startswith("Kept") and "tell me the percentage each time" in app.pack() and "no reasoning unless" in app.pack(), said)
+    said = app.prefer("drop: the percentage thing")
+    check("...and 'drop:' removes the one that matches", "percentage" in said and "- tell me the percentage each time" not in app.pack()
+          and "no reasoning unless" in app.pack(), said)
+    part = {"k": 1, "kind": "review", "text": "the glow"}
+    app.consume(stream("WHY The glow stacked three shadows; one underline now.", '{"op":"css","rule":".t{text-shadow:none}"}'),
+                rec, n, time.monotonic(), mode="edits", part=part)
+    check("a review's reasoning is kept with its part (shown only when needed)", part.get("why", "").startswith("The glow"), part)
 
     # ---- the server ------------------------------------------------------------------------------------------------
     (home / ".hermes").mkdir(exist_ok=True)
