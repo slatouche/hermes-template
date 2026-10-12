@@ -409,9 +409,16 @@
     ev.preventDefault(); ev.stopPropagation();
     var el = ev.target;
     el.classList.remove("dv-hover");
+    if (el.classList.contains("dv-picked")) {             // marked already: a second click takes the mark back
+      el.classList.remove("dv-picked");
+      tell({ dv: "unpicked", sel: selectorFor(el) });
+      return;
+    }
+    if (!ev.shiftKey) qa(".dv-picked").forEach(function (e) { e.classList.remove("dv-picked"); });   // a plain click replaces
     el.classList.add("dv-picked");
     tell({ dv: "picked", mark: describe(el), add: ev.shiftKey });
   }
+  document.addEventListener("keydown", function (ev) { if (ev.key === "Escape") tell({ dv: "escape" }); });
   document.addEventListener("click", function (ev) {        // prototype links (after picking, which comes first)
     if (picking) return;
     var t = ev.target.closest && ev.target.closest("[data-dv-link]");
@@ -498,6 +505,7 @@
       if (!on) { if (hover) hover.classList.remove("dv-hover"); qa(".dv-picked").forEach(function (e) { e.classList.remove("dv-picked"); }); }
     },
     unpickAll: function () { qa(".dv-picked").forEach(function (e) { e.classList.remove("dv-picked"); }); },
+    unpick: function (sel) { qa(sel).forEach(function (e) { e.classList.remove("dv-picked"); }); },
     setOption: function (set, choice) {
       active = set && choice ? { set: set, choice: choice } : null;
       if (active) sessionStorage.setItem("dv-opt", JSON.stringify(active)); else sessionStorage.removeItem("dv-opt");

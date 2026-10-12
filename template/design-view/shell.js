@@ -145,16 +145,41 @@
       var c = document.createElement("span"); c.className = "chip";
       c.textContent = m.kind === "area" ? "▭ area" : m.kind === "arrow" ? "➚ " + (m.from || "?") : m.sel;
       c.title = "click to remove\n" + JSON.stringify({ sel: m.sel, from: m.from, to: m.to });
-      c.onclick = function () { if (m.drawn) m.drawn.remove(); marks.splice(i, 1); drawMarks(); };
+      c.onclick = function () {
+        if (m.drawn) m.drawn.remove();
+        if (m.sel && !m.kind) { var d = dv(); if (d) d.unpick(m.sel); }
+        marks.splice(i, 1); drawMarks();
+      };
       box.appendChild(c);
     });
+    if (marks.length) {
+      var x = document.createElement("span"); x.className = "chip clear"; x.textContent = "✕ Clear";
+      x.title = "Clear every mark, box and arrow (Esc)";
+      x.onclick = clearMarks;
+      box.insertBefore(x, box.firstChild);                 // first, so it's never cut off by many marks
+    }
   }
+  // Start the pointing over: every mark, box and arrow goes. Esc does the same; a second Esc leaves the tool.
+  function clearMarks() {
+    marks = []; drawMarks(); clearDrawn("rect, line");
+    var d = dv(); if (d) d.unpickAll();
+  }
+  function escape() {
+    if (marks.length || ov.querySelector("rect, line")) clearMarks();
+    else if (tool) setTool(tool);
+  }
+  addEventListener("keydown", function (ev) { if (ev.key === "Escape" && document.activeElement !== $("note")) escape(); });
+  $("note").addEventListener("keydown", function (ev) { if (ev.key === "Escape") { ev.preventDefault(); escape(); } });
   addEventListener("message", function (ev) {
     if (ev.origin !== location.origin || !ev.data || !ev.data.dv || ev.source !== frame.contentWindow) return;
     var m = ev.data;
     if (m.dv === "picked") {
-      if (!m.add) { marks = marks.filter(function (x) { return x.kind; }); var d = dv(); if (d) d.unpickAll(); }
+      if (!m.add) marks = marks.filter(function (x) { return x.kind; });   // the page already swapped the highlight
       marks.push(m.mark); drawMarks(); $("note").focus();
+    } else if (m.dv === "unpicked") {
+      marks = marks.filter(function (x) { return x.kind || x.sel !== m.sel; }); drawMarks();
+    } else if (m.dv === "escape") {
+      escape();
     } else if (m.dv === "loaded" || m.dv === "active") {
       if (m.options) optsState = m.options;
       active = m.active; drawOpts();
