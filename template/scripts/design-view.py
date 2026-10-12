@@ -107,7 +107,13 @@ PART_RULES = {
               "one or two plain sentences, and what you are changing, or why it is fine as it is>. Then the edits that "
               "carry it out (none if it is fine). No plan, no END.",
     "options": "Do only this part now: give 3 choices. A line OPTION A <short name>, its edits, then OPTION B and OPTION "
-               "C; each set stands alone and touches only what this part is about. No plan, no END.",
+               "C (more when the owner asks for a range); each set stands alone and touches only what this part is "
+               "about, and the choices differ visibly in exactly what was asked. A size: set it and release what holds "
+               "the element in the same rule (min-/max- size, flex grow/shrink, grid stretch: the map shows them). A share "
+               "of a picture (\"the top 55% of the card\") comes from its own shape (the map's \"image WxH\"): its box "
+               "gets aspect-ratio: W / (H x share), height: auto, min-height: 0, flex: none, and the img object-fit: "
+               "cover; object-position: top; e.g. the top 55% of a 488x680 picture: aspect-ratio: 488 / 374. "
+               "No plan, no END.",
     "screen": "Do only this part now: a line SCREEN #/<route> <menu label>, then insert edits with \"ref\":\"@screen\" "
               "building it top to bottom, a section per insert, using the app's classes; plus a link edit for whatever "
               "opens it. No plan, no END.",
@@ -115,6 +121,13 @@ PART_RULES = {
 
 UNSAFE_HTML = re.compile(r"<\s*(script|iframe|object|embed|link|meta|base)\b|javascript:|\son[a-z]+\s*=", re.I)
 UNSAFE_CSS = re.compile(r"</|javascript:|@import|expression\(|behavior:", re.I)
+
+
+REPAIR_RULES = ("Replace them with edits that will work. The page says what holds each one: an element's own style "
+                "attribute beats any rule (add !important, or change the attribute); a size held by min-/max-height or "
+                "-width, flex (grow/shrink) or a grid row is released in the same rule (e.g. min-height: 0; flex: none; "
+                "align-self: start); another rule that sets the same property is beaten by a more specific selector or "
+                "!important. A selector that matches nothing: use one from the map.")
 
 
 def check_op(op):
@@ -653,7 +666,7 @@ class App:
         add_up(e, r, u)
         if main_ids:
             # The check: the owner's open page measured each quick edit. Edits that matched nothing on this screen,
-            # or were beaten by an element's own style attribute, get one repair call in the same note.
+            # or didn't come out as asked (and what holds them), get one repair call in the same note.
             bad = self.not_landed(main_ids, n.get("route") or "#/")
             if bad:
                 self.events.send("part", note=n["id"], k=0, kind="check", state="fixing",
@@ -662,9 +675,7 @@ class App:
                                 for o, st in bad)
                 fix = msgs + [{"role": "assistant", "content": "\n".join(said)},
                               {"role": "user", "content": "Checked on the owner's page, these edits didn't take effect:\n" + why +
-                               "\nReplace them now with edits that will work. An element's own style attribute beats any css "
-                               "rule: add !important to those declarations (or change the attribute). A selector that matches "
-                               "nothing: use one from the map. Edits only, no plan."}]
+                               "\n" + REPAIR_RULES + " Edits only, no plan."}]
                 e, r, u, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, mode="edits")
                 add_up(e, r, u)
                 rec["repaired"] = len(bad)
@@ -739,6 +750,23 @@ class App:
                 e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
                                                        max_tokens=8000 if think else 3000, thinking=think),
                                           rec, n, t0, mode="edits", part=p)
+                sid = f"{n['id']}-{p['k']}"
+                if p["kind"] == "options" and sid in self.layer.options:
+                    ids = [o["id"] for c in self.layer.options[sid]["choices"].values() for o in c["ops"]]
+                    bad = self.not_landed(ids, n.get("route") or "#/", wait=2.5)
+                    if bad:
+                        self.events.send("part", note=n["id"], k=p["k"], kind="options", state="doing",
+                                         text=f"{len(bad)} option edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
+                        why = "\n".join(f"- {json.dumps({k: v for k, v in o.items() if k not in ('id', 'note')})[:300]}\n  -> {st}"
+                                        for o, st in bad)
+                        fix = msgs + [{"role": "user", "content": "Checked on the owner's page (the choice on show), these "
+                                       "option edits didn't take effect:\n" + why + "\nThe choices share the cause. "
+                                       + REPAIR_RULES + " Give only the extra edits that make every choice take: each is "
+                                       "added to every choice. No OPTION lines, no plan."}]
+                        e2, r2, u2, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0,
+                                                     mode="edits", part=p, into=sid)
+                        e, r, u = e + e2, r + r2, u
+                        rec["repaired"] = rec.get("repaired", 0) + len(bad)
                 if think and len(rec.get("why") or []) == whys:          # a review always says what it decided
                     self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
                                      text=(f"Changed it ({e} edit{'s' if e != 1 else ''}); no reason was given."
@@ -753,8 +781,10 @@ class App:
 
     def not_landed(self, ids, route, wait=2.0):
         """The note's edits that the owner's open page (on the note's screen) says didn't take: matched nothing, or
-        were beaten by an element's own style. Nothing to say when no page is open on that screen."""
+        didn't come out as asked (the page names what holds them). Option edits count too (the page measures the
+        choice on show). Nothing to say when no page is open on that screen."""
         byid = {o["id"]: o for o in self.layer.ops}
+        byid.update({o["id"]: o for st in self.layer.options.values() for c in st["choices"].values() for o in c["ops"]})
         ids = [i for i in ids if i in byid]
 
         def settled(i):                      # a css edit reports "ok" when applied, then its measurement
@@ -769,11 +799,11 @@ class App:
             if not r or r.get("route") != route or i not in byid:
                 continue
             st = r["status"]
-            if st.startswith("missing") or st.startswith("no effect: overridden"):
+            if st.startswith(("missing", "no effect: overridden", "didn't take")):
                 bad.append((byid[i], st))
         return bad
 
-    def consume(self, stream, rec, n, t0, mode="main", said=None, on_plan=None, got=None, part=None):
+    def consume(self, stream, rec, n, t0, mode="main", said=None, on_plan=None, got=None, part=None, into=None):
         """Read a model answer line by line, acting on each line as it arrives: the plan (main call: PART lines and
         END, handed to on_plan), option and screen markers, a behavior proposal (deep path), and the edits, each
         checked, stored and sent to the page. mode: main | edits (a part or a repair) | deep."""
@@ -853,6 +883,13 @@ class App:
                 op = check_op(op)
             except ValueError as e:
                 refused.append(f"{e}: {line[:120]}")
+                continue
+            if into and into in self.layer.options:               # a repair of an option set: the fix goes in every choice
+                for letter in list(self.layer.options[into]["choices"]):
+                    o2 = self.layer.add(dict(op), rec, (into, letter))
+                    self.events.send("op", note=n["id"], op=o2, option={"set": into, "choice": letter},
+                                     s=round(time.monotonic() - t0, 2))
+                edits += 1
                 continue
             op = self.layer.add(op, rec, option)
             edits += 1

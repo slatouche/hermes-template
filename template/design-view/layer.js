@@ -290,15 +290,91 @@
   function snap(t) {
     return t.els.map(function (el) { var cs = getComputedStyle(el); return t.props.map(function (p) { return cs.getPropertyValue(p); }).join("|"); }).join("§");
   }
+  // What was asked, per property, from the rule's own text.
+  function decls(op) {
+    var m = /\{([^}]*)\}/.exec(op.rule || ""), out = {};
+    (m ? m[1] : "").split(";").forEach(function (d) {
+      var i = d.indexOf(":"); if (i < 0) return;
+      out[d.slice(0, i).trim().toLowerCase()] = d.slice(i + 1).replace(/!important/i, "").trim();
+    });
+    return out;
+  }
+  function px(v) { var m = /^(-?[\d.]+)px$/.exec(String(v || "").trim()); return m ? parseFloat(m[1]) : null; }
+  // The value a declaration resolves to on its own (colours to rgb(), keywords as they are), from a hidden probe.
+  var probe;
+  function resolved(prop, v) {
+    if (!probe) { probe = document.createElement("div"); probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none"; document.body.appendChild(probe); }
+    probe.style.setProperty(prop, v);
+    var r = getComputedStyle(probe).getPropertyValue(prop); probe.style.removeProperty(prop); return r;
+  }
+  // Rules in the app's own stylesheets (not the layer's) that match el and set prop: what holds it.
+  function rulesSetting(el, prop) {
+    var out = [];
+    Array.prototype.forEach.call(document.styleSheets, function (sh) {
+      var owner = sh.ownerNode && sh.ownerNode.id;
+      if (owner && owner.indexOf("dv-") === 0) return;
+      var src = sh.href ? sh.href.split("/").pop().split("?")[0] : "page <style>", list;
+      try { list = sh.cssRules; } catch (e) { return; }
+      (function walk(rs) {
+        Array.prototype.forEach.call(rs || [], function (r) {
+          if (r.cssRules && !r.selectorText) return walk(r.cssRules);
+          if (!r.selectorText || !r.style || !r.style.getPropertyValue(prop)) return;
+          try { if (!el.matches(r.selectorText)) return; } catch (e) { return; }
+          out.push(prop + ": " + r.style.getPropertyValue(prop) + (r.style.getPropertyPriority(prop) ? " !important" : "") + " (" + src + " " + r.selectorText.slice(0, 50) + ")");
+        });
+      })(list);
+    });
+    var own = el.style.getPropertyValue(prop);
+    if (own) out.push(prop + ": " + own + " (the element's own style attribute)");
+    return out;
+  }
+  // Why a size didn't come out as asked: min/max, flex, grid stretch, aspect-ratio.
+  function sizeHolds(el, prop) {
+    var cs = getComputedStyle(el), ps = el.parentElement ? getComputedStyle(el.parentElement) : null, out = [];
+    var mn = cs.getPropertyValue("min-" + prop), mx = cs.getPropertyValue("max-" + prop);
+    if (mn && mn !== "0px" && mn !== "auto") out = out.concat(rulesSetting(el, "min-" + prop).slice(0, 2).concat(rulesSetting(el, "min-" + prop).length ? [] : ["min-" + prop + ": " + mn]));
+    if (mx && mx !== "none") out = out.concat(rulesSetting(el, "max-" + prop).slice(0, 2).concat(rulesSetting(el, "max-" + prop).length ? [] : ["max-" + prop + ": " + mx]));
+    if (ps && /flex/.test(ps.display)) {
+      var row = /row/.test(ps.flexDirection), main = row ? "width" : "height";
+      if (prop === main && (parseFloat(cs.flexGrow) > 0 || parseFloat(cs.flexShrink) > 0)) {
+        var fr = rulesSetting(el, "flex").concat(rulesSetting(el, "flex-grow"));
+        out.push("flex: " + cs.flexGrow + " " + cs.flexShrink + " " + cs.flexBasis + " in a flex " + (row ? "row" : "column") + (fr.length ? " (" + fr[0].replace(/^[^(]*\(/, "").replace(/\)$/, "") + ")" : ""));
+      }
+      if (prop !== main && /stretch|normal/.test(cs.alignSelf) && /stretch|normal/.test(ps.alignItems)) out.push("stretched across its flex line (align-items/align-self: stretch)");
+    }
+    if (ps && /grid/.test(ps.display) && prop === "height" && /stretch|normal/.test(cs.alignSelf)) out.push("stretched to its grid row (align-self: stretch)");
+    if (cs.aspectRatio && cs.aspectRatio !== "auto") out.push("aspect-ratio: " + cs.aspectRatio);
+    return out;
+  }
   function measure(op, before, t) {
     setTimeout(function () {
-      if (!t.els.length) effect[op.id] = "missing: nothing on this screen matches " + t.sel;
-      else if (snap(t) === before) {
-        var own = [];
-        t.els.forEach(function (el) { t.props.forEach(function (p) { var v = el.style.getPropertyValue(p); if (v && own.indexOf(p + ": " + v) < 0) own.push(p + ": " + v); }); });
-        effect[op.id] = own.length ? "no effect: overridden by the element's own style attribute (" + own.slice(0, 4).join("; ") + ")"
-                                   : "no visible change (already so, or a more specific rule wins)";
-      } else effect[op.id] = "ok: changed";
+      if (!t.els.length) { effect[op.id] = "missing: nothing on this screen matches " + t.sel; report(); return; }
+      var want = decls(op), wrong = [], judged = 0;
+      t.els.slice(0, 3).forEach(function (el) {
+        var cs = getComputedStyle(el);
+        Object.keys(want).forEach(function (p) {
+          var v = want[p];
+          if (/var\(|calc\(|%|em\b|inherit|initial|unset|auto/i.test(v)) return;       // can't judge on its own: before/after decides
+          var got, ok; judged++;
+          if ((p === "height" || p === "width") && px(v) !== null) {
+            got = el.getBoundingClientRect()[p];
+            if (cs.boxSizing !== "border-box") got -= p === "height"
+              ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
+              : parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
+            ok = Math.abs(got - px(v)) <= 1; got = Math.round(got) + "px";
+          } else {
+            got = cs.getPropertyValue(p); ok = !got || got === resolved(p, v) || got === v;
+          }
+          if (ok) return;
+          var why = (p === "height" || p === "width") ? sizeHolds(el, p) : [];
+          why = why.concat(rulesSetting(el, p).filter(function (r) { return r.indexOf(v) < 0; }).slice(0, 2));
+          var line = p + " asked " + v + ", is " + got + (why.length ? ": held by " + why.slice(0, 4).join("; ") : "");
+          if (wrong.indexOf(line) < 0) wrong.push(line);
+        });
+      });
+      if (wrong.length) effect[op.id] = "didn't take: " + wrong.slice(0, 3).join(" | ");
+      else if (snap(t) === before) effect[op.id] = judged ? "ok: already so" : "no visible change (already so, or a more specific rule wins)";
+      else effect[op.id] = "ok: changed";
       report();
     }, 450);
   }
@@ -348,6 +424,18 @@
     var r = el.getBoundingClientRect();
     return r.width > 0 || r.height > 0 || el.children.length > 0;
   }
+  function holds(el) {
+    var cs = getComputedStyle(el), ps = el.parentElement ? getComputedStyle(el.parentElement) : null, h = [];
+    ["min-height", "min-width"].forEach(function (p) { var v = cs.getPropertyValue(p); if (v && v !== "0px" && v !== "auto") h.push(p + " " + v); });
+    ["max-height", "max-width"].forEach(function (p) { var v = cs.getPropertyValue(p); if (v && v !== "none") h.push(p + " " + v); });
+    if (ps && /flex/.test(ps.display) && parseFloat(cs.flexGrow) > 0) h.push("flex-grow " + cs.flexGrow + " (" + (/column/.test(ps.flexDirection) ? "column" : "row") + ")");
+    if (cs.aspectRatio && cs.aspectRatio !== "auto") h.push("aspect-ratio " + cs.aspectRatio);
+    if (el.tagName === "IMG" && el.naturalWidth) {                // the picture's own shape: "55% of the card" is computable
+      h.push("image " + el.naturalWidth + "x" + el.naturalHeight + (cs.objectFit && cs.objectFit !== "fill" ? ", object-fit " + cs.objectFit : "")
+             + (cs.objectPosition && cs.objectPosition !== "50% 50%" ? " " + cs.objectPosition : ""));
+    }
+    return h.join(", ");
+  }
   function map(maxLines) {
     var out = [], max = maxLines || 220;
     function walk(el, depth) {
@@ -361,6 +449,8 @@
           (depth < 5 ? "  (" + Math.round(r.width) + "x" + Math.round(r.height) + ")" : "");
         var inline = c.getAttribute("style");                 // its own style beats any css rule: show it
         if (inline) line += ' style="' + inline.replace(/\s+/g, " ").slice(0, 90) + '"';
+        var hold = holds(c);                                  // what decides its size besides a width/height edit
+        if (hold) line += " [" + hold + "]";
         out.push(line);
         walk(c, depth + 1);
         i += n - 1;
