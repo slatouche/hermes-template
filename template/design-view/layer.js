@@ -127,8 +127,9 @@
       return "ok";
     }
     if (op.op === "repeat") {
-      // The list ends up with n items (copies of its first real one), then "fill" sets each item's parts in order:
-      // {"<part>": [...texts], "<part>@<attr>": [...values]}; "" or ":self" is the item itself. Copies count by
+      // The list ends up with n items (copies of its first real one), then "fill" sets the copies' parts in order:
+      // {"<part>": [...texts], "<part>@<attr>": [...values]}; "" or ":self" is the item itself. The list's real items
+      // keep their real content (a real deck keeps its real cover): fill never touches them. Copies count by
       // selector, so several repeats of the same list share one set of copies.
       var items = qa(op.sel);
       var src = items.filter(function (e) { return !e.hasAttribute("data-dv-repeat"); })[0];
@@ -146,10 +147,11 @@
         c.addEventListener("click", forward(src));   // a copy clicks like the original
         last.after(c); last = c; items.push(c);
       }
+      var copies = items.filter(function (e) { return e.hasAttribute("data-dv-repeat"); });
       Object.keys(fill).forEach(function (k) {
         var parts = k.split("@"), part = parts[0].trim(), attr = parts[1];
         (fill[k] || []).forEach(function (v, j) {
-          var it = items[j]; if (!it || v == null) return;
+          var it = copies[j]; if (!it || v == null) return;
           var t = !part || part === ":self" ? it : it.querySelector(part);
           if (!t) return;
           if (!attr && t.tagName === "IMG") attr = "src";       // an image's "text" is its picture

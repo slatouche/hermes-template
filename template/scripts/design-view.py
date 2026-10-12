@@ -85,8 +85,9 @@ Edits, each a JSON object on its own line:
 {"op":"insert","where":"before|after|into|start","ref":"<where>","html":"<markup>"}
 {"op":"attr","sel":"<what>","name":"<attribute>","value":"<value>"}
 {"op":"repeat","sel":"<the list's items>","n":8,"fill":{"<part>":["text 1","text 2"],"img@src":["url 1","url 2"]}}
-    one per list: the list ends up with n items (copies of its first), and fill sets each item's parts in order
-    (text, or an attribute after @). Build one item, then repeat it; never insert the same item many times.
+    one per list: the list ends up with n items (copies of its first), and fill sets the added copies' parts in
+    order (text, or an attribute after @); the list's real items keep their real content. Build one item, then repeat
+    it; never insert the same item many times.
 {"op":"remove","sel":"<what>"}
 {"op":"link","sel":"<what is clicked>","to":"#/route"}           clicking it goes to that screen (prototype navigation)
 {"op":"undo","notes":["n3"]}                                  take back earlier notes (ids from "Notes so far")
