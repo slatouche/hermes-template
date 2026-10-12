@@ -76,8 +76,10 @@ Ready-made interactions (behavior edits; use them instead of calling something b
 - function: it needs real behaviour or data (parsing, saving, importing, accounts). No edits; one line for the Manager.
 - ask: you can't tell what they want (e.g. a bare "undo"). No edits; the plan line is one short question.
 Rules: prefer token edits; one-off CSS only when the note names one element. Selectors must match the map you are
-given. Markup is plain HTML: no scripts, no on* handlers, no javascript: URLs; placeholder text and images
-(https://placehold.co/WxH) are fine. Do the minimum that makes the change visible and clickable; it is a mockup."""
+given. Markup is plain HTML with classes: no style attributes (style it with css edits), no scripts, no on* handlers,
+no javascript: URLs; placeholder text and images (https://placehold.co/WxH) are fine. Where the map shows an
+element's own style="...", a css edit for those properties needs !important. Do the minimum that makes the change
+visible and clickable; it is a mockup."""
 
 UNSAFE_HTML = re.compile(r"<\s*(script|iframe|object|embed|link|meta|base)\b|javascript:|\son[a-z]+\s*=", re.I)
 UNSAFE_CSS = re.compile(r"</|javascript:|@import|expression\(|behavior:", re.I)
@@ -474,8 +476,27 @@ class App:
         t0 = time.monotonic()
         self.events.send("doing", note=n["id"], text=n["text"][:140])
         msgs = [{"role": "system", "content": self.pack()}, {"role": "user", "content": self.ask(n)}]
-        edits, refused, usage, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0)
+        said = []
+        edits, refused, usage, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0, said=said)
         card = None
+        if rec["verdict"] in ("quick", "screen") and rec["ops"]:
+            # The check: the owner's open page measured each edit. Edits that matched nothing on this screen, or were
+            # beaten by an element's own style attribute, get one repair call in the same note.
+            bad = self.not_landed(rec, n.get("route") or "#/")
+            if bad:
+                self.events.send("verdict", note=n["id"], verdict=rec["verdict"],
+                                 plan=f"{len(bad)} edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
+                why = "\n".join(f"- {json.dumps({k: v for k, v in o.items() if k not in ('id', 'note')})[:300]}\n  -> {st}"
+                                for o, st in bad)
+                fix = msgs + [{"role": "assistant", "content": "\n".join(said)},
+                              {"role": "user", "content": "Checked on the owner's page, these edits didn't take effect:\n" + why +
+                               "\nReplace them now with edits that will work. An element's own style attribute beats any css "
+                               "rule: add !important to those declarations (or change the attribute). A selector that matches "
+                               "nothing: use one from the map. Edits only, no VERDICT line."}]
+                e2, r2, u2, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, deep=True)
+                edits, refused = edits + e2, refused + r2
+                usage = {k: (usage.get(k) or 0) + (u2.get(k) or 0) for k in ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens")}
+                rec["repaired"] = len(bad)
         if rec["verdict"] == "background":
             # The deep path: the same kind of call with thinking on and the other screens' maps, still no agent.
             self.events.send("verdict", note=n["id"], verdict="background",
@@ -502,7 +523,29 @@ class App:
         self.events.send("done", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], edits=edits, refused=refused,
                          card=card, s=rec["s"], tokens=rec["tokens"])
 
-    def consume(self, stream, rec, n, t0, deep=False):
+    def not_landed(self, rec, route, wait=2.0):
+        """The note's edits that the owner's open page (on the note's screen) says didn't take: matched nothing, or
+        were beaten by an element's own style. Nothing to say when no page is open on that screen."""
+        byid = {o["id"]: o for o in self.layer.ops}
+        ids = [i for i in rec["ops"] if i in byid]
+
+        def settled(i):                      # a css edit reports "ok" when applied, then its measurement
+            r = self.reports.get(i)
+            return bool(r) and not (byid[i]["op"] == "css" and r["status"] == "ok")
+        end = time.monotonic() + wait
+        while time.monotonic() < end and not all(settled(i) for i in ids):
+            time.sleep(0.15)
+        bad = []
+        for i in ids:
+            r = self.reports.get(i)
+            if not r or r.get("route") != route or i not in byid:
+                continue
+            st = r["status"]
+            if st.startswith("missing") or st.startswith("no effect: overridden"):
+                bad.append((byid[i], st))
+        return bad
+
+    def consume(self, stream, rec, n, t0, deep=False, said=None):
         """Read a model answer line by line: the verdict, option and screen markers, a behavior proposal (deep path),
         and the edits, each checked, stored and sent to the page as it arrives."""
         option, screen, edits, refused, usage, sid, proposal = None, None, 0, [], {}, None, None
@@ -511,6 +554,8 @@ class App:
                 usage = val
                 continue
             line = val
+            if said is not None:
+                said.append(line)
             if proposal is not None and not proposal.get("closed"):
                 if line.startswith("```"):
                     if proposal.get("open"):

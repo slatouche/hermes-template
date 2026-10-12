@@ -42,7 +42,8 @@ EDITS = """Edits (one JSON object each):
    the screen shows at its route in the app's screen area, the app's own content there hidden)
 {"op":"behavior","name":"<name>","sel":"...", ...options}   see `dv.py behaviors`
 Any edit may add "on":"#/route" (one screen only). Edits apply in order and are re-applied whenever the app redraws.
-Markup: no scripts, no on* handlers, no javascript: URLs. `dv.py apply` prints how each edit fared on the owner's
+Markup: classes, no style attributes (style with css edits), no scripts, no on* handlers, no javascript: URLs.
+An element's own style="..." (shown in `dv.py map`) beats css: use !important for those properties. `dv.py apply` prints how each edit fared on the owner's
 open page: that is your check."""
 BEHAVIORS = """Ready-made behaviors (set up once per element the sel matches; they work on placeholder copies too):
   sortable  sel=<the lists> [item=<an item inside a list>]  drag items to reorder, and between every list sel matches
@@ -121,9 +122,9 @@ def main(argv):
             print("no mockup page is open to confirm them; they apply when the owner opens it")
         for i, op in zip(r["ops"], ops):
             st = (seen.get(i) or {}).get("status", "not on the open screen")
-            if st != "ok":
+            if not st.startswith("ok"):
                 print(f"  {i} {op.get('op')}: {st}")
-        if seen and all((seen.get(i) or {}).get("status") == "ok" for i in r["ops"]):
+        if seen and all((seen.get(i) or {}).get("status", "").startswith("ok") for i in r["ops"]):
             print("all landed on the owner's page")
     elif cmd == "undo":
         print(call("/dv/undo", {"notes": rest}))

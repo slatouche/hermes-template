@@ -221,7 +221,10 @@
     clearTimeout(reportTimer);
     reportTimer = setTimeout(function () {
       var changed = {}, any = false;
-      Object.keys(status).forEach(function (id) { if (sent[id] !== status[id]) { changed[id] = status[id]; sent[id] = status[id]; any = true; } });
+      Object.keys(status).forEach(function (id) {
+        var st = effect[id] || status[id];
+        if (sent[id] !== st) { changed[id] = st; sent[id] = st; any = true; }
+      });
       if (any) fetch("/dv/report", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ route: route(), statuses: changed }) }).catch(function () {});
     }, 250);
   }
@@ -272,6 +275,31 @@
       if (ev.origin === location.origin && ev.source === window.parent && ev.data && ev.data.dvEvent) onEvent(ev.data.dvEvent);
     });
   }
+  // Did a style edit change anything? Measured on the elements it matches, before and after (after any transition).
+  // "No effect because the element has its own style attribute" goes back to the server, which fixes it in the same
+  // note; the owner never sees a "done" that changed nothing.
+  var effect = {};
+  function cssTargets(op) {
+    var m = /^\s*([^{]+)\{([^}]*)\}/.exec(op.rule || "");
+    if (!m) return null;
+    var props = m[2].split(";").map(function (d) { return d.split(":")[0].trim().toLowerCase(); }).filter(Boolean);
+    return { sel: m[1].trim(), els: qa(m[1]).slice(0, 6), props: props };
+  }
+  function snap(t) {
+    return t.els.map(function (el) { var cs = getComputedStyle(el); return t.props.map(function (p) { return cs.getPropertyValue(p); }).join("|"); }).join("§");
+  }
+  function measure(op, before, t) {
+    setTimeout(function () {
+      if (!t.els.length) effect[op.id] = "missing: nothing on this screen matches " + t.sel;
+      else if (snap(t) === before) {
+        var own = [];
+        t.els.forEach(function (el) { t.props.forEach(function (p) { var v = el.style.getPropertyValue(p); if (v && own.indexOf(p + ": " + v) < 0) own.push(p + ": " + v); }); });
+        effect[op.id] = own.length ? "no effect: overridden by the element's own style attribute (" + own.slice(0, 4).join("; ") + ")"
+                                   : "no visible change (already so, or a more specific rule wins)";
+      } else effect[op.id] = "ok: changed";
+      report();
+    }, 450);
+  }
   function onEvent(e) {
     if (e.type === "op" && e.op) {
       if (e.option) {
@@ -283,7 +311,9 @@
       } else {
         ops.push(e.op);
       }
+      var t = e.op.op === "css" && routeOk(e.op) ? cssTargets(e.op) : null, before = t && snap(t);
       apply(); flash(e.op); postMap();
+      if (t) measure(e.op, before, t);
     } else if (e.type === "option") {
       var s2 = options[e.set] = options[e.set] || { choices: {} };
       s2.choices[e.choice] = s2.choices[e.choice] || { name: e.name, ops: [] };
@@ -326,7 +356,9 @@
         while (i + n < kids.length && sig(kids[i + n]) === s) n++;
         var r = c.getBoundingClientRect();
         var line = new Array(depth + 1).join("  ") + s + (own(c) ? ' "' + own(c) + '"' : "") + (n > 1 ? " x" + n : "") +
-          (depth < 3 ? "  (" + Math.round(r.width) + "x" + Math.round(r.height) + ")" : "");
+          (depth < 5 ? "  (" + Math.round(r.width) + "x" + Math.round(r.height) + ")" : "");
+        var inline = c.getAttribute("style");                 // its own style beats any css rule: show it
+        if (inline) line += ' style="' + inline.replace(/\s+/g, " ").slice(0, 90) + '"';
         out.push(line);
         walk(c, depth + 1);
         i += n - 1;

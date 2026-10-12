@@ -47,7 +47,8 @@ Write `window.__dvBehaviors.<name> = function (el, op) { … }` in a file: plain
    - moves, texts, inserts and attributes into the markup they name;
    - repeated placeholders into a `data-each` list with its `<template>`.
 
-   No markup in `app.js`.
+   No markup in `app.js`, and no `style` attributes in the markup: every style goes into `ui.css` under a class,
+   including any the layer put inline, so later notes can change it.
    The mockup is the design, not a spec to copy bugs from: a visible defect in it (a fill in the wrong slot, a
    misaligned row) is fixed in the fold and listed in your result. The layer is frozen; never edit it during a build.
 4. Behaviors and anything that must really work go in the card's result as a list for the Engineer: each with its screen, its element, and what it does.
