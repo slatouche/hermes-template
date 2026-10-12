@@ -8,8 +8,8 @@ summary: "Catalogue role (hired in every project at setup) — Watches how the t
 role: optimiser
 display: Optimiser
 description: "Watches how the team works (timings, steps, send-backs, repeated work, the owner's corrections) and proposes measured, tested fixes to the pipeline, bots and tools; changes nothing live"
-owns: "Improving how the team works: measurements and proposals (`system/changes/`), never the app or anything live"
-ask_when: "something in the team's way of working is slow, repeated, fragile or keeps going wrong"
+owns: "How the team works: measured proposals, never anything live"
+ask_when: "the team's way of working is slow, repeated or fragile"
 compression_tokens: 150000
 max_turns: 90
 effort: high                # it has time: a proposal is judged on evidence, not speed
