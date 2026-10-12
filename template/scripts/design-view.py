@@ -492,6 +492,8 @@ class App:
         self.status = {"busy": None, "queued": 0}
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.watch_app, daemon=True).start()
+        self.build_rows = []
+        threading.Thread(target=self.watch_build, daemon=True).start()
 
     # ---- the knowledge pack ------------------------------------------------------------------------------------
     def tokens(self):
@@ -897,8 +899,10 @@ class App:
             f"Built in the design view and presses Ship, which merges the branch into main and empties the layer.\n"
             f"The layer stays frozen through the build: a defect anyone notices in the mockup is fixed in the build "
             f"(and listed in that card's result), never in the layer, and is not a reason for a mockup card.\n"
-            f"Tester only for functional cases you write. Don't merge yourself.")
-        self.layer.set_state("FROZEN", {"at": stamp, "card": card})
+            f"Tester only for functional cases you write. Don't merge yourself.\n"
+            f"Put `build {stamp}` in every card of this build (its Context line): the owner's toolbar follows the "
+            f"build's progress by it.")
+        self.layer.set_state("FROZEN", {"at": stamp, "card": card, "t": time.time()})
         self.events.send("frozen", card=card, stamp=stamp)
         return {"ok": True, "card": card, "stamp": stamp}
 
@@ -998,6 +1002,40 @@ class App:
             out += [json.dumps({k: v for k, v in o.items() if k not in ("id", "note")}) for o in rest] + ["```"]
         return "\n".join(out) + "\n"
 
+    def watch_build(self):
+        """While the agreed design is being built: the build's cards from the board (the Manager's build card, and
+        every card naming the build), each with its bot and state, sent to the page when anything changes."""
+        while True:
+            time.sleep(8)
+            fz = self.layer.state("FROZEN") if self.layer.frozen else None
+            if not fz:
+                if self.build_rows:
+                    self.build_rows = []
+                    self.events.send("build", rows=[])
+                continue
+            stamp, card = str(fz.get("at") or ""), ((fz.get("card") or {}).get("id") or "")
+            since = fz.get("t") or 0
+            env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""))
+            env.pop("HERMES_KANBAN_BOARD", None)
+            try:
+                out = subprocess.run(["hermes", "kanban", "list", "--json"], capture_output=True, text=True, timeout=30, env=env)
+                tasks = json.loads(out.stdout or "[]")
+            except Exception:
+                continue
+            rows = []
+            for t in tasks:
+                text = f"{t.get('title') or ''}\n{t.get('body') or ''}"
+                mine = t.get("id") == card or (stamp and stamp in text) or (card and card in text)
+                if not mine or (t.get("created_at") or 0) < since - 120 and t.get("id") != card:
+                    continue
+                rows.append({"id": t["id"], "title": (t.get("title") or "")[:70], "who": t.get("assignee") or "",
+                             "status": t.get("status") or "", "since": t.get("started_at") or t.get("created_at") or 0,
+                             "created": t.get("created_at") or 0})
+            rows.sort(key=lambda r: r["created"])
+            if rows != self.build_rows:
+                self.build_rows = rows
+                self.events.send("build", rows=rows)
+
     def watch_app(self):
         """Tell the page when the app's own files change (the Engineer committed), so it reloads."""
         def stamp():
@@ -1074,7 +1112,8 @@ def make_handler(app):
                 with app.layer.lock:
                     return self.send(200, {"ops": app.layer.ops, "options": app.layer.options, "config": app.layer.config(),
                                            "frozen": app.layer.state("FROZEN"), "preview": app.layer.state("PREVIEW"),
-                                           "v": app.layer.version, "data": bool(app.a.api_proxy)})
+                                           "v": app.layer.version, "data": bool(app.a.api_proxy),
+                                           "build": app.build_rows})
             if path == "/dv/version":
                 return self.send(200, {"v": app.layer.version})
             if path == "/dv/map":

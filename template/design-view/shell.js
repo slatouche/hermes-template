@@ -359,7 +359,15 @@
         post("/dv/ship").then(function (r) { say(r.error ? "Ship failed: " + r.error : "Shipped. The mockup now starts from the new app.", r.error ? "err" : ""); });
       }, "Merge the built design into the live app");
     } else if (frozen) {
-      lbl("Agreed · being built" + (build.frozen.card && build.frozen.card.id ? " (" + build.frozen.card.id + ")" : ""));
+      var rows = build.rows || [], doneN = rows.filter(function (r) { return r.status === "done"; }).length;
+      lbl(rows.length ? "Building " + doneN + "/" + rows.length + ":" : "Agreed · the Manager is planning the build");
+      rows.forEach(function (r) {                            // one chip per card of the build: who, state, how long
+        var mins = r.since ? Math.max(0, Math.round((Date.now() / 1000 - r.since) / 60)) : 0;
+        var st = { done: "✓", running: "◐ " + mins + "m", blocked: "⚠ needs you", review: "◑ review", ready: "○ next", todo: "○ waiting", triage: "○ waiting" }[r.status] || r.status;
+        var c = document.createElement("span"); c.className = "bchip " + r.status;
+        c.textContent = r.who + " " + st; c.title = r.id + " · " + r.title + " (" + r.who + ", " + r.status + ")";
+        box.appendChild(c);
+      });
       btn("Unfreeze", "", function () { if (confirm("Unfreeze the mockup? The build card stays; tell the Manager if it should stop.")) post("/dv/unfreeze"); });
     } else {
       btn("✓ Agreed", "go", function () {
@@ -375,11 +383,12 @@
   }
   function loadState() {
     fetch("/dv/ops", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
-      build = { frozen: d.frozen, preview: d.preview, data: d.data };
+      build = { frozen: d.frozen, preview: d.preview, data: d.data, rows: d.build || [] };
       if (!build.preview && viewing === "built") view("mockup"); else drawBuild();
     }).catch(function () {});
   }
   loadState();
+  setInterval(function () { if (build.frozen && !build.preview && (build.rows || []).length) drawBuild(); }, 30000);   // minutes tick
 
   // ---- live status --------------------------------------------------------------------------------------------------
   function elapsed(id) { return ((Date.now() - (t0[id] || Date.now())) / 1000).toFixed(1) + " s"; }
@@ -437,6 +446,7 @@
           e.refused && e.refused.length ? "err" : "");
     }
     else if (e.type === "question") { showQuestion(e); }
+    else if (e.type === "build") { build.rows = e.rows || []; drawBuild(); }
     else if (e.type === "data") {
       if (e.state === "started") { t0.data = Date.now(); busy.data = "Refreshing the data from the app's real data (" + (e.why || "asked") + ")"; liveTick(); }
       else { delete busy.data; say(e.state === "done" ? "Data refreshed in " + e.s + " s: the page shows the app's current data" : "Data refresh failed: " + (e.text || ""), e.state === "done" ? "" : "err"); }
