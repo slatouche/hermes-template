@@ -304,9 +304,14 @@ class Layer:
                 f.write(json.dumps(note) + "\n")
 
     def new_option_set(self, note, sid=None, about=None):
+        """A new choice on show. Sets from earlier notes that were never picked go: the switcher is only ever for
+        what's happening now (a note's own parts may each have a set, and those stay together)."""
         with self.lock:
             sid = sid or note["id"]
+            for old in [k for k in self.options if k != note["id"] and not k.startswith(note["id"] + "-")]:
+                self.options.pop(old)
             self.options[sid] = {"note": about or note["note"], "choices": {}}
+            self._save()
             return sid
 
     def add_choice(self, sid, letter, name):

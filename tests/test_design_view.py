@@ -103,6 +103,17 @@ def main():
     check("option edits stay out of the layer until picked", len(layer.ops) == 1 and len(layer.options[sid]["choices"]) == 2)
     layer.pick(sid, "B")
     check("picking folds that choice in and drops the set", layer.ops[-1]["value"] == "B" and sid not in layer.options, layer.ops)
+    na = layer.new_note("options, please", [], "#/")
+    first = layer.new_option_set(na)
+    nb = layer.new_note("not those, more options", [], "#/")
+    layer.new_option_set(nb, sid=nb["id"] + "-1")
+    layer.new_option_set(nb, sid=nb["id"] + "-2")
+    check("new options close an earlier note's unpicked set; a note's own sets stay together",
+          first not in layer.options and {nb["id"] + "-1", nb["id"] + "-2"} == set(layer.options), list(layer.options))
+    layer.options.clear()
+    layer._save()
+    layer.finish(na)
+    layer.finish(nb)
     again = m.Layer(home / "vault" / "design" / "layer")
     check("the layer reloads from disk with the next ids", [o["id"] for o in again.ops] == [o["id"] for o in layer.ops]
           and again.next_op == layer.next_op and again.next_note == layer.next_note, (again.next_op, layer.next_op))
