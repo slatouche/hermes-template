@@ -284,6 +284,16 @@
       say(busy[ids[0]] + " · " + elapsed(ids[0]) + (ids.length > 1 ? " · " + (ids.length - 1) + " more waiting" : ""), "busy");
     }, 200);
   }
+  // A note in several parts: one line showing each part's kind and where it is.
+  var parts = {};
+  function partLine(id) {
+    var ps = parts[id] || {}, marks = { doing: "…", starting: "…", done: "✓", card: "→ card", asked: "? question", failed: "✗" };
+    return Object.keys(ps).length + " parts: " + Object.keys(ps).map(function (k) {
+      var p = ps[k];
+      var tail = p.state === "asked" ? " " + p.text : "";
+      return p.kind + " " + (marks[p.state] || p.state) + tail;
+    }).join(" · ");
+  }
   function countUp(id) { counts[id] = (counts[id] || 0) + 1; return counts[id] + (counts[id] === 1 ? " edit" : " edits"); }
   var es = new EventSource("/dv/events");
   es.onmessage = function (m) {
@@ -291,13 +301,30 @@
     if (viewing === "mockup") { try { frame.contentWindow.postMessage({ dvEvent: e }, location.origin); } catch (x) {} }
     if (e.type === "received") { t0[e.note] = Date.now(); busy[e.note] = (e.queued ? "Queued: " : "Received: ") + e.text; liveTick(); }
     else if (e.type === "doing") { t0[e.note] = t0[e.note] || Date.now(); busy[e.note] = "Reading: " + e.text; liveTick(); }
-    else if (e.type === "verdict") { busy[e.note] = e.verdict + ": " + e.plan; }
+    else if (e.type === "plan" && e.parts && e.parts.length > 1) {
+      parts[e.note] = {};
+      e.parts.forEach(function (p) { parts[e.note][p.k] = { kind: p.kind, text: p.text, state: p.kind === "quick" ? "doing" : "starting" }; });
+      busy[e.note] = partLine(e.note);
+    }
+    else if (e.type === "part" && parts[e.note]) {
+      if (e.k === 0) { busy[e.note] = partLine(e.note) + " · " + e.text; }
+      else if (parts[e.note][e.k]) {
+        parts[e.note][e.k].state = e.state; if (e.card) parts[e.note][e.k].card = e.card;
+        busy[e.note] = partLine(e.note);
+      }
+    }
+    else if (e.type === "verdict") { if (!parts[e.note]) busy[e.note] = e.verdict + ": " + e.plan; }
     else if (e.type === "op" && busy[e.note]) { busy[e.note] = busy[e.note].replace(/ \(\d+ edits?\)$/, "") + " (" + countUp(e.note) + ")"; }
     else if (e.type === "option") { optsState[e.set] = optsState[e.set] || { choices: {} }; optsState[e.set].choices[e.choice] = { name: e.name, ops: [] }; if (!active) active = { set: e.set, choice: e.choice }; drawOpts(); }
     else if (e.type === "done") {
       if (!busy[e.note] && e.verdict === "direct") return;
       delete busy[e.note];
-      var extra = e.card ? " → card for the " + e.card.to + (e.card.id ? " (" + e.card.id + ")" : "") : "";
+      var cs = e.cards && e.cards.length ? e.cards : (e.card ? [e.card] : []);
+      var extra = cs.map(function (c) { return " → card for the " + c.to + (c.id ? " (" + c.id + ")" : ""); }).join("");
+      if (parts[e.note]) {
+        Object.keys(parts[e.note]).forEach(function (k) { var p = parts[e.note][k]; if (p.state === "doing" || p.state === "starting") p.state = "done"; });
+        e.plan = partLine(e.note); delete parts[e.note];
+      }
       var bad = e.refused && e.refused.length ? " · " + e.refused.length + " edit(s) refused" : "";
       say((e.s ? "Done in " + e.s + " s · " : "Done · ") + e.verdict + ": " + (e.plan || "") + (e.edits ? " · " + e.edits + " edits" : "") + extra + bad,
           e.refused && e.refused.length ? "err" : "");

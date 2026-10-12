@@ -33,15 +33,40 @@ import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 HOME = pathlib.Path.home()
-ASSETS = HOME / ".hermes" / "design-view"
+ASSETS = pathlib.Path(os.environ.get("DV_ASSETS") or HOME / ".hermes" / "design-view")   # a test copy can bring its own
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
          ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
          ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
          ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 
 RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
-Line 1: VERDICT <quick|options|screen|background|function|ask> | <one short line for the owner: what you'll do>
-Then one edit per line, each a JSON object:
+
+First the plan: split the note into parts, one line each, then a line END.
+PART 1 <quick|options|screen|background|function|ask> | <one short line for the owner: what you'll do>
+PART 2 ...
+END
+Splitting: one part per separate ask; asks about the same element or area are one part; a note with one ask is one
+part; at most 5 parts. Kinds:
+- quick: a visible change you can make now with the edits below (style, spacing, colour, move, text, add or repeat
+  elements, placeholder content, a ready-made behavior, undo of named notes). A small taste remark ("a bit warmer",
+  "tighter") is quick: make your best call.
+- options: the owner asks for choices ("options", "try some", "which"), or a big matter of taste with several good
+  answers (a whole new look for something).
+- screen: a new screen or panel that doesn't exist yet.
+- background: interaction work no ready-made behavior covers (custom animation choreography, multi-step flows, new
+  kinds of widget).
+- function: it needs real behaviour or data (parsing, saving, importing, accounts). The plan line is for the Manager.
+- ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question.
+
+Then the work, under END:
+- the edits for every quick part, one per line, in order;
+- only if the note is a single part of kind options or screen, do it here:
+  options: a line OPTION A <short name>, its edits, then OPTION B, OPTION C (each set stands alone);
+  screen: a line SCREEN #/<route> <menu label>, then insert edits with "ref":"@screen" (into the new screen) building
+  it top to bottom, a section per insert, using the app's classes; plus a link edit for whatever opens it;
+- nothing for any other part: those are done separately, at the same time.
+
+Edits, each a JSON object on its own line:
 {"op":"token","name":"--x","value":"..."}                 change a theme token (preferred: the whole app follows)
 {"op":"css","rule":"<selector> { ... }"}                     a CSS rule written with the tokens
 {"op":"move","sel":"<what>","where":"before|after|into|start","ref":"<where>"}
@@ -55,17 +80,7 @@ Then one edit per line, each a JSON object:
 {"op":"link","sel":"<what is clicked>","to":"#/route"}           clicking it goes to that screen (prototype navigation)
 {"op":"undo","notes":["n3"]}                                  take back earlier notes (ids from "Notes so far")
 Any edit may add "on":"#/route" to apply on one screen only.
-Verdicts:
-- quick: a visible change you can make now with the edits above (style, spacing, colour, move, text, add or repeat
-  elements, placeholder content, undo of named notes).
-- options: the owner asks for choices, or it is a matter of taste with several good answers. Give 3 sets; start each
-  with a line: OPTION A <short name>  (then B, C). Each set must stand alone.
-- screen: a new screen or panel that doesn't exist yet. First a line: SCREEN #/<route> <menu label>. Then insert edits
-  with "ref":"@screen" (into the new screen) building it top to bottom, a section per insert, using the app's classes.
-  If it is opened from something on another screen (a deck card, a button), add a link edit for that too.
-- background: a visible change that needs interaction work no behavior below covers (custom animation choreography,
-  multi-step flows, new kinds of widget). No edits; the plan line says what will be built.
-Ready-made interactions (behavior edits; use them instead of calling something background):
+Ready-made interactions (behavior edits; quick, not background):
 {"op":"behavior","name":"sortable","sel":"<the lists>","item":"<an item>"}   drag to reorder, and between all those lists
 {"op":"behavior","name":"toggle","sel":"<button>","target":"<what shows>"}    click shows/hides target
 {"op":"behavior","name":"dialog","sel":"<button>","target":"<hidden dialog markup>"}  click opens it as a modal
@@ -73,13 +88,19 @@ Ready-made interactions (behavior edits; use them instead of calling something b
 {"op":"behavior","name":"tabs","sel":"<the tab row>","panels":"<the panels>"}  click a tab, see its panel
 {"op":"behavior","name":"toast","sel":"<button>","text":"Saved"}             click shows a short message (simulated save)
 {{EXTRA_BEHAVIORS}}
-- function: it needs real behaviour or data (parsing, saving, importing, accounts). No edits; one line for the Manager.
-- ask: you can't tell what they want (e.g. a bare "undo"). No edits; the plan line is one short question.
 Rules: prefer token edits; one-off CSS only when the note names one element. Selectors must match the map you are
 given. Markup is plain HTML with classes: no style attributes (style it with css edits), no scripts, no on* handlers,
 no javascript: URLs; placeholder text and images (https://placehold.co/WxH) are fine. Where the map shows an
 element's own style="...", a css edit for those properties needs !important. Do the minimum that makes the change
 visible and clickable; it is a mockup."""
+
+PART_RULES = {
+    "options": "Do only this part now: give 3 choices. A line OPTION A <short name>, its edits, then OPTION B and OPTION "
+               "C; each set stands alone and touches only what this part is about. No plan, no END.",
+    "screen": "Do only this part now: a line SCREEN #/<route> <menu label>, then insert edits with \"ref\":\"@screen\" "
+              "building it top to bottom, a section per insert, using the app's classes; plus a link edit for whatever "
+              "opens it. No plan, no END.",
+}
 
 UNSAFE_HTML = re.compile(r"<\s*(script|iframe|object|embed|link|meta|base)\b|javascript:|\son[a-z]+\s*=", re.I)
 UNSAFE_CSS = re.compile(r"</|javascript:|@import|expression\(|behavior:", re.I)
@@ -239,10 +260,10 @@ class Layer:
             with (self.root / "history.jsonl").open("a", encoding="utf-8") as f:
                 f.write(json.dumps(note) + "\n")
 
-    def new_option_set(self, note):
+    def new_option_set(self, note, sid=None, about=None):
         with self.lock:
-            sid = note["id"]
-            self.options[sid] = {"note": note["note"], "choices": {}}
+            sid = sid or note["id"]
+            self.options[sid] = {"note": about or note["note"], "choices": {}}
             return sid
 
     def add_choice(self, sid, letter, name):
@@ -307,8 +328,8 @@ class Events:
             if q in self.clients:
                 self.clients.remove(q)
 
-    def send(self, kind, **data):
-        msg = json.dumps(dict(data, type=kind, t=round(time.time(), 3)))
+    def send(self, event_type, /, **data):
+        msg = json.dumps(dict(data, type=event_type, t=round(time.time(), 3)))
         with self.lock:
             for q in list(self.clients):
                 q.put(msg)
@@ -350,7 +371,7 @@ def first_comment(p):
 
 DEEP_RULES = """
 ## This note needs more than a quick change: you have time to think it through
-The quick judge called it background work. Build the whole thing now, as edits (no VERDICT line this time): every
+The plan called it background work. Build that part now, as edits (no plan, no END this time): every
 screen, state and interaction it needs, with behaviors for anything interactive and placeholder content. Use the
 maps you are given for selectors. If an interaction truly needs a behavior that doesn't exist, build everything
 visible first, then end with a proposal for it:
@@ -466,6 +487,10 @@ class App:
             self.status["busy"] = None
 
     def run_note(self, n):
+        """One note: a single call that plans first (its parts, each with a kind) and then streams the edits for the
+        quick parts. The moment the plan is in, every other part starts at the same time on its own: options and new
+        screens as their own calls, background work on the deep path, function changes as Manager cards. Then the
+        check: quick edits the page says didn't take get one repair call. One note, one record, one "done"."""
         if self.layer.frozen:
             self.events.send("done", note=n["id"], verdict="frozen", plan="The mockup is frozen while it's built.", s=0)
             return
@@ -476,58 +501,108 @@ class App:
         t0 = time.monotonic()
         self.events.send("doing", note=n["id"], text=n["text"][:140])
         msgs = [{"role": "system", "content": self.pack()}, {"role": "user", "content": self.ask(n)}]
-        said = []
-        edits, refused, usage, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0, said=said)
-        card = None
-        if rec["verdict"] in ("quick", "screen") and rec["ops"]:
-            # The check: the owner's open page measured each edit. Edits that matched nothing on this screen, or were
-            # beaten by an element's own style attribute, get one repair call in the same note.
-            bad = self.not_landed(rec, n.get("route") or "#/")
+        said, main_ids, threads, cards = [], [], [], []
+        tally = {"edits": 0, "refused": [], "usage": []}
+        tlock = threading.Lock()
+
+        def add_up(e, r, u):
+            with tlock:
+                tally["edits"] += e
+                tally["refused"] += r
+                tally["usage"].append(u or {})
+
+        def on_plan(parts):
+            rec["parts"] = [{k: p[k] for k in ("k", "kind", "text")} for p in parts]
+            rec["verdict"] = parts[0]["kind"] if len(parts) == 1 else "mixed"
+            rec["plan"] = parts[0]["text"] if len(parts) == 1 else " · ".join(f"{p['kind']}: {p['text']}" for p in parts)
+            el = round(time.monotonic() - t0, 2)
+            self.events.send("plan", note=n["id"], parts=rec["parts"], s=el)
+            self.events.send("verdict", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], s=el)
+            inline = len(parts) == 1 and parts[0]["kind"] in ("options", "screen")
+            for p in parts:
+                if p["kind"] == "quick" or inline:
+                    continue
+                if p["kind"] == "function":
+                    c = self.card(rec, p)
+                    cards.append(c)
+                    self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="card", card=c,
+                                     s=round(time.monotonic() - t0, 2))
+                elif p["kind"] == "ask":
+                    self.events.send("part", note=n["id"], k=p["k"], kind="ask", state="asked", text=p["text"],
+                                     s=round(time.monotonic() - t0, 2))
+                else:
+                    th = threading.Thread(target=self.run_part, args=(mc, rec, n, t0, p, parts, add_up, cards), daemon=True)
+                    th.start()
+                    threads.append(th)
+
+        e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0, said=said,
+                                  on_plan=on_plan, got=main_ids)
+        add_up(e, r, u)
+        if main_ids:
+            # The check: the owner's open page measured each quick edit. Edits that matched nothing on this screen,
+            # or were beaten by an element's own style attribute, get one repair call in the same note.
+            bad = self.not_landed(main_ids, n.get("route") or "#/")
             if bad:
-                self.events.send("verdict", note=n["id"], verdict=rec["verdict"],
-                                 plan=f"{len(bad)} edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
+                self.events.send("part", note=n["id"], k=0, kind="check", state="fixing",
+                                 text=f"{len(bad)} edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
                 why = "\n".join(f"- {json.dumps({k: v for k, v in o.items() if k not in ('id', 'note')})[:300]}\n  -> {st}"
                                 for o, st in bad)
                 fix = msgs + [{"role": "assistant", "content": "\n".join(said)},
                               {"role": "user", "content": "Checked on the owner's page, these edits didn't take effect:\n" + why +
                                "\nReplace them now with edits that will work. An element's own style attribute beats any css "
                                "rule: add !important to those declarations (or change the attribute). A selector that matches "
-                               "nothing: use one from the map. Edits only, no VERDICT line."}]
-                e2, r2, u2, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, deep=True)
-                edits, refused = edits + e2, refused + r2
-                usage = {k: (usage.get(k) or 0) + (u2.get(k) or 0) for k in ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens")}
+                               "nothing: use one from the map. Edits only, no plan."}]
+                e, r, u, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, mode="edits")
+                add_up(e, r, u)
                 rec["repaired"] = len(bad)
-        if rec["verdict"] == "background":
-            # The deep path: the same kind of call with thinking on and the other screens' maps, still no agent.
-            self.events.send("verdict", note=n["id"], verdict="background",
-                             plan="thinking it through: " + (rec["plan"] or ""), s=round(time.monotonic() - t0, 2))
-            others = "\n\n".join(f"Map of {r}:\n{m[:5000]}" for r, m in list(self.maps.items())[-5:] if r != n.get("route"))
-            deep = [{"role": "system", "content": self.pack() + DEEP_RULES},
-                    {"role": "user", "content": self.ask(n) + (f"\n\nOther screens:\n{others}" if others else "") +
-                     f"\n\nThe quick judge said: background: {rec['plan']}"}]
-            e2, r2, u2, proposal = self.consume(stream_lines(mc, deep, session=f"dv-{self.project}-deep", max_tokens=12000,
-                                                             thinking=True), rec, n, t0, deep=True)
-            edits, refused = edits + e2, refused + r2
-            usage = {k: (usage.get(k) or 0) + (u2.get(k) or 0) for k in ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens")}
-            if proposal:
-                card = self.propose(proposal, rec)
-            elif not e2:
-                card = self.card(rec)                                    # it couldn't: the Designer takes it
+        for th in threads:
+            th.join(timeout=300)
+        usage = {k: sum((x.get(k) or 0) for x in tally["usage"]) for k in ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens")}
         rec["s"] = round(time.monotonic() - t0, 2)
-        rec["tokens"] = {"in": usage.get("prompt_tokens"), "cached": usage.get("prompt_cache_hit_tokens",
-                         (usage.get("prompt_tokens_details") or {}).get("cached_tokens")), "out": usage.get("completion_tokens")}
-        rec["refused"] = refused
-        if rec["verdict"] == "function":
-            card = self.card(rec)
+        rec["tokens"] = {"in": usage["prompt_tokens"], "cached": usage["prompt_cache_hit_tokens"], "out": usage["completion_tokens"]}
+        rec["refused"] = tally["refused"]
+        rec["verdict"] = rec["verdict"] or "quick"
+        if cards:
+            rec["cards"] = cards
         self.layer.finish(rec)
-        self.events.send("done", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], edits=edits, refused=refused,
-                         card=card, s=rec["s"], tokens=rec["tokens"])
+        self.events.send("done", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], edits=tally["edits"],
+                         refused=tally["refused"], card=cards[0] if len(cards) == 1 else None, cards=cards,
+                         s=rec["s"], tokens=rec["tokens"])
 
-    def not_landed(self, rec, route, wait=2.0):
+    def run_part(self, mc, rec, n, t0, p, parts, add_up, cards):
+        """One part of a note that isn't quick, in parallel with the rest: options, a new screen, or background work
+        (the deep path: thinking on, the other screens' maps)."""
+        self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="doing", text=p["text"],
+                         s=round(time.monotonic() - t0, 2))
+        plan = "\n".join(f"PART {q['k']} {q['kind']} | {q['text']}" for q in parts)
+        focus = f"\n\nThe plan for this note:\n{plan}\n\nYour part: PART {p['k']} {p['kind']} | {p['text']}\n"
+        try:
+            if p["kind"] == "background":
+                others = "\n\n".join(f"Map of {r}:\n{m[:5000]}" for r, m in list(self.maps.items())[-5:] if r != n.get("route"))
+                msgs = [{"role": "system", "content": self.pack() + DEEP_RULES},
+                        {"role": "user", "content": self.ask(n) + (f"\n\nOther screens:\n{others}" if others else "") + focus}]
+                e, r, u, proposal = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}-deep", max_tokens=12000,
+                                                              thinking=True), rec, n, t0, mode="deep", part=p)
+                if proposal:
+                    cards.append(self.propose(proposal, rec))
+                elif not e:
+                    cards.append(self.card(rec, p))                       # it couldn't: the Designer takes it
+            else:
+                msgs = [{"role": "system", "content": self.pack()},
+                        {"role": "user", "content": self.ask(n) + focus + PART_RULES[p["kind"]]}]
+                e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0, mode="edits", part=p)
+            add_up(e, r, u)
+            self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="done", edits=e,
+                             s=round(time.monotonic() - t0, 2))
+        except Exception as ex:
+            self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="failed",
+                             text=f"{type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
+
+    def not_landed(self, ids, route, wait=2.0):
         """The note's edits that the owner's open page (on the note's screen) says didn't take: matched nothing, or
         were beaten by an element's own style. Nothing to say when no page is open on that screen."""
         byid = {o["id"]: o for o in self.layer.ops}
-        ids = [i for i in rec["ops"] if i in byid]
+        ids = [i for i in ids if i in byid]
 
         def settled(i):                      # a css edit reports "ok" when applied, then its measurement
             r = self.reports.get(i)
@@ -545,10 +620,20 @@ class App:
                 bad.append((byid[i], st))
         return bad
 
-    def consume(self, stream, rec, n, t0, deep=False, said=None):
-        """Read a model answer line by line: the verdict, option and screen markers, a behavior proposal (deep path),
-        and the edits, each checked, stored and sent to the page as it arrives."""
+    def consume(self, stream, rec, n, t0, mode="main", said=None, on_plan=None, got=None, part=None):
+        """Read a model answer line by line, acting on each line as it arrives: the plan (main call: PART lines and
+        END, handed to on_plan), option and screen markers, a behavior proposal (deep path), and the edits, each
+        checked, stored and sent to the page. mode: main | edits (a part or a repair) | deep."""
         option, screen, edits, refused, usage, sid, proposal = None, None, 0, [], {}, None, None
+        plan, planned = [], mode != "main"
+
+        def finish_plan():
+            nonlocal planned
+            planned = True
+            if not plan:                     # no plan line at all: a single quick part
+                plan.append({"k": 1, "kind": "quick", "text": "On it."})
+            if on_plan:
+                on_plan(plan)
         for kind, val in stream:
             if kind == "usage":
                 usage = val
@@ -565,21 +650,30 @@ class App:
                     proposal["js"] += line + "\n"
                 continue
             m = re.match(r"PROPOSE\s+([A-Za-z][A-Za-z0-9-]{0,40})\s*\|?\s*(.*)", line)
-            if deep and m:
+            if mode == "deep" and m:
                 proposal = {"name": m.group(1), "why": m.group(2).strip(), "js": ""}
                 continue
-            if not deep and rec["verdict"] is None and line.upper().startswith("VERDICT"):
-                body = line[7:].strip()
-                verdict, _, plan = body.partition("|")
-                rec["verdict"] = verdict.strip(" <>").lower() or "quick"
-                rec["plan"] = plan.strip()
-                self.events.send("verdict", note=n["id"], verdict=rec["verdict"], plan=rec["plan"],
-                                 s=round(time.monotonic() - t0, 2))
-                if rec["verdict"] == "options":
-                    sid = self.layer.new_option_set(rec)
-                continue
+            if not planned:
+                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|options|screen|background|function|ask)>?\s*\|?\s*(.*)", line, re.I)
+                if m and len(plan) < 5:
+                    plan.append({"k": int(m.group(1)), "kind": m.group(2).lower(), "text": m.group(3).strip()})
+                    continue
+                m = re.match(r"VERDICT\s+<?(\w+)>?\s*\|?\s*(.*)", line, re.I)       # the single-verdict form still works
+                if m and not plan:
+                    kind_ = m.group(1).lower()
+                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "options", "screen", "background", "function", "ask")
+                                 else "quick", "text": m.group(2).strip()})
+                    finish_plan()
+                    continue
+                if line.strip().upper() == "END":
+                    finish_plan()
+                    continue
+                finish_plan()                 # the work started without an END line
             m = re.match(r"OPTION\s+([A-Z])\b\s*[:|-]?\s*(.*)", line)
-            if m and rec["verdict"] == "options" and sid:
+            if m:
+                if sid is None:
+                    sid = self.layer.new_option_set(rec, sid=n["id"] + (f"-{part['k']}" if part else ""),
+                                                    about=part["text"] if part else None)
                 option = (sid, m.group(1))
                 self.layer.add_choice(sid, m.group(1), m.group(2).strip()[:60] or m.group(1))
                 self.events.send("option", note=n["id"], set=sid, choice=m.group(1), name=m.group(2).strip()[:60])
@@ -603,11 +697,15 @@ class App:
                 continue
             op = self.layer.add(op, rec, option)
             edits += 1
+            if got is not None and not option:
+                got.append(op["id"])
             if op["op"] == "undo":
                 self.events.send("reload-ops", why=f"undid {', '.join(op['notes'])}")
                 continue
             self.events.send("op", note=n["id"], op=op, option=option and {"set": option[0], "choice": option[1]},
                              s=round(time.monotonic() - t0, 2))
+        if not planned:
+            finish_plan()
         return edits, refused, usage, (proposal if proposal and proposal["js"].strip() else None)
 
     def propose(self, p, rec):
@@ -622,17 +720,21 @@ class App:
                            f"window.__dvBehaviors[\"{p['name']}\"] = function (el, op)) and fit. Approve by moving it to "
                            f"vault/design/behaviors/{p['name']}.js; every page and note can use it from then on.")
 
-    def card(self, rec):
-        who = "designer" if rec["verdict"] == "background" else "manager"
-        title = ("Design (background): " if who == "designer" else "Function change from the mockup: ") + rec["note"][:80]
+    def card(self, rec, part=None):
+        kind = part["kind"] if part else rec["verdict"]
+        what = part["text"] if part else rec["plan"]
+        who = "designer" if kind == "background" else "manager"
+        title = ("Design (background): " if who == "designer" else "Function change from the mockup: ") + (what or rec["note"])[:80]
         body = (f"From the design view, note {rec['id']} on screen {rec.get('route') or '#/'}.\n\nOwner's note: {rec['note']}\n"
-                f"Marked: {', '.join(rec.get('marks') or []) or '-'}\nQuick judge: {rec['verdict']}: {rec['plan']}\n")
+                f"Marked: {', '.join(rec.get('marks') or []) or '-'}\nThis part ({kind}): {what}\n")
         if who == "designer":
             body += ("\nA background design job: build it in the design layer with dv.py (see your instructions), so it "
                      "streams into the owner's mockup; nothing in the app's code. Group your edits with --group <this card>.")
         return self.kanban(title, who, body)
 
     def kanban(self, title, who, body):
+        if self.a.no_cards:                                       # a test copy: say what would be carded, make nothing
+            return {"to": who, "id": "not-made (test copy)", "title": title[:80]}
         env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""))
         env.pop("HERMES_KANBAN_BOARD", None)
         try:
@@ -970,6 +1072,7 @@ def main():
     ap.add_argument("--app", required=True, help="the app's front-end folder")
     ap.add_argument("--layer", required=True, help="the design layer folder")
     ap.add_argument("--bind", default="0.0.0.0")
+    ap.add_argument("--no-cards", action="store_true", help="a test copy: never create kanban cards")
     a = ap.parse_args()
     app = App(a)
     srv = ThreadingHTTPServer((a.bind, a.port), make_handler(app))

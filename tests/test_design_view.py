@@ -95,6 +95,38 @@ def main():
     check("the layer reloads from disk with the next ids", [o["id"] for o in again.ops] == [o["id"] for o in layer.ops]
           and again.next_op == layer.next_op and again.next_note == layer.next_note, (again.next_op, layer.next_op))
 
+    # ---- a note's plan: parts read as they stream, then the quick edits ------------------------------------------------
+    import argparse
+    (home / "workspace" / "fe").mkdir(parents=True)
+    app = m.App(argparse.Namespace(project="t", app=str(home / "workspace" / "fe"), layer=str(home / "vault" / "design" / "lp"),
+                                   no_cards=True))
+
+    def stream(*lines):
+        for ln in lines:
+            yield "line", ln
+        yield "usage", {}
+    plans, got = [], []
+    rec = app.layer.new_note("tighter cards, header styles, real import", [], "#/")
+    n = {"id": rec["id"], "text": rec["note"], "route": "#/"}
+    e, r, u, _ = app.consume(stream("PART 1 quick | tighten the cards", "PART 2 options | three header styles",
+                                    "PART 3 function | import Moxfield links", "END", '{"op":"css","rule":".card{padding:8px}"}'),
+                             rec, n, time.monotonic(), on_plan=plans.append, got=got)
+    check("the plan's parts are read before the work", len(plans) == 1 and [p["kind"] for p in plans[0]] == ["quick", "options", "function"],
+          plans)
+    check("...and the quick edits under END are stored and counted as the main call's", e == 1 and len(got) == 1, (e, got))
+    plans.clear()
+    app.consume(stream('{"op":"css","rule":".x{color:red}"}'), rec, n, time.monotonic(), on_plan=plans.append)
+    check("no plan line at all: one quick part", plans and [p["kind"] for p in plans[0]] == ["quick"], plans)
+    plans.clear()
+    app.consume(stream("VERDICT options | colours", "OPTION A Warm", '{"op":"token","name":"--bg","value":"#111"}'),
+                rec, n, time.monotonic(), on_plan=plans.append)
+    check("the single-verdict form still plans, and inline options make a set", plans and plans[0][0]["kind"] == "options"
+          and rec["id"] in app.layer.options, (plans, list(app.layer.options)))
+    part = {"k": 2, "kind": "options", "text": "header styles"}
+    app.consume(stream("OPTION A Bold", '{"op":"css","rule":"h1{font-weight:800}"}'), rec, n, time.monotonic(), mode="edits", part=part)
+    check("a part's options get their own set (note-part), kept apart from the note's", f"{rec['id']}-2" in app.layer.options,
+          list(app.layer.options))
+
     # ---- the server ------------------------------------------------------------------------------------------------
     (home / ".hermes").mkdir(exist_ok=True)
     shutil.copytree(ROOT / "design-view", home / ".hermes" / "design-view")
