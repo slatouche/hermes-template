@@ -1160,6 +1160,8 @@ def make_handler(app):
             if path == "/dv/shipped":                                # after a Manager resolved a failed merge
                 app.shipped()
                 return self.send(200, {"ok": True})
+            if path in ("/dv/undo", "/dv/redo", "/dv/pick") and app.layer.frozen:
+                return self.send(409, {"error": "the mockup is frozen while the agreed design is built"})
             if path == "/dv/undo":
                 ids = d.get("notes") or ([app.layer.last_note_with_ops()] if d.get("last") else [])
                 ids = [i for i in ids if i]

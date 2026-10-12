@@ -221,9 +221,13 @@ def main():
         code, body = post("/dv/preview", {"dir": str(app_dir), "branch": "design/x"})
         code2, html = get("/preview/")
         check("a built preview is served as is (no layer)", code == 200 and code2 == 200 and "/dv/layer.js" not in html, (code, body))
+        code, body = post("/dv/undo", {"last": True})
+        code2, body2 = post("/dv/redo", {})
+        check("a frozen mockup can't be undone or redone either", code == 409 and code2 == 409, (code, code2))
     finally:
         srv.terminate()
         srv.wait(5)
+    shutil.rmtree(home, ignore_errors=True)                  # the temporary HOME: nothing left behind
     print(f"\n{'ALL PASS' if not failures else str(len(failures)) + ' FAILED'}")
     return 1 if failures else 0
 

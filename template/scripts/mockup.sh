@@ -29,6 +29,10 @@ row() { grep -v '^\s*#' "$CONF" 2>/dev/null | awk -F'|' -v n="$1" '$1==n' | head
 api=$(grep -m1 '^API_SERVER_PORT=' "$HOME/.hermes/.env" 2>/dev/null | cut -d= -f2)
 [ -n "$api" ] || die "can't find API_SERVER_PORT in ~/.hermes/.env"
 VIEW=$((api + 51))     # the mockup's link: the same port in every project
+# A project with the design view (design-view.sh) has it on this same port: never both.
+if systemctl --user is-active -q design-view 2>/dev/null; then
+  case "${1:-}" in add|proto|look) die "this project uses the design view on port $VIEW (design-view.sh); a mockup would clash with it" ;; esac
+fi
 
 copy_data() {   # $1 data path (relative to ~/workspace or absolute), $2 mockup dir
   local src="$1"; [[ "$src" = /* ]] || src="$REPO/$src"

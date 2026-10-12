@@ -21,6 +21,9 @@ case "${1:-status}" in
   up)
     APP="$HOME/workspace/frontend"
     [ "${2:-}" = "--app" ] && APP="${3:?--app needs a folder}"
+    if ! systemctl --user is-active -q design-view 2>/dev/null && ss -ltn 2>/dev/null | grep -q ":$PORT "; then
+      die "port $PORT is already in use (an older project's mockup? mockup.sh rm it first)"
+    fi
     if [ ! -e "$APP" ]; then
       [ -d "$H/starter/frontend" ] || die "no starter front end in $H/starter"
       mkdir -p "$(dirname "$APP")"; cp -a "$H/starter/frontend" "$APP"

@@ -267,10 +267,10 @@
     if (undoMode) $("note").focus();
   }
   function undoLast() {
-    post("/dv/undo", { last: true }).then(function (r) { say(r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo"); });
+    post("/dv/undo", { last: true }).then(function (r) { say(r.error ? r.error : r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo", r.error ? "err" : ""); });
   }
   function redoLast() {
-    post("/dv/redo", {}).then(function (r) { say(r.redone && r.redone.length ? "Brought back " + r.redone.join(", ") : "Nothing to redo"); });
+    post("/dv/redo", {}).then(function (r) { say(r.error ? r.error : r.redone && r.redone.length ? "Brought back " + r.redone.join(", ") : "Nothing to redo", r.error ? "err" : ""); });
   }
   $("undo").onclick = function () { setUndo(undoMode === "undo" ? false : "undo"); };
   $("redo").onclick = function () { setUndo(undoMode === "redo" ? false : "redo"); };
