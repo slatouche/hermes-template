@@ -15,8 +15,12 @@ parts that must be exact:
                                      removed with a reason); moved/merged destinations exist; the live files haven't
                                      changed since staging; a SOUL is changed through its source; the eval verdict
                                      is recorded for anything a bot loads
-  tidy.py apply <proposal>           check, then put the new files in place (backups kept), regenerate SOULs from
-                                     their sources, commit, log, and add a line to vault/system/optimiser/applied.md
+  tidy.py apply <proposal> [--owner-present]
+                                     check, then put the new files in place (backups kept), regenerate SOULs from
+                                     their sources, commit, log, and add a line to vault/system/optimiser/applied.md.
+                                     A tidy that touches an instruction file (the team rules or a bot's SOUL, or a SOUL's
+                                     role page) is applied only with --owner-present: Hermes lets those change only with
+                                     a person there to approve, so it's applied in a chat with the owner after their yes
   tidy.py rollback <proposal>        put every file back as it was before apply
 
 A meaning map (meaning-map.md in the staging folder), per changed file:
@@ -37,7 +41,25 @@ HOME = pathlib.Path(os.environ.get("PROJECT_HOME") or pathlib.Path.home())
 H = HOME / ".hermes"
 STAGE = HOME / "scratch" / "tidy"
 KINDS = ("kept", "rewritten", "moved", "merged", "removed")
+PROTECTED = {"AGENTS.md", "SOUL.md", "CLAUDE.md", "HERMES.md", ".hermes.md", ".cursorrules"}   # Hermes guards these
 LOADED = re.compile(r"^(workspace/AGENTS\.md|\.hermes/profiles/[^/]+/(SOUL\.md|memories/(MEMORY|USER)\.md)|vault/system/roles/[^/]+\.md)$")
+
+
+def st(f):
+    """Where a file sits in the staging folder: an instruction file under another name (a bot may draft one, never
+    write one), so the Optimiser can edit its copy."""
+    return f + ".staged" if pathlib.PurePosixPath(f).name in PROTECTED else f
+
+
+def touches_instructions(files):
+    return any(pathlib.PurePosixPath(f).name in PROTECTED or soul_source_of(f) for f in files)
+
+
+def soul_source_of(f):
+    """True when f is the role page some bot's SOUL is generated from."""
+    m = re.match(r"vault/system/roles/([^/]+?)(\.working)?\.md$", f)
+    return bool(m and (H / "profiles" / m.group(1) / "SOUL.md").exists()
+                and (m.group(2) or not (HOME / "vault" / "system" / "roles" / f"{m.group(1)}.working.md").exists()))
 
 
 def rel(p):
@@ -124,8 +146,8 @@ def read_proposal(path):
 
 
 def changed(stage, man):
-    return [f for f in man["files"] if (stage / "new" / f).exists() and
-            (stage / "new" / f).read_bytes() != ((stage / "old" / f).read_bytes() if (stage / "old" / f).exists() else b"")]
+    return [f for f in man["files"] if (stage / "new" / st(f)).exists() and
+            (stage / "new" / st(f)).read_bytes() != ((stage / "old" / st(f)).read_bytes() if (stage / "old" / st(f)).exists() else b"")]
 
 
 def do_check(path, quiet=False):
@@ -141,7 +163,7 @@ def do_check(path, quiet=False):
     for f in ch:
         if re.match(r"\.hermes/profiles/[^/]+/SOUL\.md$", f) and soul_source(f):
             problems.append(f"{f}: change its source {soul_source(f)} instead (the SOUL is generated from it)")
-        n = len(units((stage / "old" / f).read_text(encoding="utf-8"))) if (stage / "old" / f).exists() else 0
+        n = len(units((stage / "old" / st(f)).read_text(encoding="utf-8"))) if (stage / "old" / st(f)).exists() else 0
         sec = sections.get(f)
         if n and sec is None:
             problems.append(f"{f}: no section in the meaning map")
@@ -163,7 +185,7 @@ def do_check(path, quiet=False):
                 elif kind == "moved":
                     dest = re.search(r"`([^`]+)`", rest)
                     d = dest.group(1).split("#")[0] if dest else ""
-                    if not d or not ((stage / "new" / d).exists() or (HOME / d).exists()):
+                    if not d or not ((stage / "new" / st(d)).exists() or (HOME / d).exists()):
                         problems.append(f"{f} U{i}: moved to `{d or '?'}`, which doesn't exist")
                 elif kind == "merged" and not re.search(r"U\d+|`[^`]+`", rest):
                     problems.append(f"{f} U{i}: merged needs the unit (U<n>) or file it merged into")
@@ -231,8 +253,8 @@ def cmd_new(slice_):
              "need no section.", ""]
     for f in sl[slice_]:
         for d in ("old", "new"):
-            (stage / d / f).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy(HOME / f, stage / d / f)
+            (stage / d / st(f)).parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(HOME / f, stage / d / st(f))
         man["files"][f] = sha(f)
         lines += [f"## {f}"] + [f"- U{i} ? :: {u[:110]}" for i, u in enumerate(units((HOME / f).read_text(encoding='utf-8')), 1)] + [""]
     (stage / "manifest.json").write_text(json.dumps(man, indent=1))
@@ -267,7 +289,8 @@ tags: [system, tidy]
 Before: <vault/system/evals/results/...>; with the change: <... --trial ...>.
 Eval verdict: <no worse | better | worse: then don't propose it>
 """, encoding="utf-8")
-    print(json.dumps({"stage": rel(stage), "edit": f"{rel(stage)}/new/", "map": f"{rel(stage)}/meaning-map.md",
+    print(json.dumps({"stage": rel(stage), "edit": f"{rel(stage)}/new/ (instruction files as <name>.staged)",
+                      "map": f"{rel(stage)}/meaning-map.md",
                       "proposal": rel(prop), "files": sl[slice_]}))
 
 
@@ -277,9 +300,9 @@ def cmd_add(stage_arg, f):
     man = json.loads((stage / "manifest.json").read_text())
     f = rel(HOME / f) if (HOME / f).exists() else f
     for d in ("old", "new"):
-        (stage / d / f).parent.mkdir(parents=True, exist_ok=True)
+        (stage / d / st(f)).parent.mkdir(parents=True, exist_ok=True)
         if (HOME / f).exists():
-            shutil.copy(HOME / f, stage / d / f)
+            shutil.copy(HOME / f, stage / d / st(f))
     man["files"][f] = sha(f)
     (stage / "manifest.json").write_text(json.dumps(man, indent=1))
     us = units((HOME / f).read_text(encoding="utf-8")) if (HOME / f).exists() else []
@@ -288,10 +311,15 @@ def cmd_add(stage_arg, f):
     print(f"staged {f} ({len(us)} units)")
 
 
-def cmd_apply(path):
+def cmd_apply(path, owner_present=False):
     p, text, stage, man, ch, problems = do_check(path)
     if problems:
         sys.exit("tidy: not applied (see above); the proposal goes back to the Optimiser")
+    if touches_instructions(ch) and not owner_present:
+        print("tidy: this one changes an instruction file (" + ", ".join(f for f in ch if touches_instructions([f]))
+              + "): Hermes lets those change only with a person there. Put it to the owner (one Owner: card, blocked "
+              "needs_input), and after their yes run, in that chat: tidy.py apply " + p.name + " --owner-present")
+        sys.exit(3)
     for f in ch:
         (stage / "backup" / f).parent.mkdir(parents=True, exist_ok=True)
         if (HOME / f).exists():
@@ -305,7 +333,7 @@ def cmd_apply(path):
             souls_before[s] = True
     for f in ch:
         (HOME / f).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(stage / "new" / f, HOME / f)
+        shutil.copy(stage / "new" / st(f), HOME / f)
     souls = regenerate_souls(ch)
     if "workspace/AGENTS.md" in ch:
         sync_team_rules()
@@ -360,7 +388,7 @@ def main():
     elif cmd == "check" and rest:
         return 1 if do_check(rest[0])[5] else 0
     elif cmd == "apply" and rest:
-        cmd_apply(rest[0])
+        cmd_apply(rest[0], owner_present="--owner-present" in rest)
     elif cmd == "rollback" and rest:
         cmd_rollback(rest[0])
     else:

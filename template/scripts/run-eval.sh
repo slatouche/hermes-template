@@ -37,11 +37,11 @@ if [ -n "$TRIAL" ]; then
       break
     fi
   done
-  [ ! -f "$N/.hermes/profiles/$BOT/SOUL.md" ] || cp "$N/.hermes/profiles/$BOT/SOUL.md" "$TP/SOUL.md"
+  [ ! -f "$N/.hermes/profiles/$BOT/SOUL.md.staged" ] || cp "$N/.hermes/profiles/$BOT/SOUL.md.staged" "$TP/SOUL.md"
   for m in MEMORY.md USER.md; do
     [ ! -f "$N/.hermes/profiles/$BOT/memories/$m" ] || cp "$N/.hermes/profiles/$BOT/memories/$m" "$TP/memories/$m"
   done
-  if [ -f "$N/workspace/AGENTS.md" ]; then cp "$N/workspace/AGENTS.md" "$WORKDIR/AGENTS.md"
+  if [ -f "$N/workspace/AGENTS.md.staged" ]; then cp "$N/workspace/AGENTS.md.staged" "$WORKDIR/AGENTS.md"
   else cp "$HOME/workspace/AGENTS.md" "$WORKDIR/AGENTS.md"; fi
 fi
 
