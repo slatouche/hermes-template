@@ -1069,6 +1069,8 @@ def make_handler(app):
             if path == "/app" or path.startswith("/app/"):
                 return self.file(app.app_dir, path[5:] or "index.html", inject=True)
             if path.startswith("/api/"):
+                if app.a.api_proxy:
+                    return self.proxy()
                 key = self.api_path()
                 if key in app.mem:
                     return self.send(200, app.mem[key])
@@ -1081,8 +1083,31 @@ def make_handler(app):
                 return self.send(204, b"", "image/x-icon")
             return self.send(404, {"error": "not found"})
 
+        def proxy(self):
+            """/api/... to the design copy of the app's back end (design-view.sh up --api-cmd): any method, body and
+            answer passed through as they are. It runs on a copy of the data, so writes are safe."""
+            n = int(self.headers.get("Content-Length") or 0)
+            data = self.rfile.read(n) if n else None
+            hdrs = {k: v for k, v in self.headers.items() if k.lower() in ("content-type", "accept", "range")}
+            req = urllib.request.Request(app.a.api_proxy.rstrip("/") + self.path, data=data, headers=hdrs, method=self.command)
+            try:
+                with urllib.request.urlopen(req, timeout=120) as r:
+                    code, body, ctype = r.status, r.read(), r.headers.get("Content-Type", "application/octet-stream")
+            except urllib.error.HTTPError as e:
+                code, body, ctype = e.code, e.read(), e.headers.get("Content-Type", "application/json")
+            except (urllib.error.URLError, OSError) as e:
+                return self.send(502, {"error": f"the design copy of the back end didn't answer ({e})"})
+            self.send(code, body, ctype)
+
+        def do_DELETE(self):
+            if app.a.api_proxy and self.path.startswith("/api/"):
+                return self.proxy()
+            return self.do_POST()
+
         def do_POST(self):
             path = self.path.split("?")[0]
+            if app.a.api_proxy and path.startswith("/api/"):
+                return self.proxy()
             try:
                 d = self.body()
             except ValueError:
@@ -1211,6 +1236,7 @@ def main():
     ap.add_argument("--layer", required=True, help="the design layer folder")
     ap.add_argument("--bind", default="0.0.0.0")
     ap.add_argument("--no-cards", action="store_true", help="a test copy: never create kanban cards")
+    ap.add_argument("--api-proxy", default="", help="pass /api/... to this back end (a design copy, on copied data)")
     a = ap.parse_args()
     app = App(a)
     srv = ThreadingHTTPServer((a.bind, a.port), make_handler(app))

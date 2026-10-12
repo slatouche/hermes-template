@@ -26,4 +26,3 @@ Three settings in `.hermes/profiles/<bot>/config.yaml` decide how much a bot dra
 Back the file up first (`config.yaml.bak-<stamp>`), change only those keys, and `diff` backup against result as the check (no YAML parser is available in the project's python, so the diff is the proof). A config change reaches the bot's next session, never the running one.
 
 ## One command still narrates itself
-The round tool doing the whole round in one call means the *bot* cannot narrate its edits, so the tool writes its own rows into the card's log (`~/.hermes/kanban/logs/<card>.log`): the same `┊ <label>   <n>s` rows the chip reads, **with a duration** — the reader (`feedback-inbox.round_step`) takes the last *finished* row, so a row without one is ignored and an older row wins. A tool that lands several edits in turn therefore appends a row per edit and the owner watches each arrive. `board-now.py` reads the same log.

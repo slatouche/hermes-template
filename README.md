@@ -46,9 +46,7 @@ Every project has a number and a block of 100 ports, laid out the same way in ev
 | `1NN01` | the app | your network |
 | `1NN02`-`1NN09` | more apps or services, if the project has them | your network |
 | `1NN51` | **the design view**: the app's real front end with the design layer on top, under a toolbar (notes, marking, options, Agreed/Ship). Your one design page | your network |
-| `1NN52`, `1NN53` | older projects only: demo 1 and demo 2 of the previous design setup | your network |
-| `1NN26`, `1NN46`, `1NN47` | older projects only: what the previous mockup and demos ran on | this machine only |
-| `1NN99` | the feedback inbox | your network |
+| `1NN26` | the design copy of the app's back end, on a copy of its data (when the app has one) | this machine only |
 
 Example, project 1: you use the app on `10101`, and design it on `10151`. The real app has no toolbar; notes, including bugs you spot, go on the design view, which shows the same app.
 
@@ -123,7 +121,6 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 - **Talk to the Manager** for anything: ideas, status ("where are we?"), "build it". You can also chat with a specialist directly (the Designer for design rounds); what's decided lands on the board and in the vault.
 - **What needs you** is a card blocked for you, and it waits as long as it takes. `/queue` in a Manager chat lists them; the Manager screens every new one within 15 minutes and answers the ones that aren't really yours.
 - **Design:** on the design view (`1NN51`, see [The design view](#the-design-view)): notes, marks and instant edits on a live copy of the app, options side by side, then **Agreed**, **Built**, **Ship**. Bugs you spot there go in a note too: the quick judge sends anything that needs real code to the Manager.
-- **Older projects** (made before the design view) keep the previous setup (the Mark toolbar on the mockup and demos, `look-apply.py` rounds by the Designer) until they are moved over with `design-view.sh up --app <front-end folder>`.
 - **Cards remember:** a bot coming back to a card (sent back, unblocked, out of turns) resumes its session on it, and a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
 
 ## Adding Discord later
@@ -153,9 +150,9 @@ Stops its services and deletes the user, folder, registry entry and firewall rul
 | `template/workspace/` | The product repo's starting `AGENTS.md` (team table) and README |
 | `template/root-AGENTS.md` | Guardrails for the stock default profile |
 | `template/vault/` | The vault skeleton: SCHEMA, status, log, `system/` (overview, role catalogue, change proposals) |
-| `template/scripts/` | The project's tools: the vault (`vault-log`, `vault-commit`, `vault-index`, `vault-sweep`, `card-log`, `vault-lint`), hiring (`hire.sh`, `skill-check.py`), imports (`import-project.sh`, `import-survey.py`), the owner queue (`owner-queue.py`), the design view (`design-view.py`, `design-view.sh`, `dv.py`; its page files are in `template/design-view/` and new projects' starter front end in `template/starter/`), older projects' Mark tool and design links (`feedback-inbox.py`, `feedback-overlay.js`, `mockup.sh`, `demo.sh`, `variant-shot.sh`, `look-check.sh`, `look-apply.py`), card sessions (`hermes-worker.py`), what the board is doing now (`board-now.py`), demo pages that update themselves (`live-reload.js`), the Designer's toolkit (`look.py`: see with a question answered by the model, map, audit, walk; `look_service.py`, the warm browser behind it; `look-runtime.js`, moves kept true as the app redraws; `proto-kit.js`, navigable prototypes), research (`cite-check.py`, `raw-stamp.py`), upkeep (`host-facts.sh`, `workspace-tidy.sh`, `run-eval.sh`) |
+| `template/scripts/` | The project's tools: the vault (`vault-log`, `vault-commit`, `vault-index`, `vault-sweep`, `card-log`, `vault-lint`), hiring (`hire.sh`, `skill-check.py`), imports (`import-project.sh`, `import-survey.py`), the owner queue (`owner-queue.py`), the design view (`design-view.py`, `design-view.sh`, `dv.py`; its page files are in `template/design-view/` and new projects' starter front end in `template/starter/`), real-input checks for testers (`ui-check.sh`), card sessions (`hermes-worker.py`), what the board is doing now (`board-now.py`), research (`cite-check.py`, `raw-stamp.py`), upkeep (`host-facts.sh`, `workspace-tidy.sh`, `run-eval.sh`) |
 | `install-searxng.sh` | One shared self-hosted web search for the bots (run by `new-project.sh`) |
-| `tests/` | `test_design_view.py` (the design view: edits, layer, undo/redo, plans, server, dv.py), `test_feedback_inbox.py` (the Mark tool's server), `test_hermes_worker.py` (session resume), `test_look_apply.py` (a design round's apply step), `mark_demo.py` (a page to try the toolbar on) |
+| `tests/` | `test_design_view.py` (the design view: edits, layer, undo/redo, plans, server, back-end pass-through, dv.py), `test_hermes_worker.py` (session resume) |
 | `template/memory.gitignore` | The allowlist for the project memory repo (never secrets or databases) |
 
 Improvements found in a project get copied back here, so the next project starts better. Updating this repo doesn't change existing projects.
@@ -174,7 +171,7 @@ The same install runs inside Ubuntu on WSL2 (Windows 11). The installer notices 
    systemd=true
    ```
    then `wsl --shutdown` in PowerShell and open Ubuntu again.
-3. Optional, so other devices on your network can reach the apps and Mark links: in `%UserProfile%\.wslconfig` on Windows
+3. Optional, so other devices on your network can reach the apps and the design view: in `%UserProfile%\.wslconfig` on Windows
    ```
    [wsl2]
    networkingMode=mirrored

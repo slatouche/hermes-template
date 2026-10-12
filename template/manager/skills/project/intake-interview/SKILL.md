@@ -31,7 +31,7 @@ Credit: adapted from Matt Pocock's `grilling` and `domain-modeling` skills (gith
 2. **Ask what changes the plan.** Order: the goal and who it's for → what "done" looks like → hard limits (time, money, platforms, data, legal) → what's out of scope → priorities → how the owner wants to work.
 3. **Record each answer the moment it lands:** update the state file (verbatim-ish, the options offered and the pick), then `vault-log.sh manager ingest "<one line>" "[[raw/interview-<date>]]"`.
 4. **Settled words go to `product/glossary.md`** right away (term, one-line meaning, words to avoid). Use those words from then on.
-5. **"How should it look or feel" becomes a prototype card,** not more questions. A rough mock beats five answers.
+5. **"How should it look or feel" goes to the design view,** not more questions: a note there makes a rough version in seconds, and a rough mock beats five answers.
 6. **Push back once, with the mechanism.** If an answer carries real risk, say what it costs in plain words and recommend; check a platform rule on the web first rather than from memory. Then take the owner's call, write down the trade, and never re-argue it.
 7. **Restate after each cluster** ("So: X for Y, done when Z. Right?") and get a yes before building on it.
 8. **Before taking on an idea,** check `product/out-of-scope/`. If it was rejected before, say so and why; the owner decides again.

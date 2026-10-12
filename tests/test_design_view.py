@@ -111,7 +111,7 @@ def main():
     import argparse
     (home / "workspace" / "fe").mkdir(parents=True)
     app = m.App(argparse.Namespace(project="t", app=str(home / "workspace" / "fe"), layer=str(home / "vault" / "design" / "lp"),
-                                   no_cards=True))
+                                   no_cards=True, api_proxy=""))
 
     def stream(*lines):
         for ln in lines:
@@ -227,6 +227,42 @@ def main():
     finally:
         srv.terminate()
         srv.wait(5)
+
+    # ---- an app with a real back end: /api passes through to its design copy ---------------------------------------
+    import http.server, threading
+    class Stub(http.server.BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+        def answer(self):
+            n = int(self.headers.get("Content-Length") or 0)
+            body = json.dumps({"method": self.command, "path": self.path, "got": (self.rfile.read(n) if n else b"").decode()}).encode()
+            self.send_response(201 if self.command == "POST" else 200)
+            self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers()
+            self.wfile.write(body)
+        do_GET = do_POST = do_DELETE = answer
+    stub = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Stub)
+    threading.Thread(target=stub.serve_forever, daemon=True).start()
+    s2 = socket.socket(); s2.bind(("127.0.0.1", 0)); port2 = s2.getsockname()[1]; s2.close()
+    srv2 = subprocess.Popen([sys.executable, str(ROOT / "scripts" / "design-view.py"), "--project", "t", "--port", str(port2),
+                             "--app", str(app_dir), "--layer", str(home / "vault" / "design" / "layer3"), "--bind", "127.0.0.1",
+                             "--api-proxy", f"http://127.0.0.1:{stub.server_address[1]}"],
+                            env=dict(os.environ, HOME=str(home)), stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    try:
+        for _ in range(50):
+            try:
+                urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops", timeout=2).read()
+                break
+            except OSError:
+                time.sleep(0.1)
+        g = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/api/decks?x=1", timeout=5).read())
+        req = urllib.request.Request(f"http://127.0.0.1:{port2}/api/decks", data=b'{"name":"New"}',
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        with urllib.request.urlopen(req, timeout=5) as r:
+            code, p = r.status, json.loads(r.read())
+        check("with a back-end copy, /api GET passes through (query kept)", g == {"method": "GET", "path": "/api/decks?x=1", "got": ""}, g)
+        check("...and POST with its body and status", code == 201 and p["got"] == '{"name":"New"}', (code, p))
+    finally:
+        srv2.terminate(); srv2.wait(5); stub.shutdown()
     shutil.rmtree(home, ignore_errors=True)                  # the temporary HOME: nothing left behind
     print(f"\n{'ALL PASS' if not failures else str(len(failures)) + ' FAILED'}")
     return 1 if failures else 0

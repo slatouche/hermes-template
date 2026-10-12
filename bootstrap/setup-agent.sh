@@ -282,10 +282,8 @@ echo "Manager jobs: manager-watch (every 15 min), weekly-retro (Mondays 08:00); 
 grep -q 'host-facts' <<<"$JOBS" || hermes cron create "5 3 * * *" --name host-facts --script host-facts.sh --no-agent --deliver local
 bash "$H/scripts/host-facts.sh" >/dev/null || true      # vault/system/host.md: where this runs, how apps are served
 
-# ---------- the owner's feedback inbox (Mark overlay + review links), last port of the block ----------
-step "Feedback inbox"
-FEEDBACK_PORT=$((API + 99))
-touch "$H/scripts/review-mirrors.conf"
+# ---------- card workers resume their topic sessions ----------
+step "Topic sessions"
 mkdir -p "$HOME/.config/systemd/user"
 # Card workers resume their topic session: the gateway launches workers through $HERMES_BIN (hermes-worker.py),
 # which adds `--resume` for a card with a `Session:` topic and runs everything else unchanged.
@@ -299,20 +297,6 @@ Environment="HERMES_REAL_BIN=$GW_REAL"
 EOF
 systemctl --user daemon-reload 2>/dev/null || true
 hermes -p manager config set compression.idle_compact_after_seconds 3600 >/dev/null 2>&1 || true
-cat > "$HOME/.config/systemd/user/feedback-inbox.service" <<EOF
-[Unit]
-Description=Owner feedback inbox for $NAME (Mark overlay and review links)
-
-[Service]
-ExecStart=/usr/bin/python3 %h/.hermes/scripts/feedback-inbox.py $FEEDBACK_PORT
-Restart=always
-
-[Install]
-WantedBy=default.target
-EOF
-systemctl --user daemon-reload
-if systemctl --user enable --now feedback-inbox >/dev/null 2>&1; then echo "running on :$FEEDBACK_PORT"
-else echo "warning: the feedback inbox didn't start (systemctl --user status feedback-inbox)"; fi
 
 # ---------- repo 2: project memory (vault + the bots' brains) ----------
 step "Project memory repo"

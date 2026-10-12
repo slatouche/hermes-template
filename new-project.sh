@@ -16,7 +16,7 @@
 # --test      a test project: the lowest free number from 50 (ports 15000 and up), kept apart from real ones.
 #
 # Ports: project N gets 1NN00-1NN99, the same layout every time (README, "Ports"): 1NN00 Hermes API (local),
-# 1NN01 the app, 1NN26 its mockup, 1NN46/47 the demo slots, 1NN99 the feedback inbox; + 50 = the Mark review link.
+# 1NN01 the app, 1NN26 the design copy of its back end, 1NN51 the design view.
 #
 # Safe to re-run: finished steps are skipped.
 # Part 1 (root): user, folder, linger, SSH keys, registry entry, firewall.
@@ -134,8 +134,8 @@ if [ ! -f "$REGISTRY" ]; then
   cat > "$REGISTRY" <<'EOF'
 # Project registry: name -> number, Linux user, port block
 # Project N (1-49 real, 50-99 tests) gets ports 1NN00-1NN99, always laid out the same way:
-#   1NN00 Hermes API (localhost)   1NN01 the app   1NN02-09 more apps/services   1NN26 mockup
-#   1NN46/47 demo slots            1NN99 feedback inbox   anything + 50 = its Mark review link
+#   1NN00 Hermes API (localhost)   1NN01 the app   1NN02-09 more apps/services
+#   1NN26 design copy of the back end (localhost)   1NN51 the design view
 projects:
 EOF
 fi
@@ -299,7 +299,7 @@ On your PC, add this to ~/.ssh/config (same key as the other projects):
 Then:
   1. Hermes Desktop: add an SSH connection to $HOST_LABEL-$NAME and open the Manager.
   2. Say hello. $([ -n "$IMPORT_SRC" ] && echo "The Manager takes the imported project over (it reads it, then asks questions)." || echo "The Manager starts the interview.")
-  Feedback: http://$HOST_ADDR:$((API + 99))/ (review links with the Mark toolbar, once an app is running)
+  Design: http://$HOST_ADDR:$((API + 51))/ (the design view: the app with the design toolbar)
   To import a project later: copy it into the project's import folder with the project's own login,
      scp -r <folder> $HOST_LABEL-$NAME:import/
   then tell the Manager "take over the project in ~/import/<folder>" (or just give it a git URL).

@@ -43,45 +43,9 @@ def kanban(*args):
         return None
 
 
-def wrap_up_looks(tasks):
-    """A look whose rounds have stopped (round blocks in its CSS, untouched for an hour) gets one wrap-up card for the
-    Designer, in the same session: fold the round blocks into clean rules and bring map.md up to date. Rounds stay
-    fast because they never tidy; this does it once. No model call here."""
-    variants = HOME / "vault" / "design" / "variants"
-    if not variants.is_dir() or not (ROOT_H / "profiles" / "designer").is_dir():
-        return
-    open_titles = {t.get("title") for t in tasks if t.get("status") not in ("done", "archived")}
-    for vd in sorted(p for p in variants.iterdir() if p.is_dir()):
-        css = vd / "style.css"
-        if not css.exists() or NOW - css.stat().st_mtime < 3600:
-            continue
-        if "/* round t_" not in css.read_text(encoding="utf-8", errors="replace"):
-            continue
-        title = f"Designer: wrap up look {vd.name}"[:50]
-        if title in open_titles:
-            continue
-        body = (f"Context: the owner's rounds on look `{vd.name}` have stopped for an hour. Review: none.\n"
-                f"Session: design:{vd.name}\n\n## Outcome\nThe look's CSS reads as one clean design: every `/* round t_... */` "
-                "block folded into the rules it changes (same result on the page, no round headers left), and `map.md` "
-                "up to date with where things live and the gotchas a later round needs.\n\n## Verification\n- One "
-                "`look-check.sh` at the owner's last screen size shows the same values as before the tidy.\n- `grep -c "
-                f"'/\\* round t_' vault/design/variants/{vd.name}/style.css` → 0\n\n## Stop when\nTidied and checked; "
-                "nothing about the look's appearance changed.\n")
-        bf = ROOT_H / "profiles" / "manager" / "scripts" / f".wrapup-{vd.name}.md"
-        bf.write_text(body, encoding="utf-8")
-        sh("hermes", "kanban", "create", title, "--assignee", "designer", "--body-file", str(bf), "--workspace",
-           f"dir:{HOME}", "--max-runtime", "15m", "--created-by", "manager", "--idempotency-key",
-           f"wrapup-{vd.name}-{int(css.stat().st_mtime)}")
-        bf.unlink(missing_ok=True)
-
-
 def findings():
     f = {}   # key -> text
     tasks = kanban("list") or []
-    try:
-        wrap_up_looks(tasks)                      # zero-token upkeep: tidy a look once its rounds stop
-    except OSError:
-        pass
     diags = kanban("diagnostics") or []
     busy = {t.get("assignee") for t in tasks if t.get("status") == "running"}
     for d in diags:
@@ -147,51 +111,6 @@ def findings():
                     and parts[2] == "handoff" and not re.search(r"\bt_[0-9a-f]{6,}", line):
                 f[f"nocard:{parts[0]}:{parts[1]}"] = f"{parts[1]} logged work with no card id: {parts[3][:120]}"
 
-    fb = HOME / "vault" / "raw" / "feedback"
-    if fb.is_dir():
-        waiting, batches = [], []
-        for p in fb.glob("*.md"):
-            t = p.read_text(errors="replace")
-            if re.search(r"^status:\s*open", t, re.M) and re.search(r"^card:\s*none", t, re.M):
-                if p.stem.endswith("-batch"):
-                    batches.append(p.stem)
-                elif not re.search(r"^batch:", t, re.M):   # notes in a batch are handled through their batch page
-                    waiting.append(p.stem)
-        # Paperwork nobody should do by hand: a batch whose card is done closes, with every note in it (silent).
-        done_ids = {t.get("id") for t in tasks if t.get("status") == "done"}
-        for p in fb.glob("*-batch.md"):
-            t = p.read_text(errors="replace")
-            m = re.search(r"^card:\s*(t_\w+)", t, re.M)
-            if m and m.group(1) in done_ids and re.search(r"^status:\s*open", t, re.M):
-                for page in [p] + [fb / f"{n}.md" for n in re.findall(r"\[\[raw/feedback/([\w-]+)\]\]", t)]:
-                    if page.exists():
-                        s = page.read_text(errors="replace")
-                        s = re.sub(r"^status:\s*open", "status: done", s, count=1, flags=re.M)
-                        s = re.sub(r"^card:\s*none", f"card: {m.group(1)}", s, count=1, flags=re.M)
-                        page.write_text(s)
-        for b in sorted(batches):
-            f["feedback-batch:" + b] =(f"the owner sent a batch of feedback: raw/feedback/{b}.md (one review pass: "
-                                         "ONE card for the whole batch, never one per note; all on one variant = the owner picked it)")
-        if waiting:
-            waiting.sort()
-            f["feedback:" + waiting[-1]] = (f"{len(waiting)} owner note(s) from the Mark overlay without a card "
-                                            f"(raw/feedback/): " + ", ".join(waiting[:5]))
-
-    for n in (1, 2):   # a demo slot left showing the same thing for two weeks: pick, move it into the mockup, or clear it
-        unit = HOME / ".config" / "systemd" / "user" / f"design-demo-{n}.service"
-        if unit.exists() and NOW - unit.stat().st_mtime > 14 * DAY:
-            what = next((ln.split(":", 1)[1].strip() for ln in unit.read_text().splitlines() if ln.startswith("Description=")), "")
-            f[f"demo-stale:{n}:{int(unit.stat().st_mtime)}"] = (f"demo {n} has shown '{what}' for 14+ days: ask the owner to pick, "
-                                                              "or bring it into the mockup, then demo.sh clear")
-    va = HOME / "vault" / "design" / "variants"
-    if va.is_dir():
-        for d in va.iterdir():
-            if d.is_dir() and d.name != "current" and NOW - max((p.stat().st_mtime for p in d.rglob("*")), default=d.stat().st_mtime) > 14 * DAY:
-                f[f"variant-stale:{d.name}"] = f"design variant {d.name} unpicked for 14+ days: archive it or ask the owner to pick"
-            size = sum(p.stat().st_size for p in d.glob("*.js")) + sum(p.stat().st_size for p in d.glob("*.css"))
-            if d.is_dir() and size > 40_000:   # a look should be styles and a short script; a patch layer re-learned every round
-                f[f"look-size:{d.name}:{size // 20_000}"] = (f"design look {d.name} is {size // 1000} KB of CSS and script: too big to stay "
-                                                           "quick. Card the Designer: fold built parts out, prototype the structural ones")
     side = HOME / "side"
     if side.is_dir():
         for d in side.iterdir():
