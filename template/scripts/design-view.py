@@ -319,6 +319,13 @@ class Layer:
             self.options[sid]["choices"][letter] = {"name": name, "ops": []}
             self._save()
 
+    def discard(self, sid):
+        """None of these: the set goes, nothing from it stays."""
+        with self.lock:
+            gone = self.options.pop(sid, None)
+            self._save()
+            return bool(gone)
+
     def pick(self, sid, letter):
         with self.lock:
             s = self.options.pop(sid, None)
@@ -1229,7 +1236,7 @@ def make_handler(app):
             if path == "/dv/shipped":                                # after a Manager resolved a failed merge
                 app.shipped()
                 return self.send(200, {"ok": True})
-            if path in ("/dv/undo", "/dv/redo", "/dv/pick") and app.layer.frozen:
+            if path in ("/dv/undo", "/dv/redo", "/dv/pick", "/dv/discard") and app.layer.frozen:
                 return self.send(409, {"error": "the mockup is frozen while the agreed design is built"})
             if path == "/dv/undo":
                 ids = d.get("notes") or ([app.layer.last_note_with_ops()] if d.get("last") else [])
@@ -1244,6 +1251,14 @@ def make_handler(app):
                 if ids:
                     app.events.send("reload-ops", why=f"redid {', '.join(ids)}")
                 return self.send(200, {"redone": ids})
+            if path == "/dv/discard":                                # the switcher's Discard: none of these
+                ok = app.layer.discard(str(d.get("set")))
+                if ok:
+                    rec = app.layer.new_note(f"discarded the options of {d.get('set')}", [], "")
+                    rec["verdict"], rec["plan"] = "discard", f"none of the options of {d.get('set')}"
+                    app.layer.finish(rec)
+                    app.events.send("reload-ops", why="options discarded")
+                return self.send(200 if ok else 404, {"ok": ok})
             if path == "/dv/pick":
                 ok = app.layer.pick(str(d.get("set")), str(d.get("choice")))
                 if ok:

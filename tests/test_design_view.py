@@ -110,6 +110,8 @@ def main():
     layer.new_option_set(nb, sid=nb["id"] + "-2")
     check("new options close an earlier note's unpicked set; a note's own sets stay together",
           first not in layer.options and {nb["id"] + "-1", nb["id"] + "-2"} == set(layer.options), list(layer.options))
+    check("Discard closes a set and keeps nothing from it", layer.discard(nb["id"] + "-1") and nb["id"] + "-1" not in layer.options
+          and not layer.discard("n999"), list(layer.options))
     layer.options.clear()
     layer._save()
     layer.finish(na)
@@ -200,6 +202,8 @@ def main():
         post("/dv/op", {"op": {"op": "css", "rule": "h3{color:blue}"}})
         v2 = json.loads(get("/dv/version")[1])["v"]
         check("every change bumps the layer version (pages catch up on what they missed)", v2 > v1, (v1, v2))
+        code, body = post("/dv/discard", {"set": "nope"})
+        check("discarding a set that isn't there says so", code == 404, (code, body))
         code, body = post("/dv/op", {"op": {"op": "insert", "where": "into", "ref": "body", "html": "<script>1</script>"}})
         check("an unsafe direct edit is refused with 400", code == 400, (code, body))
         post("/dv/map", {"route": "#/deck", "map": "main > .cards x10"})

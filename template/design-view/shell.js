@@ -295,6 +295,13 @@
     });
     btn("⧉ Side by side", false, function () { compare(set); });
     if (active) btn("✓ Use " + active.choice, false, function () { pick(active.set, active.choice); }, "go");
+    btn("✕ Discard", false, function () {                  // none of these: the set goes, the page shows the design
+      post("/dv/discard", { set: set }).then(function (r) {
+        if (r.error) { say(r.error, "err"); return; }
+        $("compare").hidden = true; optsState = {}; var d = dv(); if (d) d.setOption(null, null); drawOpts();
+        say("Options discarded: none of them were kept");
+      });
+    });
   }
   function pick(set, choice) {
     post("/dv/pick", { set: set, choice: choice }).then(function () { $("compare").hidden = true; var d = dv(); if (d) d.setOption(null, null); });
