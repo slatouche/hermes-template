@@ -3,6 +3,7 @@
 # Run by the Manager (as the project's agent user) only after the owner has approved the hire.
 #
 #   hire.sh <role> [--channel <discord-channel-id>] [--skill <folder>]...
+#   hire.sh <role> --refresh      re-install the role's kit (below) from the template, for a bot already hired
 #
 # Creates the profile (cloned from the Manager: model, key, toolsets, working folder), then gives it a
 # clean start: an empty MEMORY.md, USER.md from vault/system/owner-profile.md, and none of the
@@ -11,6 +12,8 @@
 # adds it to the team table in the instructions file Hermes loads (workspace/AGENTS.md), optionally installs skill folders and routes a
 # Discord channel to it, then logs and checkpoints.
 # Re-running for an existing bot with --channel and/or --skill only adds those.
+# A role with a kit in ~/.hermes/roles/<role>/ (from the template's template/<role>/: skills/, scripts/, setup.sh) gets
+# its template skills and job scripts installed in its profile, then setup.sh run (its cron jobs).
 set -euo pipefail
 export PATH="$HOME/.local/bin:$PATH"
 die() { echo "hire.sh: $*" >&2; exit 1; }
@@ -19,10 +22,12 @@ ROLE="${1:-}"
 if [ $# -gt 0 ]; then shift; fi
 CHANNEL=""
 SKILLS=()
+REFRESH=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --channel) CHANNEL="${2:-}"; shift 2 ;;
     --skill)   SKILLS+=("${2:-}"); shift 2 ;;
+    --refresh) REFRESH=1; shift ;;
     *) die "unknown option '$1'" ;;
   esac
 done
@@ -73,8 +78,32 @@ R_VERIFY="$(fmv verify_on_stop)";  R_VERIFY="${R_VERIFY:-false}"
 [[ "$R_CTX" =~ ^[0-9]+$ ]] && [[ "$R_TURNS" =~ ^[0-9]+$ ]] || die "$RF: compression_tokens and max_turns must be whole numbers"
 [[ "$R_VERIFY" =~ ^(true|false)$ ]] || die "$RF: verify_on_stop must be true or false"
 
+KIT="$HOME/.hermes/roles/$ROLE"
+install_kit() {   # the role's template skills and job scripts, then its own setup (cron jobs); safe to repeat
+  [ -d "$KIT" ] || return 0
+  if [ -d "$KIT/skills" ]; then
+    for d in "$KIT"/skills/*/*/; do
+      [ -f "$d/SKILL.md" ] || continue
+      rel="${d#"$KIT"/skills/}"; rel="${rel%/}"
+      rm -rf "$P/skills/$rel"; mkdir -p "$P/skills/$(dirname "$rel")"; cp -r "$d" "$P/skills/$rel"
+      echo "template skill: $rel"
+    done
+  fi
+  if [ -d "$KIT/scripts" ]; then
+    mkdir -p "$P/scripts"; cp "$KIT"/scripts/* "$P/scripts/"; chmod +x "$P"/scripts/*
+  fi
+  [ ! -f "$KIT/setup.sh" ] || bash "$KIT/setup.sh"
+}
+
 CHANGED=()
 NEW_HIRE=0
+if [ -d "$P" ] && [ "$REFRESH" = 1 ]; then
+  install_kit
+  echo "Refreshed $ROLE's kit."
+  exit 0
+elif [ "$REFRESH" = 1 ]; then
+  die "$ROLE isn't hired yet; hire it first"
+fi
 if [ -d "$P" ]; then
   [ -n "$CHANNEL" ] || [ ${#SKILLS[@]} -gt 0 ] || die "$ROLE is already hired. To add a Discord channel or skills: hire.sh $ROLE --channel <id> | --skill <folder>"
   echo "$ROLE exists; adding only the requested channel/skills"
@@ -194,6 +223,7 @@ EOF
     sed -e "s/<role>/$ROLE/g" -e "s/^title: .*/title: \"Eval: $DNAME\"/" -e "s/^summary: .*/summary: \"$DNAME's fixed eval, run before and after changing its SOUL or skills.\"/"       -e "s/^updated: .*/updated: $(date +%F)/" "$EV/_role.md" > "$EV/$ROLE.md"
   fi
   CHANGED+=("vault/system/evals/$ROLE.md")
+  install_kit
   CHANGED+=(".hermes/profiles/$ROLE/SOUL.md" ".hermes/profiles/$ROLE/config.yaml" ".hermes/profiles/$ROLE/profile.yaml"
             ".hermes/profiles/$ROLE/memories/MEMORY.md" ".hermes/profiles/$ROLE/memories/USER.md")
 fi

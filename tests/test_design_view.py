@@ -234,14 +234,21 @@ def main():
                 time.sleep(0.1)
         code, body = post("/dv/op", {"op": {"op": "css", "rule": "h2{color:red}"}})
         check("a frozen mockup takes no edits", code == 409, (code, body))
-        code, body = post("/dv/preview", {"dir": str(home / "nope"), "branch": "design/x"})
-        check("a preview must be a front-end folder in the project", code == 400, body)
-        code, body = post("/dv/preview", {"dir": str(app_dir), "branch": "design/x"})
-        code2, html = get("/preview/")
-        check("a built preview is served as is (no layer)", code == 200 and code2 == 200 and "/dv/layer.js" not in html, (code, body))
         code, body = post("/dv/undo", {"last": True})
         code2, body2 = post("/dv/redo", {})
         check("a frozen mockup can't be undone or redone either", code == 409 and code2 == 409, (code, code2))
+        try:
+            pcode = get("/preview/")[0]
+        except urllib.error.HTTPError as e:
+            pcode = e.code
+        code, body = post("/dv/ship", {})
+        check("no Built preview and no Ship: the build goes to the main app", pcode == 404 and code == 404, (pcode, code))
+        code, body = post("/dv/landed", {})
+        st = json.loads(get("/dv/ops")[1])
+        check("live: the layer is archived and the mockup unfreezes", code == 200 and not st["frozen"] and st["ops"] == []
+              and any((home / "vault" / "design" / "layer2" / "archive").iterdir()), (code, st["frozen"], len(st["ops"])))
+        code, body = post("/dv/landed", {})
+        check("landed with nothing agreed is refused", code == 409, (code, body))
     finally:
         srv.terminate()
         srv.wait(5)

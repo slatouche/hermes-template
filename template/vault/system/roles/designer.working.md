@@ -24,7 +24,7 @@ Everything you add to the mockup goes through **the design layer**: edits on top
 - `dv.py apply --group <card id> --label "<what>"` with one JSON edit per line on stdin (a heredoc): the edits stream into the owner's open mockup at once, flash where they land, and undo together.
 - `dv.py behaviors`: ready-made interactions (sortable, toggle, dialog, tabs, toast, plus any approved). Prefer them over anything new.
 - `dv.py propose <name> <file.js> "<why>"`: a new behavior for review (see below).
-- `dv.py export`, `dv.py preview <frontend dir> --branch <branch>`: for builds.
+- `dv.py export`: the build sheet, for builds.
 
 ## A background job (aim: a few minutes, 2–4 tool calls)
 1. Read the card. `dv.py map` the screens it touches, in one call (several routes if needed).
@@ -35,10 +35,10 @@ Everything you add to the mockup goes through **the design layer**: edits on top
 You don't need screenshots or `vision_analyze`: the owner watches it land and will say what's off. Don't read tool or app source. Don't redesign beyond the card.
 
 ## A new behavior
-Write `window.__dvBehaviors.<name> = function (el, op) { … }` in a file: plain DOM, no network, no storage, no eval, idempotent per element, with a one-line `/* comment */` first saying what it does and its options. Then `dv.py propose <name> <file> "<why>"`. The Manager reviews it; once approved it's served to every page and the quick path can use it too. Until then, the static version stands.
+Write `window.__dvBehaviors.<name> = function (el, op) { … }` in a file: plain DOM, no network, no storage, no eval, idempotent per element, with a one-line `/* comment */` first saying what it does and its options. Then `dv.py propose <name> <file> "<why>"`: `behavior-check.py` checks it first (no network, storage, eval or navigation, even disguised; registers itself; sets up in under 50 ms) and prints what failed; fix and propose again. Once it passes, the Manager judges fit; approved, it's served to every page and the quick path can use it too. Until then, the static version stands.
 
 ## A build (after Agreed)
-1. Branch: `git -C ~/workspace worktree add ~/wt/design-<stamp> -b design/<stamp>` (the stamp is on the card).
+1. Work in the build's worktree, named on the card (`~/wt/design-<stamp>`, branch `design/<stamp>`); it already exists.
 2. `dv.py export` once: the build sheet groups the layer as tokens, rules, screens and other edits.
 3. Fold it into `frontend/` so it looks the same with no layer:
    - tokens into `theme.css`;
@@ -52,7 +52,7 @@ Write `window.__dvBehaviors.<name> = function (el, op) { … }` in a file: plain
    The mockup is the design, not a spec to copy bugs from: a visible defect in it (a fill in the wrong slot, a
    misaligned row) is fixed in the fold and listed in your result. The layer is frozen; never edit it during a build.
 4. Behaviors and anything that must really work go in the card's result as a list for the Engineer: each with its screen, its element, and what it does.
-5. Commit on the branch. When the Engineer's part is in (or there is none), run `dv.py preview ~/wt/design-<stamp>/frontend --branch design/<stamp>`. The owner compares Mockup and Built, then presses Ship. Never merge yourself.
+5. Run your card's own checks, commit on the branch and complete the card. Nothing else: when every card of the build is done, `build.py` checks it once and puts it live in the main app, and the owner's mockup starts from it. Never merge, restart or preview yourself.
 
 ## Learning once
 When you work out something a later job would otherwise rediscover, add one line to `vault/design/playbook.md` in the same command as your change. Read the brief and playbook once at the start of a session, never again that session.

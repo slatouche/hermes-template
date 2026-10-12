@@ -72,7 +72,7 @@ Steps 1-5 happen in the chat (the instruction-file write needs the owner on the 
 6. Write the destinations from the ledger (vault pages, skills, owner-profile proposal). Set the change page to `status: active` with an `applied: <date>` line and the commit id, and `system/takeover.md` to `status: active`; nothing applied stays `draft`. Then checkpoint with `vault-commit.sh`.
 7. **Clear the drop spot.** If the source was copied into `~/import/`, the code is now in `workspace/` (with its history) and the evidence in `raw/predecessor/`. First move anything the owner said to keep from `raw/predecessor/not-imported.md` (data the project needs goes to `~/data/`, outside git). Then, with the owner's yes, delete the source folder from `~/import/` (and any `--notes` folder there). The owner's original elsewhere is never touched.
 8. Set `00-status.md` to the agreed next phase (`setup` with Gate 1 done, or `build`), log a `decision`, and tell the owner in three lines: what was kept, what was removed, the test result.
-9. Carry on with the hires and first cards as approved.
+9. Hire the Optimiser (every project has one; it came with the template, no proposal needed): `~/.hermes/scripts/hire.sh optimiser`. Then carry on with the hires and first cards as approved.
 
 ## Pitfalls
 - Removing first and understanding later: the snapshot is evidence, but the context of why a rule existed is lost once nobody reads it.

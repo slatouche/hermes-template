@@ -2,12 +2,12 @@
    Notes: type, optionally with marks (Mark = click elements; Box = draw round an area; Arrow = from this to there).
    Direct tools, no designer and no wait: Move (drag an element somewhere) and Text (click text and type).
    Shows what the designer is doing as it happens; the options on show (switch live, or side by side); undo;
-   and the build: Agreed (freezes the mockup and starts the build), Mockup/Built (compare), Ship (merge). */
+   and the build: Agreed (freezes the mockup; it's built and goes live on the main app by itself), with its progress. */
 (function () {
   "use strict";
   var $ = function (id) { return document.getElementById(id); };
   var frame = $("app"), ov = $("ov"), marks = [], tool = null, busy = {}, t0 = {}, tick = 0, counts = {};
-  var optsState = {}, active = null, build = { frozen: null, preview: null }, viewing = "mockup";
+  var optsState = {}, active = null, build = { frozen: null };
   var SVG = "http://www.w3.org/2000/svg";
 
   function dv() { try { return frame.contentWindow.__dv; } catch (e) { return null; } }
@@ -337,58 +337,55 @@
     });
   }
 
-  // ---- the build: Agreed -> building -> Mockup/Built -> Ship -------------------------------------------------------------
+  // ---- the build: Agreed -> planned -> built -> checked -> live on the main app (build.py does it, no button) ------------
+  var STAGES = { planning: "Agreed · the Manager is planning the build", checking: "Checking the whole build",
+                 reviewing: "The Tester is reviewing the build", landing: "Going live", live: "Live ✓",
+                 stuck: "⚠ The build is stuck · the Manager has it", aborted: "Build stopped" };
   function drawBuild() {
     var box = $("build"); box.innerHTML = "";
     function btn(text, cls, fn, title) { var b = document.createElement("button"); b.textContent = text; b.className = cls || ""; b.onclick = fn; if (title) b.title = title; box.appendChild(b); return b; }
-    function lbl(t) { var s = document.createElement("span"); s.className = "lbl"; s.textContent = t; box.appendChild(s); }
+    function lbl(t, title) { var s = document.createElement("span"); s.className = "lbl"; s.textContent = t; if (title) s.title = title; box.appendChild(s); }
     if (build.data) btn("↻ Data", "", function () {        // the design copy's data, made the app's real data again
       if (!confirm("Refresh the design view's data from the app's real data?\n\nAnything created, changed or deleted in the design view's copy is lost. Your real data is only read.")) return;
       post("/dv/reset-data").then(function (r) { if (r.error) say(r.error, "err"); });
     }, "Refresh the design copy's data from the app's real data (your real data is only read)");
     var frozen = !!build.frozen;
     $("note").disabled = frozen; $("send").disabled = frozen;
-    $("note").placeholder = frozen ? "Agreed — the mockup is frozen while it's built" : "Tell the designer what to change…";
-    if (build.preview) {
-      lbl("Built:");
-      btn("Mockup", viewing === "mockup" ? "on" : "", function () { view("mockup"); });
-      btn("Built", viewing === "built" ? "on" : "", function () { view("built"); });
-      btn("🚀 Ship", "go", function () {
-        if (!confirm("Ship it? This merges " + build.preview.branch + " into main, the live app updates, and the mockup starts again from the new app.")) return;
-        say("Shipping…", "busy");
-        post("/dv/ship").then(function (r) { say(r.error ? "Ship failed: " + r.error : "Shipped. The mockup now starts from the new app.", r.error ? "err" : ""); });
-      }, "Merge the built design into the live app");
-    } else if (frozen) {
-      var rows = build.rows || [], doneN = rows.filter(function (r) { return r.status === "done"; }).length;
-      lbl(rows.length ? "Building " + doneN + "/" + rows.length + ":" : "Agreed · the Manager is planning the build");
-      rows.forEach(function (r) {                            // one chip per card of the build: who, state, how long
+    $("note").placeholder = frozen ? "Agreed — the mockup is frozen while it's built and put live" : "Tell the designer what to change…";
+    if (frozen) {
+      var rows = build.rows || [], st = build.state || "planning";
+      var doneN = rows.filter(function (r) { return r.status === "done" || r.status === "archived"; }).length;
+      lbl(st === "building" ? "Building " + doneN + "/" + rows.length + ":" : (STAGES[st] || st) + (build.step && st !== "planning" && st !== "live" ? ": " + build.step : ""),
+          build.step || "");
+      if (st === "planning" || st === "building" || st === "reviewing") rows.forEach(function (r) {   // one chip per card: who, state, how long
         var mins = r.since ? Math.max(0, Math.round((Date.now() / 1000 - r.since) / 60)) : 0;
-        var st = { done: "✓", running: "◐ " + mins + "m", blocked: "⚠ needs you", review: "◑ review", ready: "○ next", todo: "○ waiting", triage: "○ waiting" }[r.status] || r.status;
+        var cs = { done: "✓", archived: "✓", running: "◐ " + mins + "m", blocked: "⚠ blocked", review: "◑ review", ready: "○ next", todo: "○ waiting", triage: "○ waiting" }[r.status] || r.status;
         var c = document.createElement("span"); c.className = "bchip " + r.status;
-        c.textContent = r.who + " " + st; c.title = r.id + " · " + r.title + " (" + r.who + ", " + r.status + ")";
+        c.textContent = r.who + " " + cs; c.title = r.id + " · " + r.title + " (" + r.who + ", " + r.status + ")";
         box.appendChild(c);
       });
-      btn("Unfreeze", "", function () { if (confirm("Unfreeze the mockup? The build card stays; tell the Manager if it should stop.")) post("/dv/unfreeze"); });
+      if (st !== "landing" && st !== "live") btn("Unfreeze", "", function () {
+        if (confirm("Unfreeze the mockup and stop the build? Nothing goes live; the build's branch is kept for the Manager.")) post("/dv/unfreeze").then(function (r) { if (r.error) say(r.error, "err"); });
+      }, "Stop the build and go back to designing");
     } else {
       btn("✓ Agreed", "go", function () {
-        if (!confirm("Agree the whole mockup and start the build? Notes pause until it's built and shipped.")) return;
+        if (!confirm("Agree the whole mockup? It's built and goes live on the main app by itself once its checks pass. Notes pause until then.")) return;
         post("/dv/agree").then(function (r) { if (r.error) say(r.error, "err"); });
-      }, "The whole mockup is right: build it for real");
+      }, "The whole mockup is right: build it into the main app");
     }
   }
-  function view(which) {
-    viewing = which;
-    frame.src = which === "built" ? "/preview/" + (dv() ? dv().route() : "") : "/app/";
-    drawBuild();
+  function setBuild(b) {
+    b = b || {};
+    build.state = b.state; build.step = b.step || ""; build.rows = b.rows || [];
   }
   function loadState() {
     fetch("/dv/ops", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
-      build = { frozen: d.frozen, preview: d.preview, data: d.data, rows: d.build || [] };
-      if (!build.preview && viewing === "built") view("mockup"); else drawBuild();
+      build.frozen = d.frozen; build.data = d.data; setBuild(d.build);
+      drawBuild();
     }).catch(function () {});
   }
   loadState();
-  setInterval(function () { if (build.frozen && !build.preview && (build.rows || []).length) drawBuild(); }, 30000);   // minutes tick
+  setInterval(function () { if (build.frozen) drawBuild(); }, 30000);   // the minutes on the chips
 
   // ---- live status --------------------------------------------------------------------------------------------------
   function elapsed(id) { return ((Date.now() - (t0[id] || Date.now())) / 1000).toFixed(1) + " s"; }
@@ -414,7 +411,7 @@
   var es = new EventSource("/dv/events");
   es.onmessage = function (m) {
     var e; try { e = JSON.parse(m.data); } catch (x) { return; }
-    if (viewing === "mockup") { try { frame.contentWindow.postMessage({ dvEvent: e }, location.origin); } catch (x) {} }
+    try { frame.contentWindow.postMessage({ dvEvent: e }, location.origin); } catch (x) {}
     if (e.type === "received") { t0[e.note] = Date.now(); busy[e.note] = (e.queued ? "Queued: " : "Received: ") + e.text; liveTick(); }
     else if (e.type === "doing") { t0[e.note] = t0[e.note] || Date.now(); busy[e.note] = "Reading: " + e.text; liveTick(); }
     else if (e.type === "plan" && e.parts && e.parts.length > 1) {
@@ -446,7 +443,7 @@
           e.refused && e.refused.length ? "err" : "");
     }
     else if (e.type === "question") { showQuestion(e); }
-    else if (e.type === "build") { build.rows = e.rows || []; drawBuild(); }
+    else if (e.type === "build") { setBuild(e); drawBuild(); }
     else if (e.type === "data") {
       if (e.state === "started") { t0.data = Date.now(); busy.data = "Refreshing the data from the app's real data (" + (e.why || "asked") + ")"; liveTick(); }
       else { delete busy.data; say(e.state === "done" ? "Data refreshed in " + e.s + " s: the page shows the app's current data" : "Data refresh failed: " + (e.text || ""), e.state === "done" ? "" : "err"); }
@@ -456,10 +453,9 @@
       else showAnswer(e.title, e.text, e.suggest);
     }
     else if (e.type === "error") { delete busy[e.note]; say("Failed: " + e.message, "err"); }
-    else if (e.type === "frozen" || e.type === "preview" || e.type === "reload-ops" || e.type === "ship-failed") {
+    else if (e.type === "frozen" || e.type === "reload-ops" || e.type === "live") {
       loadState();
-      if (e.type === "preview") say("Built: compare Mockup and Built, then Ship when it's right.");
-      if (e.type === "ship-failed") say("Ship failed: the merge needs the Manager" + (e.card && e.card.id ? " (" + e.card.id + ")" : ""), "err");
+      if (e.type === "live") say("Live: the agreed design is in the main app, and the mockup starts from it again.");
     }
   };
   es.onerror = function () { say("Lost the design view — retrying…", "err"); };

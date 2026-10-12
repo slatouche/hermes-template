@@ -45,7 +45,7 @@ Every project has a number and a block of 100 ports, laid out the same way in ev
 | `1NN00` | Hermes API (Desktop talks to it over SSH) | this machine only |
 | `1NN01` | the app | your network |
 | `1NN02`-`1NN09` | more apps or services, if the project has them | your network |
-| `1NN51` | **the design view**: the app's real front end with the design layer on top, under a toolbar (notes, marking, options, Agreed/Ship). Your one design page | your network |
+| `1NN51` | **the design view**: the app's real front end with the design layer on top, under a toolbar (notes, marking, options, Agreed and the build's progress). Your one design page | your network |
 | `1NN26` | the design copy of the app's back end, on a copy of its data (when the app has one) | this machine only |
 
 Example, project 1: you use the app on `10101`, and design it on `10151`. The real app has no toolbar; notes, including bugs you spot, go on the design view, which shows the same app.
@@ -63,15 +63,15 @@ One page per project (`1NN51`), the same everywhere: a toolbar above the app, th
   - **background:** the same call again with thinking on, about a minute, still live;
   - **function:** a card for the Manager, because it needs real code;
   - **ask:** a one-line question in the toolbar.
-- **Interactions:** behaviors (`sortable`, `toggle`, `dialog`, `tabs`, `toast`) make the mockup clickable without code. A new kind of interaction is proposed as a file and the Manager approves it; after that every note can use it.
-- **Data:** an app with a back end runs a design copy on a copy of its data, so nothing you try touches your real data. **↻ Data** refreshes the copy from your real data (only changes are copied; your real data is only read), and Ship does it automatically. An app without a back end uses placeholder data.
+- **Interactions:** behaviors (`sortable`, `toggle`, `dialog`, `tabs`, `toast`) make the mockup clickable without code. A new kind of interaction is proposed as a file, checked by script in about 2 s (no network, storage or eval, even disguised; sets up fast), and the Manager approves it for fit; after that every note can use it.
+- **Data:** an app with a back end runs a design copy on a copy of its data, so nothing you try touches your real data. **↻ Data** refreshes the copy from your real data (only changes are copied; your real data is only read), and a build going live does it automatically. An app without a back end uses placeholder data.
 - **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **Undo last**, or say what to undo ("undo the colour changes").
-- **Agreed → Built → Ship:**
-  1. **Agreed** freezes the mockup and gives the Manager a build card.
-  2. The Designer folds the layer into the real front end on a branch, and the Engineer wires what must really work.
-  3. You compare **Mockup** and **Built**.
-  4. **Ship** merges into main. The layer empties and the design view starts again from the new app.
-- **Bots use `dv.py`** (on their PATH): map a screen, apply edits (they stream into your open page and report whether they landed), propose a behavior, export the build sheet, set the built preview.
+- **Agreed → live:**
+  1. **Agreed** freezes the mockup and starts a build; the Manager plans its cards.
+  2. The Designer folds the layer into the real front end on the build's branch, and the Engineer wires what must really work.
+  3. When they're done, the build is checked once (the full test suite and every card's checks, plus one Tester review if it needs one), merged into main and the app restarted, all by script. Then the layer empties and the design view starts again from the new app.
+  The toolbar shows each stage (planning, building 2/3 with who's on what, checking, going live). **Unfreeze** stops it before it goes live.
+- **Bots use `dv.py`** (on their PATH): map a screen, apply edits (they stream into your open page and report whether they landed), propose a behavior, export the build sheet.
 - **New projects** start from the starter front end (`workspace/frontend`: `theme.css` tokens, `ui.css` components, `screens/*.html`, logic-only `app.js`, one `api.js` door to the back end), so design can begin from nothing and stays quick to change.
 - **Imported projects** get it with `design-view.sh up --app <front-end folder>` once the Manager knows where the front end lives.
 
@@ -121,7 +121,9 @@ When you talk to the Manager it takes the project over (`project-takeover` skill
 ## Working with your team
 - **Talk to the Manager** for anything: ideas, status ("where are we?"), "build it". You can also chat with a specialist directly (the Designer for design rounds); what's decided lands on the board and in the vault.
 - **What needs you** is a card blocked for you, and it waits as long as it takes. `/queue` in a Manager chat lists them; the Manager screens every new one within 15 minutes and answers the ones that aren't really yours.
-- **Design:** on the design view (`1NN51`, see [The design view](#the-design-view)): notes, marks and instant edits on a live copy of the app, options side by side, then **Agreed**, **Built**, **Ship**. Bugs you spot there go in a note too: the quick judge sends anything that needs real code to the Manager.
+- **Design:** on the design view (`1NN51`, see [The design view](#the-design-view)): notes, marks and instant edits on a live copy of the app, options side by side, then **Agreed**, and it goes live in the app by itself. Bugs you spot there go in a note too: the quick judge sends anything that needs real code to the Manager.
+- **Code changes are builds:** one branch, a few cards that each check only their own part, then one check of the whole build and one landing, both by script (`build.py`): no review, test run, merge or restart per card. A failure comes back as one fix card; the third goes to the Manager.
+- **The Optimiser** (every project has one) watches how the team works: card times and steps, repeated work, loops, slow replies, your corrections. Each night, only when there's something new, it proposes measured fixes, tested on copies; the Manager screens them and you approve them in `/queue`. It never changes anything itself.
 - **Cards remember:** a bot coming back to a card (sent back, unblocked, out of turns) resumes its session on it, and a card with `Session: <topic>` resumes that bot's last session for the topic (`hermes-worker.py`), so related work doesn't start cold. The Manager picks the topics.
 
 ## Adding Discord later
@@ -144,16 +146,18 @@ Stops its services and deletes the user, folder, registry entry and firewall rul
 | `remove-project.sh` | Delete a project (run with sudo) |
 | `bootstrap/setup-agent.sh` | Part 2, run automatically as the agent user |
 | `template/manager/SOUL.md` | The Manager |
-| `template/manager/skills/` | The Manager's template skills: `intake-interview`, `project-takeover`, `work-planning`, `roadmap`, `retro` |
-| `template/manager/scripts/` | The Manager's job scripts: `manager-watch.py`, `retro-gate.py` (zero-token gates) |
+| `template/manager/skills/` | The Manager's template skills: `intake-interview`, `project-takeover`, `work-planning`, `roadmap` |
+| `template/manager/scripts/` | The Manager's job script: `manager-watch.py` (a zero-token gate) |
+| `template/manager/plugins/state-pack/` | Adds the project's state to the Manager's chat messages when it changed, so status answers need no reading |
+| `template/optimiser/` | The Optimiser's kit (`hire.sh` installs it): the `optimise` skill, `optimiser-gate.py` (its nightly zero-token gate), `setup.sh` (its job) |
 | `template/workspace/scripts/run-tests.sh` | The one failures-only test command every bot runs |
 | `template/import/` | Files used only for an imported project (the onboarding status page) |
 | `template/workspace/` | The product repo's starting `AGENTS.md` (team table) and README |
 | `template/root-AGENTS.md` | Guardrails for the stock default profile |
 | `template/vault/` | The vault skeleton: SCHEMA, status, log, `system/` (overview, role catalogue, change proposals) |
-| `template/scripts/` | The project's tools: the vault (`vault-log`, `vault-commit`, `vault-index`, `vault-sweep`, `card-log`, `vault-lint`), hiring (`hire.sh`, `skill-check.py`), imports (`import-project.sh`, `import-survey.py`), the owner queue (`owner-queue.py`), the design view (`design-view.py`, `design-view.sh`, `dv.py`; its page files are in `template/design-view/` and new projects' starter front end in `template/starter/`), real-input checks for testers (`ui-check.sh`), card sessions (`hermes-worker.py`), what the board is doing now (`board-now.py`), research (`cite-check.py`, `raw-stamp.py`), upkeep (`host-facts.sh`, `workspace-tidy.sh`, `run-eval.sh`) |
+| `template/scripts/` | The project's tools: the vault (`vault-log`, `vault-commit`, `vault-index`, `vault-sweep`, `card-log`, `vault-lint`), hiring (`hire.sh`, `skill-check.py`), imports (`import-project.sh`, `import-survey.py`), the owner queue (`owner-queue.py`), builds (`build.py`: one check and one landing per build), the design view (`design-view.py`, `design-view.sh`, `dv.py`, `behavior-check.py`; its page files are in `template/design-view/` and new projects' starter front end in `template/starter/`), real-input checks for testers (`ui-check.sh`), card sessions (`hermes-worker.py`), what the board is doing now (`board-now.py`, `state-pack.py`), research (`cite-check.py`, `raw-stamp.py`), upkeep (`host-facts.sh`, `workspace-tidy.sh`, `run-eval.sh`) |
 | `install-searxng.sh` | One shared self-hosted web search for the bots (run by `new-project.sh`) |
-| `tests/` | `test_design_view.py` (the design view: edits, layer, undo/redo, plans, server, back-end pass-through, dv.py), `test_hermes_worker.py` (session resume) |
+| `tests/` | `test_design_view.py` (the design view: edits, layer, undo/redo, plans, server, back-end pass-through, dv.py), `test_build.py` (builds: checks, landing, fix cards, roll-back, review), `test_hermes_worker.py` (session resume) |
 | `template/memory.gitignore` | The allowlist for the project memory repo (never secrets or databases) |
 
 Improvements found in a project get copied back here, so the next project starts better. Updating this repo doesn't change existing projects.

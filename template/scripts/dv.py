@@ -8,10 +8,12 @@
   dv.py undo <note id> [...]           take back notes (ids from `dv.py notes`)
   dv.py notes                          the last notes and what each did
   dv.py behaviors                      the ready-made interactions (behavior edits) and their options
-  dv.py propose <name> <file.js> "<why>"   propose a new behavior: saved to vault/design/behaviors/proposed/ and a
-                                       review card goes to the Manager (only approved ones are served)
+  dv.py propose <name> <file.js> "<why>"   propose a new behavior: behavior-check.py checks it first (safe, registers,
+                                       sets up fast); passed, it waits in vault/design/behaviors/proposed/ and the
+                                       Manager gets a card to judge fit (only approved ones are served)
+  dv.py approve <name> | reject <name> "<why>"   the Manager's verdict on a proposed behavior
   dv.py export                         the build sheet: the layer grouped for folding into the real front end
-  dv.py preview <frontend dir> --branch <branch>   the build is ready: the owner can compare Mockup/Built and Ship
+  dv.py landed                         an agreed design finished by hand is live: archive the layer, unfreeze
 
 Edits are the same as the quick path's: token, css, move, text, insert, attr, repeat, remove, link, behavior, screen
 (see `dv.py help-edits`). Nothing here writes the app's code.
@@ -28,6 +30,7 @@ import urllib.parse
 import urllib.request
 
 HOME = pathlib.Path.home()
+BEHAVIOR_DIR = HOME / "vault" / "design" / "behaviors"
 EDITS = """Edits (one JSON object each):
 {"op":"token","name":"--x","value":"..."}            change a theme token (preferred)
 {"op":"css","rule":"<selector> { ... }"}               a rule, written with the tokens
@@ -130,28 +133,53 @@ def main(argv):
         print(call("/dv/undo", {"notes": rest}))
     elif cmd == "behaviors":
         print(BEHAVIORS)
-        for p in sorted((HOME / "vault" / "design" / "behaviors").glob("*.js")):
+        for p in sorted(BEHAVIOR_DIR.glob("*.js")):
             m = re.search(r"/\*\s*(.*?)(?:\*/|\n)", p.read_text(errors="replace"))
             print(f"  {p.stem:<9} {(m.group(1).strip() if m else '')[:160]}  (approved)")
     elif cmd == "propose":
         if len(rest) < 3 or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,40}", rest[0]):
             sys.exit('dv: propose <name> <file.js> "<why>"')
-        dest = HOME / "vault" / "design" / "behaviors" / "proposed"
+        name, why = rest[0], rest[2]
+        r = subprocess.run([sys.executable, str(HOME / ".hermes" / "scripts" / "behavior-check.py"), rest[1], "--name", name],
+                           capture_output=True, text=True)
+        print(r.stdout.strip() or r.stderr.strip())
+        if r.returncode != 0:
+            sys.exit("dv: not proposed; fix what failed and propose again")
+        dest = BEHAVIOR_DIR / "proposed"
         dest.mkdir(parents=True, exist_ok=True)
-        shutil.copy(rest[1], dest / f"{rest[0]}.js")
-        out = subprocess.run(["hermes", "kanban", "create", f"Review proposed behavior: {rest[0]}", "--assignee", "manager",
-                              "--body", f"The Designer proposes a new mockup behavior '{rest[0]}': {rest[2]}\n\n"
-                              f"File: vault/design/behaviors/proposed/{rest[0]}.js\nReview it for speed, safety (no network, "
-                              f"storage or eval; registers window.__dvBehaviors.{rest[0]} = function (el, op)) and fit. "
-                              f"Approve by moving it to vault/design/behaviors/{rest[0]}.js; from then on every note can use it."],
-                             capture_output=True, text=True)
-        print(f"proposed {rest[0]}; review card: {out.stdout.strip()[:120] or out.stderr.strip()[:120]}")
+        shutil.copy(rest[1], dest / f"{name}.js")
+        notes = [ln.strip(" ()") for ln in r.stdout.splitlines()[1:] if ln.strip().startswith("(")]
+        body = (f"A new mockup behavior '{name}' from the Designer: {why}\n\nFile: vault/design/behaviors/proposed/{name}.js\n"
+                f"behavior-check.py passed it: plain DOM only (no network, storage, eval, navigation; none reached at "
+                f"runtime either), registers itself, sets up without errors" + (f" ({'; '.join(notes)})" if notes else "")
+                + f".\n\nWhat's left is judgement, a minute's read: does it do what the note needs, and is it a reusable "
+                f"interaction rather than a one-off? Yes: `dv.py approve {name}`. No: `dv.py reject {name} \"<why>\"`. "
+                f"Shape: quick. Review: none.")
+        out = subprocess.run(["hermes", "kanban", "create", f"Review proposed behavior: {name}", "--assignee", "manager",
+                              "--body", body], capture_output=True, text=True)
+        print(f"proposed {name}; review card: {out.stdout.strip()[:120] or out.stderr.strip()[:120]}")
+    elif cmd in ("approve", "reject"):
+        if not rest or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]{0,40}", rest[0]):
+            sys.exit(f"dv: {cmd} <name>" + (' "<why>"' if cmd == "reject" else ""))
+        f = BEHAVIOR_DIR / "proposed" / f"{rest[0]}.js"
+        if not f.is_file():
+            sys.exit(f"dv: no proposed behavior '{rest[0]}'")
+        if cmd == "approve":
+            r = subprocess.run([sys.executable, str(HOME / ".hermes" / "scripts" / "behavior-check.py"), str(f), "--name", rest[0]],
+                               capture_output=True, text=True)
+            if r.returncode != 0:                                   # changed since it was proposed: check again
+                sys.exit("dv: it no longer passes the check:\n" + r.stdout.strip())
+            f.replace(BEHAVIOR_DIR / f.name)
+            print(f"approved {rest[0]}: every note can use it now (the design view serves it at once)")
+        else:
+            (BEHAVIOR_DIR / "rejected").mkdir(exist_ok=True)
+            f.replace(BEHAVIOR_DIR / "rejected" / f.name)
+            (BEHAVIOR_DIR / "rejected" / f"{rest[0]}.why.txt").write_text(" ".join(rest[1:]) or "rejected")
+            print(f"rejected {rest[0]}")
     elif cmd == "export":
         print(call("/dv/export", raw=True))
-    elif cmd == "preview":
-        if len(rest) < 3 or rest[1] != "--branch":
-            sys.exit("dv: preview <frontend dir> --branch <branch>")
-        print(call("/dv/preview", {"dir": str(pathlib.Path(rest[0]).resolve()), "branch": rest[2]}))
+    elif cmd == "landed":
+        print(call("/dv/landed", {}))
     else:
         sys.exit(f"dv: unknown command {cmd} (dv.py help)")
     return 0

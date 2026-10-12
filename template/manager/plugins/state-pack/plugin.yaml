@@ -1,0 +1,3 @@
+name: state-pack
+version: "1.0"
+description: "Adds the project's state (board, owner queue, builds, recent log; ~/.hermes/scripts/state-pack.py) to the Manager's chat messages when it has changed, so a reply needs no reading steps."

@@ -350,11 +350,11 @@ class Layer:
         self.frozen = (self.root / "FROZEN").exists()
 
     def archive(self, stamp):
-        """Shipped: the layer's edits, options and notes go to archive/<stamp>/ and the layer starts clean."""
+        """Live: the layer's edits, options and notes go to archive/<stamp>/ and the layer starts clean."""
         with self.lock:
             dest = self.root / "archive" / stamp
             dest.mkdir(parents=True, exist_ok=True)
-            for name in ("ops.jsonl", "options.json", "history.jsonl", "undone.jsonl", "FROZEN", "PREVIEW"):
+            for name in ("ops.jsonl", "options.json", "history.jsonl", "undone.jsonl", "FROZEN"):
                 if (self.root / name).exists():
                     (self.root / name).replace(dest / name)
             self.ops, self.options, self.history, self.undone = [], {}, [], []
@@ -412,6 +412,27 @@ def model_config():
 
 
 BEHAVIORS = HOME / "vault" / "design" / "behaviors"
+
+
+def behavior_check(path, name):
+    """behavior-check.py's verdict on a proposed behavior, as a dict (ok, fails, notes)."""
+    try:
+        r = subprocess.run([sys.executable, str(HOME / ".hermes" / "scripts" / "behavior-check.py"), str(path), "--name", name,
+                            "--json"], capture_output=True, text=True, timeout=120)
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except (OSError, ValueError, IndexError, subprocess.TimeoutExpired) as e:
+        return {"ok": False, "error": f"behavior-check didn't run: {e}"}
+
+
+def behavior_card(name, why, rec, rep):
+    """The Manager's card for a behavior that passed the script: what's left is whether it fits."""
+    src = f"note {rec['id']}: {rec['note'][:140]}" if rec else "the Designer"
+    return (f"A new mockup behavior '{name}' from {src}: {why}\n\nFile: vault/design/behaviors/proposed/{name}.js\n"
+            f"behavior-check.py passed it: plain DOM only (no network, storage, eval, navigation; none reached at runtime "
+            f"either), registers itself, sets up without errors" + (f" ({'; '.join(rep.get('notes') or [])})" if rep.get("notes") else "")
+            + ".\n\nWhat's left is judgement, a minute's read: does it do what the note needs, and is it a reusable "
+            f"interaction rather than a one-off? Yes: `dv.py approve {name}` (every note can use it from then on). "
+            f"No: `dv.py reject {name} \"<why>\"`. Shape: quick. Review: none.")
 
 
 def approved_behaviors():
@@ -492,7 +513,7 @@ class App:
         self.status = {"busy": None, "queued": 0}
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.watch_app, daemon=True).start()
-        self.build_rows = []
+        self.build = {}
         threading.Thread(target=self.watch_build, daemon=True).start()
 
     # ---- the knowledge pack ------------------------------------------------------------------------------------
@@ -846,16 +867,22 @@ class App:
         return edits, refused, usage, (proposal if proposal and proposal["js"].strip() else None)
 
     def propose(self, p, rec):
-        """A behavior the deep path needs: saved for the Manager's review, never served until approved."""
+        """A behavior the deep path needs: checked by script first (behavior-check.py: safe, registers, sets up fast).
+        Passed: the Manager only judges fit. Failed: the Designer gets it with what failed. Never served until approved."""
         dest = BEHAVIORS / "proposed"
         dest.mkdir(parents=True, exist_ok=True)
-        (dest / f"{p['name']}.js").write_text(f"/* {p['why']} */\n{p['js']}", encoding="utf-8")
-        return self.kanban(f"Review proposed behavior: {p['name']}", "manager",
-                           f"The design view (note {rec['id']}: {rec['note'][:140]}) needs a new mockup behavior "
-                           f"'{p['name']}': {p['why']}\n\nFile: vault/design/behaviors/proposed/{p['name']}.js\n"
-                           f"Review it for speed, safety (plain DOM; no network, storage or eval; registers "
-                           f"window.__dvBehaviors[\"{p['name']}\"] = function (el, op)) and fit. Approve by moving it to "
-                           f"vault/design/behaviors/{p['name']}.js; every page and note can use it from then on.")
+        f = dest / f"{p['name']}.js"
+        f.write_text(f"/* {p['why']} */\n{p['js']}", encoding="utf-8")
+        rep = behavior_check(f, p["name"])
+        if not rep.get("ok"):
+            f.unlink(missing_ok=True)
+            return self.kanban(f"Design (background): fix behavior {p['name']}", "designer",
+                               f"From the design view, note {rec['id']}: {rec['note'][:200]}\n\nThe deep path wrote a new mockup "
+                               f"behavior '{p['name']}' ({p['why']}) and it failed the behavior check:\n"
+                               + "\n".join(f"- {x}" for x in rep.get("fails") or [rep.get("error", "?")])
+                               + f"\n\nThe code:\n```js\n{p['js'][:6000]}\n```\nFix it and `dv.py propose {p['name']} <file.js> "
+                               f"\"<why>\"` (it re-checks), then use it with a behavior edit.")
+        return self.kanban(f"Review proposed behavior: {p['name']}", "manager", behavior_card(p["name"], p["why"], rec, rep))
 
     def card(self, rec, part=None):
         kind = part["kind"] if part else rec["verdict"]
@@ -882,69 +909,80 @@ class App:
         except Exception as e:
             return {"to": who, "error": str(e)[:120]}
 
-    # ---- agreed -> built preview -> shipped ------------------------------------------------------------------------
+    # ---- agreed -> built into the main app by build.py -> live ---------------------------------------------------------
+    def build_py(self, *args):
+        r = subprocess.run([sys.executable, str(HOME / ".hermes" / "scripts" / "build.py"), *args],
+                           capture_output=True, text=True, timeout=120,
+                           env=dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", "")))
+        if r.returncode != 0:
+            raise RuntimeError((r.stdout + r.stderr).strip()[-300:])
+        return json.loads(r.stdout.strip().splitlines()[-1]) if r.stdout.strip() else {}
+
     def agree(self):
+        """Agreed: the layer freezes, build.py makes the build's branch and worktree, and the Manager plans its cards.
+        When they're done, build.py checks the whole build once and puts it live on the main app; then the layer is
+        archived and the mockup starts from the new app (watch_build)."""
         if self.layer.frozen:
             return {"error": "already agreed and frozen"}
         stamp = time.strftime("%Y%m%d-%H%M")
+        slug = f"design-{stamp}"
+        if self.a.no_cards:                                       # a test copy: no branch, no card
+            self.layer.set_state("FROZEN", {"at": stamp, "build": slug, "card": self.kanban("x", "manager", ""), "t": time.time()})
+            self.events.send("frozen", stamp=stamp)
+            return {"ok": True, "stamp": stamp, "build": slug}
+        try:
+            wt = self.build_py("start", slug, "--design", stamp, "--title", f"the design agreed {stamp}")["worktree"]
+        except (RuntimeError, ValueError, KeyError) as e:
+            return {"error": f"couldn't start the build: {e}"}
         card = self.kanban(
             f"Build the agreed design ({stamp})", "manager",
-            f"The owner pressed Agreed in the design view. The design layer is frozen until it is built and shipped.\n\n"
-            f"Plan the build as cards:\n"
-            f"1. Designer: on a branch design/{stamp} (a worktree of ~/workspace), fold the design layer into the real front end "
-            f"(frontend/): `dv.py export` prints the build sheet (tokens -> theme.css, rules -> ui.css, each simulated screen "
-            f"-> screens/<route>.html and a nav link, other edits -> the screens' markup). Same look, real files, no layer.\n"
-            f"2. Engineer: wire anything that must really work behind the new screens (the API, data), on the same branch.\n"
-            f"3. When it is built: `dv.py preview <worktree>/frontend --branch design/{stamp}`. The owner compares Mockup and "
-            f"Built in the design view and presses Ship, which merges the branch into main and empties the layer.\n"
-            f"The layer stays frozen through the build: a defect anyone notices in the mockup is fixed in the build "
-            f"(and listed in that card's result), never in the layer, and is not a reason for a mockup card.\n"
-            f"Tester only for functional cases you write. Don't merge yourself.\n"
-            f"Put `build {stamp}` in every card of this build (its Context line): the owner's toolbar follows the "
-            f"build's progress by it.")
-        self.layer.set_state("FROZEN", {"at": stamp, "card": card, "t": time.time()})
+            f"The owner pressed Agreed in the design view: build this design into the main app. The design layer stays "
+            f"frozen until it is live.\n\nThe build is `{slug}`: branch `design/{stamp}`, worktree `{wt}`. Plan it as "
+            f"cards, each with the line `Build: {slug}` and `--workspace dir:{wt}`:\n"
+            f"1. Designer: fold the design layer into the real front end in the worktree: `dv.py export` prints the build "
+            f"sheet (tokens -> theme.css, rules -> ui.css, each simulated screen -> screens/<route>.html and a nav link, "
+            f"other edits -> the screens' markup). Same look, real files, no layer.\n"
+            f"2. Engineer: wire what must really work behind it (the API, data), in the same worktree.\n"
+            f"Each card runs only its own quick checks and commits; mark the check against the running app `(live)`. "
+            f"No per-card review, merge or restart: when this card and every card of the build are done, build.py checks "
+            f"the whole build once (suite + every card's checks), merges it into main, restarts the app and runs the live "
+            f"checks; the owner's mockup then unfreezes onto it. `Review: tester` on a card only for behaviour cases you "
+            f"write (one Tester review for the whole build). A defect noticed in the frozen mockup is fixed in the build, "
+            f"never in the layer. Don't merge or restart yourself. Progress: `build.py status {slug}`.")
+        try:
+            self.build_py("start", slug, "--plan-card", card.get("id") or "")
+        except (RuntimeError, ValueError) as e:
+            print(f"build {slug}: couldn't record the plan card: {e}", file=sys.stderr, flush=True)
+        self.layer.set_state("FROZEN", {"at": stamp, "build": slug, "card": card, "t": time.time()})
         self.events.send("frozen", card=card, stamp=stamp)
-        return {"ok": True, "card": card, "stamp": stamp}
+        return {"ok": True, "card": card, "stamp": stamp, "build": slug}
 
-    def set_preview(self, d):
-        folder = pathlib.Path(str(d.get("dir") or "")).expanduser().resolve()
-        if HOME.resolve() not in folder.parents or not (folder / "index.html").is_file():
-            return {"error": "preview needs a front-end folder (with index.html) under the project's home"}
-        branch = str(d.get("branch") or "")
-        if not re.fullmatch(r"[\w./-]{1,80}", branch):
-            return {"error": "preview needs the branch to ship (--branch design/<stamp>)"}
-        self.layer.set_state("PREVIEW", {"dir": str(folder), "branch": branch, "at": time.strftime("%Y-%m-%d %H:%M")})
-        self.events.send("preview", branch=branch)
+    def unfreeze(self):
+        """The owner stops the build (Unfreeze): nothing goes live; the branch is kept for the Manager."""
+        fz = self.layer.state("FROZEN") or {}
+        if self.build.get("state") == "landing":
+            return {"error": "it's going live right now; wait a moment"}
+        if fz.get("build") and not self.a.no_cards:
+            try:
+                self.build_py("abort", fz["build"], "the owner unfroze the mockup")
+            except (RuntimeError, ValueError) as e:
+                return {"error": f"couldn't stop the build: {e}"}
+        self.layer.set_state("FROZEN", None)
+        self.events.send("reload-ops", why="unfrozen")
         return {"ok": True}
 
-    def ship(self):
-        pv = self.layer.state("PREVIEW")
-        if not pv:
-            return {"error": "nothing built to ship yet"}
-        repo = HOME / "workspace"
-        def git(*a):
-            return subprocess.run(["git", "-C", str(repo), *a], capture_output=True, text=True, timeout=120)
-        r = git("merge", "--no-ff", pv["branch"], "-m", f"Ship design {pv['branch']} (owner pressed Ship in the design view)")
-        if r.returncode != 0:
-            git("merge", "--abort")
-            card = self.kanban(f"Ship failed: merge {pv['branch']}", "manager",
-                               f"The owner pressed Ship but merging {pv['branch']} into main failed:\n{(r.stdout + r.stderr)[-1500:]}\n"
-                               f"Resolve it, merge, then archive the layer (POST /dv/shipped) so the mockup restarts from the app.")
-            self.events.send("ship-failed", card=card)
-            return {"error": "merge failed; the Manager has a card", "card": card}
-        self.shipped()
-        return {"ok": True}
-
-    def shipped(self):
+    def landed(self):
+        """The agreed design is live in the main app: archive the layer, and the mockup starts from the new app."""
         stamp = time.strftime("%Y%m%d-%H%M%S")
         agreed = self.layer.root / "agreed.md"
         with agreed.open("a", encoding="utf-8") as f:
-            f.write(f"\n## Shipped {stamp}\n" + "\n".join(f"- {h['note'][:140]}" for h in self.layer.history
-                                                          if h.get("verdict") not in ("ask", "frozen")) + "\n")
+            f.write(f"\n## Live {stamp}\n" + "\n".join(f"- {h['note'][:140]}" for h in self.layer.history
+                                                       if h.get("verdict") not in ("ask", "frozen")) + "\n")
         self.layer.archive(stamp)
-        self.events.send("reload-ops", why="shipped: the mockup now starts from the new app")
+        self.events.send("live")
+        self.events.send("reload-ops", why="live: the mockup now starts from the new app")
         if self.a.api_proxy:                                    # a fresh start: the new app on today's data
-            self.reset_data(why="after Ship")
+            self.reset_data(why="after going live")
 
     def reset_data(self, why="asked"):
         """Make the design copy's data the app's real data again (design-view.sh reset-data: the real data is only
@@ -1003,38 +1041,26 @@ class App:
         return "\n".join(out) + "\n"
 
     def watch_build(self):
-        """While the agreed design is being built: the build's cards from the board (the Manager's build card, and
-        every card naming the build), each with its bot and state, sent to the page when anything changes."""
+        """While the agreed design is being built: its stage and cards from build.py, sent to the page when they
+        change; when it's live, the layer is archived and the mockup unfreezes onto the new app."""
         while True:
-            time.sleep(8)
+            time.sleep(5)
             fz = self.layer.state("FROZEN") if self.layer.frozen else None
-            if not fz:
-                if self.build_rows:
-                    self.build_rows = []
-                    self.events.send("build", rows=[])
+            if not fz or not fz.get("build") or self.a.no_cards:
+                if self.build:
+                    self.build = {}
+                    self.events.send("build", state=None, step="", rows=[])
                 continue
-            stamp, card = str(fz.get("at") or ""), ((fz.get("card") or {}).get("id") or "")
-            since = fz.get("t") or 0
-            env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""))
-            env.pop("HERMES_KANBAN_BOARD", None)
             try:
-                out = subprocess.run(["hermes", "kanban", "list", "--json"], capture_output=True, text=True, timeout=30, env=env)
-                tasks = json.loads(out.stdout or "[]")
-            except Exception:
+                st = self.build_py("status", fz["build"], "--json")
+            except (RuntimeError, ValueError, subprocess.TimeoutExpired):
                 continue
-            rows = []
-            for t in tasks:
-                text = f"{t.get('title') or ''}\n{t.get('body') or ''}"
-                mine = t.get("id") == card or (stamp and stamp in text) or (card and card in text)
-                if not mine or (t.get("created_at") or 0) < since - 120 and t.get("id") != card:
-                    continue
-                rows.append({"id": t["id"], "title": (t.get("title") or "")[:70], "who": t.get("assignee") or "",
-                             "status": t.get("status") or "", "since": t.get("started_at") or t.get("created_at") or 0,
-                             "created": t.get("created_at") or 0})
-            rows.sort(key=lambda r: r["created"])
-            if rows != self.build_rows:
-                self.build_rows = rows
-                self.events.send("build", rows=rows)
+            now = {"state": st.get("state"), "step": st.get("step") or "", "rows": st.get("cards") or []}
+            if now != self.build:
+                self.build = now
+                self.events.send("build", **now)
+            if now["state"] == "live":
+                self.landed()
 
     def watch_app(self):
         """Tell the page when the app's own files change (the Engineer committed), so it reloads."""
@@ -1111,9 +1137,9 @@ def make_handler(app):
             if path == "/dv/ops":
                 with app.layer.lock:
                     return self.send(200, {"ops": app.layer.ops, "options": app.layer.options, "config": app.layer.config(),
-                                           "frozen": app.layer.state("FROZEN"), "preview": app.layer.state("PREVIEW"),
+                                           "frozen": app.layer.state("FROZEN"),
                                            "v": app.layer.version, "data": bool(app.a.api_proxy),
-                                           "build": app.build_rows})
+                                           "build": app.build})
             if path == "/dv/version":
                 return self.send(200, {"v": app.layer.version})
             if path == "/dv/map":
@@ -1124,11 +1150,6 @@ def make_handler(app):
                 return self.send(200, {i: app.reports.get(i) for i in ids if i})
             if path == "/dv/export":
                 return self.send(200, app.export(), "text/markdown; charset=utf-8")
-            if path == "/preview" or path.startswith("/preview/"):
-                pv = app.layer.state("PREVIEW")
-                if not pv:
-                    return self.send(404, {"error": "nothing built yet"})
-                return self.file(pathlib.Path(pv["dir"]), path[9:] or "index.html")
             if path == "/dv/status":
                 return self.send(200, dict(app.status, notes=app.layer.history[-10:], queued=app.notes.qsize()))
             if path == "/dv/events":
@@ -1259,21 +1280,15 @@ def make_handler(app):
             if path == "/dv/agree":
                 return self.send(200, app.agree())
             if path == "/dv/unfreeze":
-                app.layer.set_state("FROZEN", None)
-                app.layer.set_state("PREVIEW", None)
-                app.events.send("reload-ops", why="unfrozen")
-                return self.send(200, {"ok": True})
-            if path == "/dv/preview":
-                r = app.set_preview(d)
-                return self.send(400 if "error" in r else 200, r)
-            if path == "/dv/ship":
-                r = app.ship()
+                r = app.unfreeze()
                 return self.send(409 if "error" in r else 200, r)
             if path == "/dv/reset-data":                             # the toolbar's Data button
                 r = app.reset_data()
                 return self.send(409 if "error" in r else 200, r)
-            if path == "/dv/shipped":                                # after a Manager resolved a failed merge
-                app.shipped()
+            if path == "/dv/landed":                                 # a build finished by hand (dv.py landed)
+                if not app.layer.frozen:
+                    return self.send(409, {"error": "nothing agreed is waiting to go live"})
+                app.landed()
                 return self.send(200, {"ok": True})
             if path in ("/dv/undo", "/dv/redo", "/dv/pick", "/dv/discard") and app.layer.frozen:
                 return self.send(409, {"error": "the mockup is frozen while the agreed design is built"})

@@ -147,6 +147,13 @@ chmod +x "$H"/scripts/*.sh "$H"/scripts/*.py
 rm -rf "$H/design-view" "$H/starter"
 cp -r "$T/design-view" "$H/design-view"
 cp -r "$T/starter" "$H/starter"
+# Role kits (template skills, job scripts, setup) that hire.sh installs with a role: the Optimiser's.
+rm -rf "$H/roles"; mkdir -p "$H/roles"
+cp -r "$T/optimiser" "$H/roles/optimiser"
+# Catalogue roles added to the template since this project began (existing role pages are the project's own).
+for f in "$T"/vault/system/roles/*.md; do
+  [ -e "$HOME/vault/system/roles/$(basename "$f")" ] || render "$f" > "$HOME/vault/system/roles/$(basename "$f")"
+done
 # Files import-project.sh needs later: the team rules (rendered) and the onboarding status page.
 render "$T/workspace/AGENTS.md" > "$H/scripts/templates/team-rules.md"
 render "$T/import/00-status.md" > "$H/scripts/templates/00-status-onboarding.md"
@@ -223,9 +230,15 @@ for d in "$T"/manager/skills/*/*/; do
   rm -rf "$P/skills/$rel"; mkdir -p "$P/skills/$(dirname "$rel")"; cp -r "$d" "$P/skills/$rel"
 done
 echo "template skills: $(cd "$T/manager/skills" && ls -d */*/ | tr '\n' ' ')"
+rm -rf "$P/skills/project/retro"                     # moved to the Optimiser (its optimise skill)
+# The state pack: the project's state added to each chat message when it changed (scripts/state-pack.py), so the
+# Manager answers "where are we?" without reading steps. Takes effect at the next gateway start.
+mkdir -p "$P/plugins"; rm -rf "$P/plugins/state-pack"; cp -r "$T/manager/plugins/state-pack" "$P/plugins/state-pack"
+hermes -p manager plugins enable state-pack >/dev/null 2>&1 || echo "warning: couldn't enable the state-pack plugin (hermes -p manager plugins enable state-pack)"
 # The Manager's own jobs' scripts live in its profile (cron runs a profile's scripts from there).
 mkdir -p "$P/scripts"
 cp "$T"/manager/scripts/*.py "$P/scripts/"; chmod +x "$P"/scripts/*.py
+rm -f "$P/scripts/retro-gate.py" "$P/scripts/.retro-state.json"   # the retro is the Optimiser's now
 if ! hermes -p manager project list 2>/dev/null | grep -q "$NAME"; then
   hermes -p manager project create "$NAME" "$HOME/workspace" --use
 fi
@@ -269,16 +282,16 @@ JOBS="$(hermes cron list 2>/dev/null || true)"
 grep -q 'vault-sweep' <<<"$JOBS" || hermes cron create "*/15 * * * *" --name vault-sweep --script vault-sweep.sh --no-agent --deliver local
 grep -q 'vault-lint'  <<<"$JOBS" || hermes cron create "15 2 * * *"   --name vault-lint  --script vault-lint-job.sh --no-agent --deliver local
 grep -q 'workspace-tidy' <<<"$JOBS" || hermes cron create "40 * * * *" --name workspace-tidy --script workspace-tidy.sh --no-agent --deliver local
-# The Manager's two jobs: a script decides whether there's anything to do, so quiet runs cost no tokens.
+# The Manager's job: a script decides whether there's anything to do, so quiet runs cost no tokens.
 MJOBS="$(hermes -p manager cron list 2>/dev/null || true)"
 grep -q 'manager-watch' <<<"$MJOBS" || hermes -p manager cron create "*/15 * * * *" \
   "manager-watch tick. The script output above lists new findings with card ids. Load the work-planning skill and act on each one (its 'When work comes back' and 'manager-watch wakes you' parts). Keep 00-status.md true, put owner questions in waiting_on_owner, log what you did with vault-log.sh, then stop. Be brief." \
   --name manager-watch --script manager-watch.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
-grep -q 'weekly-retro' <<<"$MJOBS" || hermes -p manager cron create "0 8 * * 1" \
-  "weekly-retro. The script output above is the evidence pack since the last retro. Load the retro skill and follow it: causes, upkeep cards, and at most 5 proposed changes in system/changes/, then add one line to waiting_on_owner and stop." \
-  --name weekly-retro --script retro-gate.py --interpreter /usr/bin/python3 --workdir "$HOME/workspace" --deliver local >/dev/null
-/usr/bin/python3 "$H/profiles/manager/scripts/retro-gate.py" --baseline    # today's skills are the starting point
-echo "Manager jobs: manager-watch (every 15 min), weekly-retro (Mondays 08:00); both silent unless their script finds something"
+# The weekly retro moved to the Optimiser's nightly review: remove the Manager's old job where it's still there.
+for id in $(awk '/^ *[0-9a-f]{8,} \[/ {id=$1} /Name: *weekly-retro/ {print id}' <<<"$MJOBS"); do
+  hermes -p manager cron remove "$id" >/dev/null && echo "removed the Manager's weekly-retro (the Optimiser does it now)"
+done
+echo "Manager job: manager-watch (every 15 min), silent unless its script finds something"
 grep -q 'host-facts' <<<"$JOBS" || hermes cron create "5 3 * * *" --name host-facts --script host-facts.sh --no-agent --deliver local
 bash "$H/scripts/host-facts.sh" >/dev/null || true      # vault/system/host.md: where this runs, how apps are served
 
@@ -297,6 +310,32 @@ Environment="HERMES_REAL_BIN=$GW_REAL"
 EOF
 systemctl --user daemon-reload 2>/dev/null || true
 hermes -p manager config set compression.idle_compact_after_seconds 3600 >/dev/null 2>&1 || true
+
+# ---------- builds: checked once and put live by script (build.py) ----------
+step "Build timer"
+cat > "$HOME/.config/systemd/user/build-tick.service" <<EOF
+[Unit]
+Description=Advance $NAME's open builds one stage (build.py tick; nothing to do costs nothing)
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 $H/scripts/build.py tick
+EOF
+cat > "$HOME/.config/systemd/user/build-tick.timer" <<EOF
+[Unit]
+Description=Check $NAME's open builds every 30 s
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=30
+AccuracySec=5
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl --user daemon-reload 2>/dev/null || true
+systemctl --user enable --now build-tick.timer >/dev/null 2>&1 && echo "build-tick: every 30 s" \
+  || echo "warning: couldn't start build-tick.timer (systemctl --user status build-tick.timer)"
 
 # ---------- repo 2: project memory (vault + the bots' brains) ----------
 step "Project memory repo"
@@ -319,6 +358,16 @@ if [ -n "${IMPORT_SRC:-}" ] && [ "$(git -C "$HOME/workspace" rev-list --count HE
 elif [ -n "${IMPORT_NOTES:-}" ] && [ ! -f "$HOME/vault/raw/predecessor/.notes-imported" ]; then
   step "Import notes $IMPORT_NOTES"            # a re-run after the notes step failed: the code is already in
   /usr/bin/python3 "$H/scripts/import-survey.py" --notes "$IMPORT_NOTES"
+fi
+
+# ---------- the Optimiser (every project has one: it watches how the team works and proposes fixes) ----------
+step "Optimiser"
+if [ -d "$H/profiles/optimiser" ]; then
+  bash "$H/scripts/hire.sh" optimiser --refresh
+elif grep -qs '<!-- team:end -->' "$HOME/workspace/AGENTS.md"; then
+  bash "$H/scripts/hire.sh" optimiser || echo "warning: the Optimiser wasn't hired (hire.sh optimiser)"
+else
+  echo "after the takeover (the team table arrives with it): the Manager runs hire.sh optimiser"
 fi
 
 # ---------- the design view (API port + 51) ----------
