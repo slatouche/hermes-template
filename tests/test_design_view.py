@@ -162,6 +162,11 @@ def main():
     said = app.prefer("drop: the percentage thing")
     check("...and 'drop:' removes the one that matches", "percentage" in said and "- tell me the percentage each time" not in app.pack()
           and "no reasoning unless" in app.pack(), said)
+    app.saw_api("/api/projects", b'{"projects":[{"name":"Thor deck","cover":{"card_id":"abc"}}]}', "application/json")
+    app.saw_api("/api/projects/Thor/tokens/card-image?card_id=abc&size=normal", b"\x89PNG", "image/png")
+    pk = app.pack()
+    check("what the app fetched is in every note's context: data samples and picture routes",
+          "The app's real data" in pk and '"card_id": "abc"' in pk and "card-image?card_id=abc" in pk, pk[-600:])
     part = {"k": 1, "kind": "review", "text": "the glow"}
     app.consume(stream("WHY The glow stacked three shadows; one underline now.", '{"op":"css","rule":".t{text-shadow:none}"}'),
                 rec, n, time.monotonic(), mode="edits", part=part)

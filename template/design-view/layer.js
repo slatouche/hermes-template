@@ -499,7 +499,8 @@
     if (cs.aspectRatio && cs.aspectRatio !== "auto") h.push("aspect-ratio " + cs.aspectRatio);
     if (el.tagName === "IMG" && el.naturalWidth) {                // the picture's own shape: "55% of the card" is computable
       h.push("image " + el.naturalWidth + "x" + el.naturalHeight + (cs.objectFit && cs.objectFit !== "fill" ? ", object-fit " + cs.objectFit : "")
-             + (cs.objectPosition && cs.objectPosition !== "50% 50%" ? " " + cs.objectPosition : ""));
+             + (cs.objectPosition && cs.objectPosition !== "50% 50%" ? " " + cs.objectPosition : "")
+             + ", src " + String(el.getAttribute("src") || "").slice(0, 120));      // where the real picture comes from
     }
     return h.join(", ");
   }

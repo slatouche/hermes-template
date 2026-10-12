@@ -102,7 +102,9 @@ Ready-made interactions (behavior edits; quick, not background):
 {{EXTRA_BEHAVIORS}}
 Rules: prefer token edits; one-off CSS only when the note names one element. Selectors must match the map you are
 given. Markup is plain HTML with classes: no style attributes (style it with css edits), no scripts, no on* handlers,
-no javascript: URLs; placeholder text and images (https://placehold.co/WxH) are fine. Where the map shows an
+no javascript: URLs. Real content and pictures come from the app's own data ("The app's real data" below, and
+each picture's src in the map): when the owner wants the real thing, use it, never a placeholder. Placeholder text
+and images (https://placehold.co/WxH) only for what doesn't exist yet. Where the map shows an
 element's own style="...", a css edit for those properties needs !important. Do the minimum that makes the change
 visible and clickable; it is a mockup."""
 
@@ -572,6 +574,7 @@ class App:
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.watch_app, daemon=True).start()
         self.build = {}
+        self.api_seen, self.api_lock = {}, threading.Lock()
         threading.Thread(target=self.watch_build, daemon=True).start()
 
     # ---- the knowledge pack ------------------------------------------------------------------------------------
@@ -605,7 +608,7 @@ class App:
             prefs = []
         standing = ("\n\n## The owner's standing instructions (keep to these in every answer and edit)\n"
                     + "\n".join(f"- {x}" for x in prefs)) if prefs else ""
-        return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + standing + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
+        return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + standing + self.api_pack() + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
                 "\n\n## App theme tokens\n" + self.tokens() + "\n\n## App component classes\n" + self.classes() +
                 "\n\n## The design layer so far (edits on top of the app)\n" + self.layer.summary())
 
@@ -836,6 +839,34 @@ class App:
         except Exception as ex:
             self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="failed",
                              text=f"{type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
+
+    def saw_api(self, path, body, ctype):
+        """What the app fetched from its API (the design copy's real data, or the mock's): the last answer per endpoint,
+        cut short, and each picture route, so a note asking for real content or pictures can use them."""
+        with self.api_lock:
+            route = re.sub(r"\?.*$", "", path)
+            if ctype.startswith("image/"):
+                self.api_seen[route] = {"image": True, "example": path[:240], "t": time.time()}
+            elif "json" in ctype:
+                try:
+                    sample = json.dumps(json.loads(body), ensure_ascii=False)[:700]
+                except ValueError:
+                    return
+                self.api_seen[route] = {"example": path[:240], "sample": sample, "t": time.time()}
+            if len(self.api_seen) > 24:                          # the 24 most recent endpoints
+                for k in sorted(self.api_seen, key=lambda k: self.api_seen[k]["t"])[:len(self.api_seen) - 24]:
+                    del self.api_seen[k]
+
+    def api_pack(self):
+        with self.api_lock:
+            seen = sorted(self.api_seen.values(), key=lambda v: -v["t"])
+        if not seen:
+            return ""
+        imgs = [v["example"] for v in seen if v.get("image")][:6]
+        data = [f"GET {v['example']}\n  -> {v['sample']}" for v in seen if not v.get("image")][:10]
+        return ("\n\n## The app's real data (what its own API answered just now)\n" + "\n".join(data)
+                + ("\nPictures it loads from its own routes (use the same route with another id for another one):\n"
+                   + "\n".join(imgs) if imgs else ""))
 
     def prefer(self, text):
         """A standing instruction from the owner (how to work with them, not about the page): kept in the layer's
@@ -1357,6 +1388,7 @@ def make_handler(app):
                 for base in (app.layer.root / "data", app.layer.root / "snapshot"):
                     p = base / (key + ".json")
                     if p.is_file():
+                        app.saw_api(self.path, p.read_bytes(), "application/json")
                         return self.send(200, p.read_bytes())
                 return self.send(404, {"error": f"no mock data for {key}"})
             if path == "/favicon.ico":
@@ -1377,6 +1409,8 @@ def make_handler(app):
                 code, body, ctype = e.code, e.read(), e.headers.get("Content-Type", "application/json")
             except (urllib.error.URLError, OSError) as e:
                 return self.send(502, {"error": f"the design copy of the back end didn't answer ({e})"})
+            if self.command == "GET" and code == 200:
+                app.saw_api(self.path, body, ctype)
             self.send(code, body, ctype)
 
         def do_DELETE(self):
