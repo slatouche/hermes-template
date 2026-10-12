@@ -473,8 +473,16 @@ class App:
                 "\n\n## The design layer so far (edits on top of the app)\n" + self.layer.summary())
 
     def ask(self, n):
-        notes = "\n".join(f'{h["id"]}: {h["note"][:160]} -> {h.get("verdict")}: {(h.get("plan") or "")[:100]}'
-                          for h in self.layer.history[-6:]) or "(none)"
+        undo = n.get("undo")
+        line = lambda h: f'{h["id"]}: {h["note"][:160]} -> {h.get("verdict")}: {(h.get("plan") or "")[:100]}'
+        if undo:
+            # Only what is still on the page can be taken back: two lists, so "the last 3" counts the right notes.
+            live = {o.get("note") for o in self.layer.ops}
+            showing = [h for h in self.layer.history if h["id"] in live][-20:][::-1]
+            notes = ("Changes still on the page, newest first (only these can be undone; \"the last N\" means 1 to N of "
+                     "this list):\n" + ("\n".join(f"{i}. {line(h)}" for i, h in enumerate(showing, 1)) or "(none)"))
+        else:
+            notes = "\n".join(map(line, self.layer.history[-6:])) or "(none)"
         def mark(m):
             if m.get("kind") == "area":
                 return (f'- an area the owner drew ({m.get("rect")}), inside {m.get("sel")}; it covers: '
@@ -483,8 +491,15 @@ class App:
                 return f'- an arrow the owner drew from {m.get("from")} to {m.get("to")} (usually: move the first there)'
             return f'- {m.get("sel")}\n  html: {(m.get("html") or "")[:600]}\n  styles: {m.get("styles") or ""}'
         marks = "\n".join(mark(m) for m in n.get("marks") or []) or "(none)"
-        return (f"Screen: {n.get('route') or '#/'}\nMap of the screen:\n{(n.get('map') or '')[:9000]}\n\n"
-                f"Marked:\n{marks}\n\nNotes so far:\n{notes}\n\nNote {n['id']}: {n['text']}")
+        # The page's latest map of this screen, not the one from when the note was sent: a note that waited in the
+        # queue sees what the notes before it changed.
+        page = self.maps.get(n.get("route") or "#/") or n.get("map") or ""
+        what = (f"Note {n['id']} is an UNDO request: take back what the owner names, as one quick part. Whole notes: an "
+                f"undo edit with their ids (\"the last 3\" = items 1 to 3 of the list). Part of a note (\"put the "
+                f"button back\"): edits that restore just that. Owner: {n['text'] or 'the last note'}") if undo \
+            else f"Note {n['id']}: {n['text']}"
+        return (f"Screen: {n.get('route') or '#/'}\nMap of the screen:\n{page[:9000]}\n\n"
+                f"Marked:\n{marks}\n\nNotes so far:\n{notes}\n\n{what}")
 
     # ---- the quick path ----------------------------------------------------------------------------------------
     def worker(self):
@@ -573,6 +588,8 @@ class App:
         rec["s"] = round(time.monotonic() - t0, 2)
         rec["tokens"] = {"in": usage["prompt_tokens"], "cached": usage["prompt_cache_hit_tokens"], "out": usage["completion_tokens"]}
         rec["refused"] = tally["refused"]
+        if not tally["edits"] and rec.get("verdict") in (None, "quick"):
+            rec["said"] = "\n".join(said)[:2000]                    # a quick note that changed nothing: keep why
         rec["verdict"] = rec["verdict"] or "quick"
         if cards:
             rec["cards"] = cards
@@ -1025,7 +1042,7 @@ def make_handler(app):
                 if not text:
                     return self.send(400, {"error": "empty note"})
                 nid = app.layer.note_id()
-                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6], "ask": bool(d.get("ask")),
+                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6], "ask": bool(d.get("ask")), "undo": bool(d.get("undo")),
                                "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/")})
                 waiting = app.notes.qsize() - (0 if app.status["busy"] else 1)
                 app.events.send("received", note=nid, text=text[:140], queued=max(0, waiting))

@@ -165,7 +165,8 @@
     var d = dv(); if (d) d.unpickAll();
   }
   function escape() {
-    if (marks.length || ov.querySelector("rect, line")) clearMarks();
+    if (undoMode) setUndo(false);
+    else if (marks.length || ov.querySelector("rect, line")) clearMarks();
     else if (tool) setTool(tool);
   }
   addEventListener("keydown", function (ev) { if (ev.key === "Escape" && document.activeElement !== $("note")) escape(); });
@@ -187,11 +188,13 @@
     }
   });
   function send(ask) {
-    var text = $("note").value.trim();
+    var text = $("note").value.trim(), undo = undoMode;
+    if (undo) setUndo(false);
+    if (undo && !text) { undoLast(); return; }               // undo mode, nothing typed: take back the last note
     if (!text) return;
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
-                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true };
+                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true && !undo, undo: undo };
     if (ask === true) showAnswer("Asking: " + text.slice(0, 80), "Thinking it through…", []);
     $("note").value = "";
     post("/dv/note", body).then(function (r) { if (r.error) say("Not sent: " + r.error, "err"); })
@@ -220,8 +223,22 @@
   $("note").addEventListener("keydown", function (e) {     // Enter sends; Ctrl+Enter asks
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.ctrlKey || e.metaKey); }
   });
-  $("undo").onclick = function () {
+  // Undo mode: the note box asks what to undo. Enter on an empty box takes back the last note; words ("the last 3",
+  // "put the Import button back") go to the designer as an undo request. Esc (or a sent note) leaves the mode.
+  var undoMode = false, notePlaceholder = $("note").placeholder;
+  function setUndo(on) {
+    undoMode = on;
+    $("undo").classList.toggle("on", on);
+    $("note").classList.toggle("undo", on);
+    $("note").placeholder = on ? "Enter: undo the last note · or say what to undo (\"the last 3\", \"put the Import button back\")" : notePlaceholder;
+    if (on) $("note").focus();
+  }
+  function undoLast() {
     post("/dv/undo", { last: true }).then(function (r) { say(r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo"); });
+  }
+  $("undo").onclick = function () {
+    if (undoMode && !$("note").value.trim()) { setUndo(false); undoLast(); return; }   // clicked twice: just undo
+    setUndo(!undoMode);
   };
 
   // ---- options: live switch, or side by side --------------------------------------------------------------------------
