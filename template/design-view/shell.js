@@ -166,6 +166,7 @@
   }
   function escape() {
     if (undoMode) setUndo(false);
+    else if (question) { closeQuestion(); $("answer").hidden = true; }
     else if (marks.length || ov.querySelector("rect, line")) clearMarks();
     else if (tool) setTool(tool);
   }
@@ -188,13 +189,15 @@
     }
   });
   function send(ask) {
-    var text = $("note").value.trim(), mode = undoMode;
+    var text = $("note").value.trim(), mode = undoMode, replyTo = !mode && ask !== true && question ? question.note : null;
     if (mode) setUndo(false);
     if (mode && !text) { if (mode === "undo") undoLast(); else redoLast(); return; }   // nothing typed: the last one
     if (!text) return;
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
-                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true && !mode, undo: mode === "undo", redo: mode === "redo" };
+                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true && !mode, undo: mode === "undo", redo: mode === "redo", reply_to: replyTo };
+    if (replyTo) { showAnswer("Answered: " + question.question, "Your answer: " + text, []); }
+    if (question) closeQuestion();                           // answered, or moved on to something else
     if (ask === true) showAnswer("Asking: " + text.slice(0, 80), "Thinking it through…", []);
     $("note").value = "";
     post("/dv/note", body).then(function (r) { if (r.error) say("Not sent: " + r.error, "err"); })
@@ -219,7 +222,30 @@
       box.appendChild(b);
     });
   }
-  $("answer-close").onclick = function () { $("answer").hidden = true; };
+  $("answer-close").onclick = function () { $("answer").hidden = true; if (question) closeQuestion(); };
+
+  // ---- a question from the designer: shown in the panel; answer with a choice or in the note box ----------------------
+  var question = null;
+  function showQuestion(e) {
+    question = { note: e.note, question: e.question };
+    showAnswer("Question from the designer", e.question + (e.about ? "\n\nAbout your note: " + e.about : ""), []);
+    $("answer").classList.add("asking");
+    var box = $("answer-sugg"); box.innerHTML = "";
+    (e.choices || []).forEach(function (c) {
+      var b = document.createElement("button"); b.textContent = c; b.title = "Answer with this";
+      b.onclick = function () { $("note").value = c; send(false); };
+      box.appendChild(b);
+    });
+    $("note").classList.add("answering");
+    $("note").placeholder = "Answering: " + e.question + "  (Enter sends your answer · Esc dismisses)";
+    $("note").focus();
+  }
+  function closeQuestion() {
+    question = null;
+    $("answer").classList.remove("asking");
+    $("note").classList.remove("answering");
+    if (!undoMode) $("note").placeholder = notePlaceholder;
+  }
   $("note").addEventListener("keydown", function (e) {     // Enter sends; Ctrl+Enter asks
     if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.ctrlKey || e.metaKey); }
   });
@@ -399,6 +425,7 @@
       say((e.s ? "Done in " + e.s + " s · " : "Done · ") + e.verdict + ": " + (e.plan || "") + (e.edits ? " · " + e.edits + " edits" : "") + extra + bad,
           e.refused && e.refused.length ? "err" : "");
     }
+    else if (e.type === "question") { showQuestion(e); }
     else if (e.type === "answer") {
       if (e.kind === "review") showAnswer(e.title, e.text, [], !$("answer").hidden && $("answer-title").textContent.indexOf("Why") === 0);
       else showAnswer(e.title, e.text, e.suggest);

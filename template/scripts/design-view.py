@@ -59,7 +59,9 @@ part; at most 5 parts. Kinds:
 - review: the note asks a question about what's on the page ("why is there…", "should this…", "does this make
   sense?"). That is the owner asking you to judge it: think about whether it's right, what should be there instead,
   and change it if it isn't. Never do a review part yourself here; it is thought through separately.
-- ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question.
+- ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question; when there are a
+  few clear answers, add them after it, each after " :: " (e.g. "Which one should go? :: the toolbar button :: the
+  nav link"). The owner's answer comes back as a new note with your question and their original note.
 
 Then the work, under END:
 - the edits for every quick part, one per line, in order;
@@ -474,6 +476,7 @@ class App:
         self.maps = {}                      # route -> the latest screen map the page sent
         self.groups = {}                    # a Designer card's id -> its note record (its edits undo together)
         self.reports = {}                   # edit id -> how it fared on the owner's open page
+        self.pending = {}                   # note id -> the designer's open question about it
         self.status = {"busy": None, "queued": 0}
         threading.Thread(target=self.worker, daemon=True).start()
         threading.Thread(target=self.watch_app, daemon=True).start()
@@ -596,7 +599,13 @@ class App:
                     self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="card", card=c,
                                      s=round(time.monotonic() - t0, 2))
                 elif p["kind"] == "ask":
-                    self.events.send("part", note=n["id"], k=p["k"], kind="ask", state="asked", text=p["text"],
+                    q, *choices = [x.strip() for x in p["text"].split("::")]
+                    choices = [c for c in choices if c][:5]
+                    # Remembered until answered: the answer goes back with the question and the original note.
+                    self.pending[n["id"]] = {"question": q, "choices": choices, "note": n["text"],
+                                             "marks": n.get("marks") or [], "route": n.get("route") or "#/"}
+                    self.events.send("question", note=n["id"], question=q, choices=choices, about=n["text"][:200])
+                    self.events.send("part", note=n["id"], k=p["k"], kind="ask", state="asked", text=q,
                                      s=round(time.monotonic() - t0, 2))
                 else:
                     th = threading.Thread(target=self.run_part, args=(mc, rec, n, t0, p, parts, add_up, cards), daemon=True)
@@ -1082,8 +1091,16 @@ def make_handler(app):
                 text = str(d.get("note") or "").strip()
                 if not text:
                     return self.send(400, {"error": "empty note"})
+                marks = (d.get("marks") or [])[:6]
+                q = app.pending.pop(str(d.get("reply_to") or ""), None)
+                if q:
+                    # An answer to the designer's question: the question and the original note travel with it, and
+                    # the original note's marks too, so the work carries on where it stopped.
+                    text = (f"The owner's original note: {q['note']}\nYou asked: {q['question']}\nTheir answer: {text}\n"
+                            f"Now do what the original note asked, using this answer.")
+                    marks = marks or q["marks"]
                 nid = app.layer.note_id()
-                app.notes.put({"id": nid, "text": text[:2000], "marks": (d.get("marks") or [])[:6], "ask": bool(d.get("ask")), "undo": bool(d.get("undo")), "redo": bool(d.get("redo")),
+                app.notes.put({"id": nid, "text": text[:3000], "marks": marks, "ask": bool(d.get("ask")), "undo": bool(d.get("undo")), "redo": bool(d.get("redo")),
                                "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/")})
                 waiting = app.notes.qsize() - (0 if app.status["busy"] else 1)
                 app.events.send("received", note=nid, text=text[:140], queued=max(0, waiting))
