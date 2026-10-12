@@ -104,12 +104,14 @@
     }
     if (!routeOk(op)) return "other screen";
     if (op.op === "move") {
-      var done = q('[data-dv-op="' + op.id + '"]'), n = q(op.sel), r = ref(op.ref);
+      var done = q('[data-dv-op~="' + op.id + '"]'), n = q(op.sel), r = ref(op.ref);   // an element remembers every move
       if (done && (!n || n === done) && r && inPlace(done, op.where, r)) return "ok";
+      if (done && !n) return "ok";                     // moved already, and a later edit has moved it on
       if (!n || !r) return "missing " + (!n ? op.sel : op.ref);
       if (n.contains(r)) return "can't move into itself";
       if (!inPlace(n, op.where, r)) place(n, op.where, r);
-      n.setAttribute("data-dv-op", op.id);
+      var had = (n.getAttribute("data-dv-op") || "").split(" ").filter(function (x) { return x && x !== op.id; });
+      n.setAttribute("data-dv-op", had.concat(op.id).join(" "));
       return "ok";
     }
     if (op.op === "text") {

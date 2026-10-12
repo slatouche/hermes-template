@@ -21,7 +21,7 @@ The Manager hires as the work needs it (the owner approves each hire); `hire.sh`
 The owner may talk to any bot directly. **Anything decided or produced in a direct chat must land in the vault or on a card.**
 
 ## Working principles
-Think before acting and say your assumptions; ask rather than guess. Work in the existing style, check your work against the card, and loop until it passes. Decisions go to the vault, not chat. Never stop a process with `pkill -f <pattern>`: the card's text is in your own worker's command line, so the pattern can match and kill your own run. Stop a test server by its port (`fuser -k <port>/tcp`).
+Think before acting and say your assumptions; ask rather than guess. Work in the existing style, check your work against the card, and loop until it passes. Decisions go to the vault, not chat. Never `pkill -f` (the pattern can match your own worker's command line); stop a test server by its port (`fuser -k <port>/tcp`).
 
 ## Cards
 Every piece of real work is a card, even if it started in a chat. A card is about 150–250 words:
