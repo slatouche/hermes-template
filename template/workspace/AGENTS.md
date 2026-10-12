@@ -1,16 +1,16 @@
 # {{PROJECT_NAME}}: agent guide
 
-Loaded into every bot's context each session, so keep it short (under about 8 KB, project section included). Details live in the vault.
+Loaded into every bot's every session: the shared part stays under 6.5 KB so a project's own section and team fit under 8 KB. Detail lives in the vault.
 
 ## Where things are
 - **Owner:** {{OWNER}}. The only person who approves gates, bot domains and hires.
-- **Workspace (this repo):** `/srv/projects/{{PROJECT_NAME}}/workspace`. The product: code, docs, content. Work here or in a kanban worktree.
-- **Vault (knowledge base):** `/srv/projects/{{PROJECT_NAME}}/vault` — `SCHEMA.md`, then `00-status.md` and the recent `log.md`. How the install works: `system/overview.md`.
-- **Tasks:** the Hermes kanban board. Every piece of real work is a card.
+- **Workspace (this repo):** `/srv/projects/{{PROJECT_NAME}}/workspace`: the product. Code changes happen in a build's worktree.
+- **Vault:** `/srv/projects/{{PROJECT_NAME}}/vault`: `SCHEMA.md`, `00-status.md`, the recent `log.md`; the install: `system/overview.md`.
+- **Tasks:** the Hermes kanban board.
 - **Ports:** apps use {{APP_PORTS}}. Never bind anything else to the network.
 
 ## Who does what
-The Manager hires as the work needs it (the owner approves each hire); `hire.sh` keeps this table current.
+`hire.sh` keeps this table current.
 
 <!-- team:start -->
 | Bot | Owns | Ask it when… |
@@ -18,13 +18,13 @@ The Manager hires as the work needs it (the owner approves each hire); `hire.sh`
 | Manager | The front door: owner requests, flow, priorities, status, hiring, approved system changes | you need a decision routed, work sequenced, or a change to how the team works |
 <!-- team:end -->
 
-The owner may talk to any bot directly. **Anything decided or produced in a direct chat must land in the vault or on a card.**
+The owner may talk to any bot. **What a direct chat decides or makes lands in the vault or on a card.**
 
 ## Working principles
-Think before acting and say your assumptions; ask rather than guess. Work in the existing style, check your work against the card, and loop until it passes. Decisions go to the vault, not chat. Never `pkill -f` (the pattern can match your own worker's command line); stop a test server by its port (`fuser -k <port>/tcp`).
+Think before acting and say your assumptions; ask rather than guess. Work in the existing style, check your work against the card, and loop until it passes. Decisions go to the vault, not chat. Never `pkill -f`; stop a test server by its port (`fuser -k <port>/tcp`).
 
 ## Cards
-Every piece of real work is a card, even if it started in a chat. A card is about 150–250 words:
+Real work is a card, even if it started in a chat; about 150–250 words:
 ```
 Context: <vault links, one line>          Review: tester | none
 Session: <topic>                          Shape: quick | scoped | needs_owner | needs_breakdown
@@ -36,31 +36,28 @@ Build: <slug>                             (code: the build it belongs to; its wo
 ## Stop when     checks pass and the handoff is written; block with one question for an owner
                  decision, a missing secret or an irreversible step
 ```
-- **Shape first, minimum work.** `quick` one bot, one place, minutes · `scoped` one outcome, real checking · `needs_owner` only the owner settles it · `needs_breakdown` too big (only the Manager cuts it up; a bot finding its card bigger than it looked **stops at once** and says so in one line). Self-card only `quick` work in your domain. Similar quick jobs **collate into one card with a checkbox list**. Do the least the card needs.
-- **Code goes live once per build, by script** (`~/.hermes/scripts/build.py`). A build's cards share its worktree and each runs only its own checks, then commits: no per-card review, full suite, merge or restart. When all are done, `build.py` runs the suite and every card's checks once, one Tester review if a card says `Review: tester`, then merges, restarts and runs the `(live)` checks; a failure comes back as one fix card.
+- **Shape first, minimum work.** `quick` one bot, one place, minutes · `scoped` one outcome, real checking · `needs_owner` only the owner settles it · `needs_breakdown` too big (only the Manager cuts it up; a bot whose card is bigger than it looked **stops** and says so in one line). Self-card only `quick` work in your domain. Similar quick jobs **collate into one card with a checkbox list**. Do the least the card needs.
+- **Code goes live once per build, by script** (`build.py`): a build's cards share its worktree; each runs only its own checks and commits. When all are done the script checks the whole build once (one Tester review if a card says `Review: tester`), merges, restarts and runs the `(live)` checks; a failure comes back as one fix card.
 - **A bot runs only when the work needs it.** `Review: tester` only for behaviour a second pair of eyes could catch (new behaviour, a state machine, a data write), never for looks; the owner's look is the review for design. The Tester tests; the Engineer builds. Never wake a bot to re-confirm a check a script ran.
-- **A check's fixture cards go on the `rig` board** (`HERMES_KANBAN_BOARD=rig`), blocked at creation, closed after. A check of the design view runs on a throwaway copy.
+- **A check's fixture cards go on the `rig` board** (`HERMES_KANBAN_BOARD=rig`), blocked, closed after; a design view check runs on a throwaway copy.
 - **Session topics** (`design:atlas-air`): cards on one area share one, so the bot keeps what it knows; a new area, a new topic; `Session: new <topic>` starts over.
 - **Titles: at most 50 characters, no trailing punctuation.**
 - **The builder never edits Verification.** Couldn't run a check? Say so and why. Spotted another problem? A `noticed:` line in the handoff, not a fix.
 - **Patch, don't rewrite** files; nobody is watching, so finish every reversible step the card asks for.
-- **Few steps.** Time is mostly step count (each waits on the model, 5-20 s): batch independent reads and checks in one turn; three or more with logic between them go in one `execute_code`; a change and its check in one script. Check with the DOM or a command, not a screenshot, unless the look is the question.
-- **Tests stay true:** changed behaviour gets updated or new tests in the same card; tests for removed behaviour go. The suite: `scripts/run-tests.sh`.
-- **Need the owner?** Only for what's theirs: scope or taste, money or risk, something only a person can do, or a gap the vault doesn't settle. Technical and testing calls are the team's; a clash inside your card goes to the Manager. Then `kanban_block(kind="needs_input")` with one question, the options and your recommendation, and stop. Never wait in a loop or ask in a chat nobody reads.
+- **Few steps.** Time is mostly step count: batch reads and checks in one turn, a change and its check in one script; check with a command or the DOM, not a screenshot, unless the look is the question.
+- **Tests stay true:** changed behaviour gets new tests in the same card; tests for removed behaviour go. Suite: `scripts/run-tests.sh`.
+- **Need the owner?** Only for what's theirs (scope, taste, money, risk, what only a person can do); technical calls are the team's. Then `kanban_block(kind="needs_input")` with one question, the options and your recommendation, and stop.
 - **Same check failing three times:** stop, revert to the last good state, and block with what you tried. Never patch over an earlier failed attempt.
 
-## Card handoff (required on every kanban completion)
-`kanban_complete(summary=…, metadata=…)`:
-- `summary`: at most 5 lines. First `Verified: <command> → <result>` per check; then what was done and what's next
-- `metadata`: `changed_files`, `decisions`, `tests_run`, `attempts`, `checks_failed`, `open_questions`, `next`
-- The card's log line and vault checkpoint are automatic (the sweep logs the summary's first line): don't spend steps on them.
+## Card handoff
+`kanban_complete(summary=…, metadata=…)`: the summary (at most 5 lines) starts with one `Verified: <command> → <result>` per check; metadata keys in `vault/system/team-habits.md`. Log line and checkpoint are automatic.
 
 ## Direct work, memory and learning
-A question: just answer. Build work: a card for yourself; live iteration with the owner: that card `initial_status="blocked"`, finished with `kanban_complete`. `MEMORY.md` holds durable facts only (no progress, to-dos or secrets); read `vault/system/lessons.md` at session start; look it up before asking. More: `vault/system/team-habits.md`.
+A question: just answer; anything bigger is a card. Read `vault/system/lessons.md` at session start. Live work with the owner, memory and looking things up: `vault/system/team-habits.md`.
 
 ## Working together (several bots run at once)
 - **Re-read before you write**, or act on status, an ADR or the schema. Don't trust what a long chat read earlier.
-- **Log** decisions outside a card with `~/.hermes/scripts/vault-log.sh <bot> <kind> "<text>" [link]` (finished cards log themselves; never edit `log.md`); **checkpoint** with `~/.hermes/scripts/vault-commit.sh <bot> "<msg>" <files…>` only when another bot needs it now (the sweep commits every 15 min). No raw git in the memory repo; give pages a `summary:`. Changed something others rely on? Log a `decision` and tell the bots affected.
+- **Log** decisions outside a card with `~/.hermes/scripts/vault-log.sh <bot> <kind> "<text>" [link]`; never edit `log.md` or use raw git in the memory repo (checkpoints: `vault/system/team-habits.md`). Changed something others rely on? Log a `decision` and tell them.
 - **Before creating a card**, check the board and the recent log: is it already done, in progress or carded?
 - **Card workspaces:** `dir` on `/srv/projects/{{PROJECT_NAME}}/workspace` for vault and docs work, the build's worktree for code, `scratch` for throwaway.
 

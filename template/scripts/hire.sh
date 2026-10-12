@@ -78,6 +78,13 @@ R_VERIFY="$(fmv verify_on_stop)";  R_VERIFY="${R_VERIFY:-false}"
 [[ "$R_CTX" =~ ^[0-9]+$ ]] && [[ "$R_TURNS" =~ ^[0-9]+$ ]] || die "$RF: compression_tokens and max_turns must be whole numbers"
 [[ "$R_VERIFY" =~ ^(true|false)$ ]] || die "$RF: verify_on_stop must be true or false"
 
+# Every bot loads the team rules each session: a new row must still fit the 8 KB they're allowed. Checked before
+# anything is created, so a refused hire leaves nothing half-done.
+if [ ! -d "$P" ] && ! grep -qF "| $DNAME |" "$AG"; then
+  ROW="| $DNAME | ${OWNS//|//} | ${ASK//|//} |"
+  NEWSIZE=$(( $(wc -c < "$AG") + $(printf '%s\n' "$ROW" | wc -c) ))
+  [ "$NEWSIZE" -le 8192 ] || die "with $DNAME's row, $AGN would be $NEWSIZE bytes, over the 8 KB every bot loads. Trim it first (move detail to vault/system/team-habits.md; the Optimiser can propose what), then hire again."
+fi
 KIT="$HOME/.hermes/roles/$ROLE"
 install_kit() {   # the role's template skills and job scripts, then its own setup (cron jobs); safe to repeat
   [ -d "$KIT" ] || return 0
@@ -90,7 +97,8 @@ install_kit() {   # the role's template skills and job scripts, then its own set
     done
   fi
   if [ -d "$KIT/scripts" ]; then
-    mkdir -p "$P/scripts"; cp "$KIT"/scripts/* "$P/scripts/"; chmod +x "$P"/scripts/*
+    mkdir -p "$P/scripts"; find "$KIT/scripts" -maxdepth 1 -type f -exec cp {} "$P/scripts/" \;
+    chmod +x "$P"/scripts/*.py "$P"/scripts/*.sh 2>/dev/null || true
   fi
   [ ! -f "$KIT/setup.sh" ] || bash "$KIT/setup.sh"
 }

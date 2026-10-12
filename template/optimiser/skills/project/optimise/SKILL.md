@@ -29,6 +29,7 @@ Use when the nightly `optimiser-review` job wakes you with an evidence pack, whe
 - **Big sessions** (context over ~120k on most turns), cold starts, one slow tool call, a look (`vision_analyze`) where a number answers.
 - **Loops:** send-backs, the same check failing, a build failing more than once, a card re-run.
 - **Instructions not followed** or followed only sometimes: make it a check or a script, not more prose; **dead instructions** the model follows anyway: remove them.
+- **Rules creeping toward a limit:** a file every bot loads near its size limit (the pack lists them): move, merge or delete lines before it overflows.
 
 ## 3. Sort what you find (Pocock's categories)
 - **A mechanical mistake** (a format slip, a forgotten step a command could catch): an **automated check** (a test, a lint rule, a script), not a prose rule.

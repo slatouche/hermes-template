@@ -9,7 +9,8 @@ Wakes the Optimiser only when there is something to look at:
   - a card shape repeated 3+ times (a step done per piece of work that may belong once, or in a script);
   - work done by the wrong role (a Tester or Designer card that builds);
   - the owner's replies slow (p90 over 3 min), a send-back or a block, a build that failed or got stuck;
-  - a skill written or changed by a bot, a memory over 85% full, a model change, or 10+ cards done.
+  - a skill written or changed by a bot, a memory over 85% full, a model change, or 10+ cards done;
+  - a file every bot loads (AGENTS.md: 8 KB; a SOUL: 10 KB) at 90% of its limit: what to move or merge is a proposal.
 Otherwise the last line is {"wakeAgent": false} and the night costs nothing.
 
   optimiser-gate.py              the pack (Hermes cron, optimiser profile, nightly)
@@ -134,10 +135,21 @@ def main():
                 fill = int(100 * p.stat().st_size / cap)
                 memory.append(f"{'default' if prof == H else prof.name} {fn} {fill}%")
                 full |= fill > 85
+    # what every session loads: its size against the limit, and growth since the last run
+    sizes, near = {}, []
+    loaded = [("AGENTS.md", HOME / "workspace" / "AGENTS.md", 8192)] + [
+        (f"{p.name} SOUL", p / "SOUL.md", 10000) for p in sorted((H / "profiles").glob("*")) if (p / "SOUL.md").exists()]
+    for name, f, cap in loaded:
+        if f.exists():
+            n = f.stat().st_size
+            sizes[name] = n
+            if n >= 0.9 * cap:
+                was = (state.get("sizes") or {}).get(name)
+                near.append(f"{name}: {n}/{cap} bytes ({100 * n // cap}%)" + (f", {n - was:+d} since the last run" if was else ""))
     model = subprocess.run(["hermes", "config", "get", "model.default"], capture_output=True, text=True, env=ENV).stdout.strip().splitlines()
     model = model[-1].strip() if model else ""
     if "--baseline" in sys.argv:
-        save({**state, "skills": seen, "model": model, "last_run": NOW})
+        save({**state, "skills": seen, "model": model, "last_run": NOW, "sizes": sizes})
         return 0
     model_changed = bool(model and state.get("model") and state["model"] != model)
 
@@ -206,9 +218,9 @@ def main():
                        "fix_cards": len(b.get("fix_cards") or []), "stages": {k: round(v / 60, 1) for k, v in stages.items()}})
     bad_builds = [b for b in builds if b["fails"] or b["state"] == "stuck"]
 
-    state_now = {"last_run": NOW, "skills": seen, "model": model or state.get("model")}
+    state_now = {"last_run": NOW, "skills": seen, "model": model or state.get("model"), "sizes": sizes}
     wake = (outliers or slow_tools or big or repeated or wrong or slow_chat or troubled or bad_builds or skills or full
-            or model_changed or len(done) >= 10)
+            or model_changed or len(done) >= 10 or near)
     if not wake:
         save(state_now)
         print(json.dumps({"wakeAgent": False}))
@@ -255,6 +267,10 @@ def main():
     for s in skills[:10]:
         print(f"  - {s}")
     print("- memory fill: " + ", ".join(memory))
+    if near:
+        print("- loaded every session and near its limit (propose what to move to a vault page or skill, or merge):")
+        for x in near:
+            print(f"  - {x}")
     lessons = HOME / "vault" / "system" / "lessons.md"
     n = len(re.findall(r"^\d{4}-\d{2}-\d{2}", lessons.read_text(errors="replace"), re.M)) if lessons.exists() else 0
     print(f"- lessons: {n}/40")

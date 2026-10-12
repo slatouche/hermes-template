@@ -32,3 +32,8 @@ Each comes from a real case in a project built from this template. The numbers a
 ## Instructions not followed, or followed anyway
 - **Spot:** the owner correcting the same thing twice; a rule in a SOUL the bot broke in the logs; a rule the bot follows with or without it (try removing it on a copy and re-running the eval).
 - **Fix:** a check or a script for the first; delete the second. Shorter context is faster and more obeyed.
+
+## Rules creeping toward a limit
+- **Spot:** the pack's "loaded every session and near its limit" list: `AGENTS.md` (8 KB), a SOUL (10 KB). Each fix adds a line, each hire a table row, and the project section grows, until a file is over and gets trimmed in a hurry.
+- **Case:** TCG Proxy's `AGENTS.md` reached 8,410 bytes after one hire; the template's own part was 7.7 KB, leaving no room for the project's section and rows. Fixed by budgets: the template's part at most 6.5 KB (AGENTS.md) and 8.5 KB (the Manager's SOUL), held by `tests/test_budgets.py`; `hire.sh` refuses a row that would go over 8 KB.
+- **Fix:** propose what to move (detail to `vault/system/team-habits.md`, a procedure to the skill that runs it), what to merge (two lines saying one thing) and what to delete (a rule the model follows anyway, checked with the bot's eval before and after). Never cut a rule's meaning to save bytes; say for each line where its content now lives.

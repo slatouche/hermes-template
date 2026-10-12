@@ -13,7 +13,9 @@ metadata:
 
 # Project takeover
 
-Use when `00-status.md` says `phase: onboarding`: the code in `workspace/` was built elsewhere (Claude Code, Codex, Cursor, another Hermes, by hand) and this team is taking it over. Order matters: **understand → keep the know-how → interview the gaps → propose → clean up → hand over to normal work.** Nothing is removed before it's understood and kept.
+Use when `00-status.md` says `phase: onboarding`: the code in `workspace/` was built elsewhere (Claude Code, Codex, Cursor, another Hermes, by hand) and this team is taking it over. Order matters: **understand → keep the know-how → interview the gaps → propose → clean up → hand over to normal work.** Nothing is removed before it's understood and kept. Start by saying hello (you've read it, here's what's next).
+
+**Bringing a project in later** (the owner gives a git URL, or says "it's in `~/import/<folder>`"): run `~/.hermes/scripts/import-project.sh <url or folder> [--notes <folder>]`. It refuses if `workspace/` already has work, and sets `phase: onboarding`; then follow this skill. Can't clone it? Ask for the folder in `~/import/`; never ask for a token.
 
 ## Ground rules
 - Read-only on `workspace/` until the owner approves the takeover change. Running the tests is fine.
