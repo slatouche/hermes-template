@@ -123,11 +123,20 @@ UNSAFE_HTML = re.compile(r"<\s*(script|iframe|object|embed|link|meta|base)\b|jav
 UNSAFE_CSS = re.compile(r"</|javascript:|@import|expression\(|behavior:", re.I)
 
 
+def why_lines(bad, oset=None):
+    """What didn't take, for a repair call: each edit (with its option choice, when it has one) and what the page saw."""
+    where = {o["id"]: c for c, ch in (oset or {}).get("choices", {}).items() for o in ch["ops"]}
+    return "\n".join((f"- choice {where[o['id']]}: " if o["id"] in where else "- ")
+                     + json.dumps({k: v for k, v in o.items() if k not in ("id", "note")})[:300] + f"\n  -> {st}" for o, st in bad)
+
+
 REPAIR_RULES = ("Replace them with edits that will work. The page says what holds each one: an element's own style "
                 "attribute beats any rule (add !important, or change the attribute); a size held by min-/max-height or "
                 "-width, flex (grow/shrink) or a grid row is released in the same rule (e.g. min-height: 0; flex: none; "
                 "align-self: start); another rule that sets the same property is beaten by a more specific selector or "
-                "!important. A selector that matches nothing: use one from the map.")
+                "!important; clipped by a parent: release the parent's overflow or size, or fit inside it; hidden by a "
+                "parent: show that parent or move the element out; covered: raise it (position: relative; z-index) above "
+                "what covers it. A selector that matches nothing: use one from the map.")
 
 
 def check_op(op):
@@ -666,19 +675,28 @@ class App:
         add_up(e, r, u)
         if main_ids:
             # The check: the owner's open page measured each quick edit. Edits that matched nothing on this screen,
-            # or didn't come out as asked (and what holds them), get one repair call in the same note.
-            bad = self.not_landed(main_ids, n.get("route") or "#/")
-            if bad:
+            # or didn't come out as asked (and what holds them), get a repair call in the same note; a second one only
+            # when the first fixed some but not all.
+            ids, prev = main_ids, None
+            for _ in range(2):
+                bad = self.not_landed(ids, n.get("route") or "#/")
+                if not bad or (prev is not None and len(bad) >= prev):
+                    break
                 self.events.send("part", note=n["id"], k=0, kind="check", state="fixing",
                                  text=f"{len(bad)} edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
-                why = "\n".join(f"- {json.dumps({k: v for k, v in o.items() if k not in ('id', 'note')})[:300]}\n  -> {st}"
-                                for o, st in bad)
                 fix = msgs + [{"role": "assistant", "content": "\n".join(said)},
-                              {"role": "user", "content": "Checked on the owner's page, these edits didn't take effect:\n" + why +
-                               "\n" + REPAIR_RULES + " Edits only, no plan."}]
-                e, r, u, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, mode="edits")
+                              {"role": "user", "content": "Checked on the owner's page, these edits didn't take effect:\n" +
+                               why_lines(bad) + "\n" + REPAIR_RULES + " Edits only, no plan."}]
+                new = []
+                e, r, u, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, mode="edits", got=new)
                 add_up(e, r, u)
-                rec["repaired"] = len(bad)
+                rec["repaired"] = rec.get("repaired", 0) + len(bad)
+                ids, prev = new, len(bad)
+                if not new:
+                    break
+        if n["id"] in self.layer.options:                     # the main call's own option set (a note that is only options)
+            e, r = self.check_options(mc, msgs, rec, n, t0, n["id"])
+            add_up(e, r, {})
         for th in threads:
             th.join(timeout=300)
         usage = {k: sum((x.get(k) or 0) for x in tally["usage"]) for k in ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens")}
@@ -750,23 +768,9 @@ class App:
                 e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
                                                        max_tokens=8000 if think else 3000, thinking=think),
                                           rec, n, t0, mode="edits", part=p)
-                sid = f"{n['id']}-{p['k']}"
-                if p["kind"] == "options" and sid in self.layer.options:
-                    ids = [o["id"] for c in self.layer.options[sid]["choices"].values() for o in c["ops"]]
-                    bad = self.not_landed(ids, n.get("route") or "#/", wait=2.5)
-                    if bad:
-                        self.events.send("part", note=n["id"], k=p["k"], kind="options", state="doing",
-                                         text=f"{len(bad)} option edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
-                        why = "\n".join(f"- {json.dumps({k: v for k, v in o.items() if k not in ('id', 'note')})[:300]}\n  -> {st}"
-                                        for o, st in bad)
-                        fix = msgs + [{"role": "user", "content": "Checked on the owner's page (the choice on show), these "
-                                       "option edits didn't take effect:\n" + why + "\nThe choices share the cause. "
-                                       + REPAIR_RULES + " Give only the extra edits that make every choice take: each is "
-                                       "added to every choice. No OPTION lines, no plan."}]
-                        e2, r2, u2, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0,
-                                                     mode="edits", part=p, into=sid)
-                        e, r, u = e + e2, r + r2, u
-                        rec["repaired"] = rec.get("repaired", 0) + len(bad)
+                if p["kind"] == "options":
+                    e2, r2 = self.check_options(mc, msgs, rec, n, t0, f"{n['id']}-{p['k']}", p)
+                    e, r = e + e2, r + r2
                 if think and len(rec.get("why") or []) == whys:          # a review always says what it decided
                     self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
                                      text=(f"Changed it ({e} edit{'s' if e != 1 else ''}); no reason was given."
@@ -778,6 +782,55 @@ class App:
         except Exception as ex:
             self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="failed",
                              text=f"{type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
+
+    def check_options(self, mc, msgs, rec, n, t0, sid, p=None):
+        """Every choice of an option set is checked: the toolbar renders each in a hidden frame at the owner's view
+        size and reports its edits. A choice with edits that didn't take gets its own repair call (only its failures,
+        its fix added to it alone, the calls in parallel), and is checked again; a second round only when the first
+        fixed some. -> (edits added, refused)."""
+        if sid not in self.layer.options:
+            return 0, []
+        route = n.get("route") or "#/"
+        ids = [o["id"] for c in self.layer.options[sid]["choices"].values() for o in c["ops"]]
+        prev, edits, refused, lock = None, 0, [], threading.Lock()
+        for _ in range(2):
+            self.events.send("measure-options", set=sid, choices=list(self.layer.options[sid]["choices"]), route=route)
+            bad = self.not_landed(ids, route, wait=10)
+            if not bad or (prev is not None and len(bad) >= prev):
+                break
+            where = {o["id"]: c for c, ch in self.layer.options[sid]["choices"].items() for o in ch["ops"]}
+            per = {}
+            for o, st in bad:
+                per.setdefault(where.get(o["id"]), []).append((o, st))
+            self.events.send("part", note=n["id"], k=p["k"] if p else 0, kind="options" if p else "check", state="doing",
+                             text=f"{len(bad)} option edit(s) in {len(per)} choice(s) didn't take; fixing",
+                             s=round(time.monotonic() - t0, 2))
+            new = []
+
+            def fix_choice(letter, items):
+                nonlocal edits, refused
+                ch = self.layer.options[sid]["choices"][letter]
+                have = "\n".join(json.dumps({k: v for k, v in o.items() if k not in ("id", "note")})[:300] for o in ch["ops"])
+                fix = msgs + [{"role": "user", "content": f"Option {letter} ({ch['name']}) has these edits:\n{have}\n\n"
+                               "Checked on the owner's page, these of them didn't take effect:\n" + why_lines(items) + "\n"
+                               + REPAIR_RULES + f" Give only the extra edits option {letter} needs so it looks as it "
+                               "was meant to. Edits only: no OPTION line, no plan."}]
+                got = []
+                e2, r2, _, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0,
+                                            mode="edits", part=p, into=(sid, letter), got=got)
+                with lock:
+                    edits, refused = edits + e2, refused + r2
+                    new.extend(got)
+            ths = [threading.Thread(target=fix_choice, args=(c, items)) for c, items in per.items() if c]
+            for th in ths:
+                th.start()
+            for th in ths:
+                th.join(timeout=120)
+            rec["repaired"] = rec.get("repaired", 0) + len(bad)
+            ids, prev = new, len(bad)
+            if not new:
+                break
+        return edits, refused
 
     def not_landed(self, ids, route, wait=2.0):
         """The note's edits that the owner's open page (on the note's screen) says didn't take: matched nothing, or
@@ -859,6 +912,8 @@ class App:
                                  s=round(time.monotonic() - t0, 2))
                 continue
             m = re.match(r"OPTION\s+([A-Z])\b\s*[:|-]?\s*(.*)", line)
+            if m and into:                                         # a repair of one choice: no new choices
+                continue
             if m:
                 if sid is None:
                     sid = self.layer.new_option_set(rec, sid=n["id"] + (f"-{part['k']}" if part else ""),
@@ -884,11 +939,12 @@ class App:
             except ValueError as e:
                 refused.append(f"{e}: {line[:120]}")
                 continue
-            if into and into in self.layer.options:               # a repair of an option set: the fix goes in every choice
-                for letter in list(self.layer.options[into]["choices"]):
-                    o2 = self.layer.add(dict(op), rec, (into, letter))
-                    self.events.send("op", note=n["id"], op=o2, option={"set": into, "choice": letter},
-                                     s=round(time.monotonic() - t0, 2))
+            if into:                                               # a repair of one option choice: the fix goes in it alone
+                o2 = self.layer.add(op, rec, into)
+                if got is not None:
+                    got.append(o2["id"])
+                self.events.send("op", note=n["id"], op=o2, option={"set": into[0], "choice": into[1]},
+                                 s=round(time.monotonic() - t0, 2))
                 edits += 1
                 continue
             op = self.layer.add(op, rec, option)

@@ -337,6 +337,27 @@
     });
   }
 
+  // ---- checking every choice of an option set: a hidden frame per choice, at the main view's size, judges that
+  // choice's edits and reports them (the choice on show is checked in the main view as it lands) ------------------------
+  var measureFrames = {};
+  function measureOptions(e) {
+    var box = document.getElementById("dv-measure");
+    if (!box) { box = document.createElement("div"); box.id = "dv-measure"; box.style.cssText = "position:fixed;left:-20000px;top:0;width:0;height:0;overflow:hidden;visibility:hidden"; document.body.appendChild(box); }
+    var w = frame.clientWidth, h = frame.clientHeight, hash = e.route || (dv() ? dv().route() : "#/");
+    (e.choices || []).forEach(function (c) {
+      var key = e.set + ":" + c, f = document.createElement("iframe");
+      if (measureFrames[key]) measureFrames[key].remove();
+      f.width = w; f.height = h; f.src = "/app/?dvopt=" + encodeURIComponent(key) + "&dvmeasure=1" + hash;
+      measureFrames[key] = f; box.appendChild(f);
+      setTimeout(function () { if (measureFrames[key] === f) { f.remove(); delete measureFrames[key]; } }, 15000);
+    });
+  }
+  addEventListener("message", function (ev) {
+    if (ev.origin !== location.origin || !ev.data || ev.data.dv !== "measured") return;
+    var key = ev.data.set + ":" + ev.data.choice, f = measureFrames[key];
+    if (f && ev.source === f.contentWindow) { f.remove(); delete measureFrames[key]; }
+  });
+
   // ---- the build: Agreed -> planned -> built -> checked -> live on the main app (build.py does it, no button) ------------
   var STAGES = { planning: "Agreed · the Manager is planning the build", checking: "Checking the whole build",
                  reviewing: "The Tester is reviewing the build", landing: "Going live", live: "Live ✓",
@@ -444,6 +465,7 @@
     }
     else if (e.type === "question") { showQuestion(e); }
     else if (e.type === "build") { setBuild(e); drawBuild(); }
+    else if (e.type === "measure-options") { measureOptions(e); }
     else if (e.type === "data") {
       if (e.state === "started") { t0.data = Date.now(); busy.data = "Refreshing the data from the app's real data (" + (e.why || "asked") + ")"; liveTick(); }
       else { delete busy.data; say(e.state === "done" ? "Data refreshed in " + e.s + " s: the page shows the app's current data" : "Data refresh failed: " + (e.text || ""), e.state === "done" ? "" : "err"); }

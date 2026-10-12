@@ -219,7 +219,7 @@
   // Tell the server how each edit fared on this screen, so whoever sent it (dv.py) knows it landed without a browser.
   var sent = {}, reportTimer = 0;
   function report() {
-    if (fixed) return;
+    if (fixed && !measuring) return;
     clearTimeout(reportTimer);
     reportTimer = setTimeout(function () {
       var changed = {}, any = false;
@@ -249,7 +249,7 @@
 
   // Load the layer, or catch up with it: edits the page missed (one that streamed in while it was reloading) are
   // applied; if an edit it already shows has gone (an undo it missed), only a fresh page is exact, so it reloads.
-  var syncedV = null;
+  var syncedV = null, measuredOnce = false;
   function load() {
     return fetch("/dv/ops", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
       var now = {};
@@ -263,6 +263,7 @@
       if (active && !(options[active.set] && options[active.set].choices[active.choice])) { active = null; sessionStorage.removeItem("dv-opt"); }
       ready = true; apply(); postMap();
       tell({ dv: "loaded", options: options, active: active });
+      if (measuring && !measuredOnce) { measuredOnce = true; setTimeout(measureAll, 900); }   // after the app has drawn
     }).catch(function () {});
   }
   function tell(msg) { try { if (window.parent !== window) window.parent.postMessage(msg, location.origin); } catch (e) {} }
@@ -277,9 +278,12 @@
       if (ev.origin === location.origin && ev.source === window.parent && ev.data && ev.data.dvEvent) onEvent(ev.data.dvEvent);
     });
   }
-  // Did a style edit change anything? Measured on the elements it matches, before and after (after any transition).
-  // "No effect because the element has its own style attribute" goes back to the server, which fixes it in the same
-  // note; the owner never sees a "done" that changed nothing.
+  // Did a style edit take? Each property is compared, on the elements the rule matches, with what it would be if
+  // nothing else interfered: the declaration is tried for an instant as the element's own top-priority style (with
+  // whatever holds a size released), read, and the element put back exactly as it was. So %, calc(), var() and em
+  // are judged in place, and sizes by layout (transforms don't count). When it didn't take, the page names what
+  // holds it. Then: is the element still seen (not hidden, clipped by a parent or covered)? The result goes back to
+  // the server, which repairs in the same note; the owner never sees a "done" that changed nothing.
   var effect = {};
   function cssTargets(op) {
     var m = /^\s*([^{]+)\{([^}]*)\}/.exec(op.rule || "");
@@ -290,7 +294,6 @@
   function snap(t) {
     return t.els.map(function (el) { var cs = getComputedStyle(el); return t.props.map(function (p) { return cs.getPropertyValue(p); }).join("|"); }).join("§");
   }
-  // What was asked, per property, from the rule's own text.
   function decls(op) {
     var m = /\{([^}]*)\}/.exec(op.rule || ""), out = {};
     (m ? m[1] : "").split(";").forEach(function (d) {
@@ -299,21 +302,25 @@
     });
     return out;
   }
-  function px(v) { var m = /^(-?[\d.]+)px$/.exec(String(v || "").trim()); return m ? parseFloat(m[1]) : null; }
-  // The value a declaration resolves to on its own (colours to rgb(), keywords as they are), from a hidden probe.
-  var probe;
-  function resolved(prop, v) {
-    if (!probe) { probe = document.createElement("div"); probe.style.cssText = "position:absolute;visibility:hidden;pointer-events:none"; document.body.appendChild(probe); }
-    probe.style.setProperty(prop, v);
-    var r = getComputedStyle(probe).getPropertyValue(prop); probe.style.removeProperty(prop); return r;
+  function label(el) {
+    return el.tagName.toLowerCase() + (el.id ? "#" + el.id : "") +
+      ((typeof el.className === "string" && el.className.trim()) ? "." + el.className.trim().split(/\s+/).filter(function (c) { return c.indexOf("dv-") !== 0; }).slice(0, 2).join(".") : "");
   }
-  // Rules in the app's own stylesheets (not the layer's) that match el and set prop: what holds it.
+  // Try declarations on el for an instant and read the result; the element's style attribute is put back exactly.
+  function trial(el, set, read) {
+    var had = el.hasAttribute("style"), saved = el.getAttribute("style");
+    Object.keys(set).forEach(function (p) { el.style.setProperty(p, set[p], "important"); });
+    var r = read();
+    if (had) el.setAttribute("style", saved); else el.removeAttribute("style");
+    return r;
+  }
+  // Rules that match el and set prop: the app's stylesheets, and the layer's own earlier edits. What holds it.
   function rulesSetting(el, prop) {
     var out = [];
     Array.prototype.forEach.call(document.styleSheets, function (sh) {
       var owner = sh.ownerNode && sh.ownerNode.id;
-      if (owner && owner.indexOf("dv-") === 0) return;
-      var src = sh.href ? sh.href.split("/").pop().split("?")[0] : "page <style>", list;
+      if (owner && owner.indexOf("dv-") === 0 && owner !== "dv-css") return;
+      var src = owner === "dv-css" ? "a layer edit" : sh.href ? sh.href.split("/").pop().split("?")[0] : "page <style>", list;
       try { list = sh.cssRules; } catch (e) { return; }
       (function walk(rs) {
         Array.prototype.forEach.call(rs || [], function (r) {
@@ -328,56 +335,116 @@
     if (own) out.push(prop + ": " + own + " (the element's own style attribute)");
     return out;
   }
-  // Why a size didn't come out as asked: min/max, flex, grid stretch, aspect-ratio.
+  function where(rules) { return rules.length ? " (" + rules[0].replace(/^[^(]*\(/, "").replace(/\)$/, "") + ")" : ""; }
+  // Why a size didn't come out as asked: min/max, flex, grid stretch, aspect-ratio, box-sizing.
   function sizeHolds(el, prop) {
     var cs = getComputedStyle(el), ps = el.parentElement ? getComputedStyle(el.parentElement) : null, out = [];
     var mn = cs.getPropertyValue("min-" + prop), mx = cs.getPropertyValue("max-" + prop);
-    if (mn && mn !== "0px" && mn !== "auto") out = out.concat(rulesSetting(el, "min-" + prop).slice(0, 2).concat(rulesSetting(el, "min-" + prop).length ? [] : ["min-" + prop + ": " + mn]));
-    if (mx && mx !== "none") out = out.concat(rulesSetting(el, "max-" + prop).slice(0, 2).concat(rulesSetting(el, "max-" + prop).length ? [] : ["max-" + prop + ": " + mx]));
+    if (mn && mn !== "0px" && mn !== "auto") out.push("min-" + prop + ": " + mn + where(rulesSetting(el, "min-" + prop)));
+    if (mx && mx !== "none") out.push("max-" + prop + ": " + mx + where(rulesSetting(el, "max-" + prop)));
     if (ps && /flex/.test(ps.display)) {
-      var row = /row/.test(ps.flexDirection), main = row ? "width" : "height";
-      if (prop === main && (parseFloat(cs.flexGrow) > 0 || parseFloat(cs.flexShrink) > 0)) {
-        var fr = rulesSetting(el, "flex").concat(rulesSetting(el, "flex-grow"));
-        out.push("flex: " + cs.flexGrow + " " + cs.flexShrink + " " + cs.flexBasis + " in a flex " + (row ? "row" : "column") + (fr.length ? " (" + fr[0].replace(/^[^(]*\(/, "").replace(/\)$/, "") + ")" : ""));
-      }
+      var row = !/column/.test(ps.flexDirection), main = row ? "width" : "height";
+      if (prop === main && (parseFloat(cs.flexGrow) > 0 || parseFloat(cs.flexShrink) > 0))
+        out.push("flex: " + cs.flexGrow + " " + cs.flexShrink + " " + cs.flexBasis + " in a flex " + (row ? "row" : "column") + where(rulesSetting(el, "flex").concat(rulesSetting(el, "flex-grow"))));
       if (prop !== main && /stretch|normal/.test(cs.alignSelf) && /stretch|normal/.test(ps.alignItems)) out.push("stretched across its flex line (align-items/align-self: stretch)");
     }
-    if (ps && /grid/.test(ps.display) && prop === "height" && /stretch|normal/.test(cs.alignSelf)) out.push("stretched to its grid row (align-self: stretch)");
-    if (cs.aspectRatio && cs.aspectRatio !== "auto") out.push("aspect-ratio: " + cs.aspectRatio);
+    if (ps && /grid/.test(ps.display) && /stretch|normal/.test(prop === "height" ? cs.alignSelf : cs.justifySelf)) out.push("stretched to its grid " + (prop === "height" ? "row" : "column") + " (" + (prop === "height" ? "align" : "justify") + "-self: stretch)");
+    if (cs.aspectRatio && cs.aspectRatio !== "auto") out.push("aspect-ratio: " + cs.aspectRatio + where(rulesSetting(el, "aspect-ratio")));
     return out;
+  }
+  var SIZE = { height: "offsetHeight", width: "offsetWidth" };
+  var FREE = { "min-height": "0px", "max-height": "none", "min-width": "0px", "max-width": "none", "flex": "none", "align-self": "start", "justify-self": "start" };
+  // One property on one element: null when it took, else what it is and what holds it.
+  function judgeProp(el, p, v) {
+    if (/^(inherit|initial|unset|revert)$/i.test(v)) return null;
+    if (SIZE[p]) {                                        // a size: by layout, against the size nothing holds back
+      var free = {}; Object.keys(FREE).forEach(function (k) { free[k] = FREE[k]; }); free[p] = v;
+      free["aspect-ratio"] = "auto";
+      var want = trial(el, free, function () { return el[SIZE[p]]; }), got = el[SIZE[p]];
+      if (Math.abs(want - got) <= 1) return null;
+      return p + " asked " + v + " (" + want + "px here), is " + got + "px" + held(sizeHolds(el, p).concat(others(el, p, v)));
+    }
+    if (p === "aspect-ratio") {                           // judged by the height it gives at this width
+      var fr = {}; Object.keys(FREE).forEach(function (k) { fr[k] = FREE[k]; }); fr[p] = v; fr.height = "auto";
+      var wh = trial(el, fr, function () { return el.offsetHeight; }), gh = el.offsetHeight;
+      if (Math.abs(wh - gh) <= 1) return null;
+      return "aspect-ratio asked " + v + " (" + wh + "px tall here), is " + gh + "px tall" + held(sizeHolds(el, "height").concat(others(el, "height", "")));
+    }
+    var sw = {}; sw[p] = v;
+    var wantV = trial(el, sw, function () { return getComputedStyle(el).getPropertyValue(p); });
+    var gotV = getComputedStyle(el).getPropertyValue(p);
+    if (wantV === gotV) return null;
+    return p + " asked " + v + (wantV !== v ? " (" + wantV + " here)" : "") + ", is " + gotV + held(others(el, p, v));
+  }
+  function others(el, p, v) { return rulesSetting(el, p).filter(function (r) { return r.indexOf(": " + v) < 0; }).slice(0, 2); }
+  function held(why) { return why.length ? ": held by " + why.slice(0, 4).join("; ") : ""; }
+  // Is the element still seen? Hidden by an ancestor, clipped by one (overflow), or covered by another element.
+  function seen(el, want) {
+    if (want.display === "none" || want.visibility === "hidden" || want.opacity === "0") return null;   // meant to go
+    for (var a = el; a && a !== document.documentElement; a = a.parentElement) {
+      var s = getComputedStyle(a);
+      if (s.display === "none") return "can't be seen: " + (a === el ? "it has" : label(a) + " has") + " display: none" + where(rulesSetting(a, "display"));
+      if (s.visibility === "hidden" && a === el) return "can't be seen: visibility: hidden" + where(rulesSetting(a, "visibility"));
+      if (parseFloat(s.opacity) === 0) return "can't be seen: " + (a === el ? "it has" : label(a) + " has") + " opacity: 0" + where(rulesSetting(a, "opacity"));
+    }
+    var r = el.getBoundingClientRect();
+    if (r.width < 1 || r.height < 1) return null;
+    var sized = want.height || want.width || want["aspect-ratio"] || want["min-height"] || want["min-width"];
+    for (var c = sized ? el.parentElement : null; c && c !== document.body; c = c.parentElement) {   // a crop is fine unless this edit sized it
+      var cs = getComputedStyle(c);
+      if (/hidden|clip|scroll|auto/.test(cs.overflow + cs.overflowX + cs.overflowY)) {
+        var cr = c.getBoundingClientRect();
+        var vert = want.height || want["aspect-ratio"] || want["min-height"], horiz = want.width || want["min-width"];
+        var cut = (vert ? Math.max(0, cr.top - r.top) + Math.max(0, r.bottom - cr.bottom) : 0) +
+                  (horiz ? Math.max(0, cr.left - r.left) + Math.max(0, r.right - cr.right) : 0);   // only along what this edit sized
+        if (cut > 2 && !/scroll|auto/.test(cs.overflowY + cs.overflowX)) return "clipped: " + label(c) + " (overflow: " + cs.overflow + where(rulesSetting(c, "overflow")) + ") cuts " + Math.round(cut) + "px of it";
+        break;
+      }
+    }
+    if (want["z-index"] || want.position || want.top || want.left || want.right || want.bottom || want.transform) {
+      var x = Math.min(Math.max(r.left + r.width / 2, 0), innerWidth - 1), y = Math.min(Math.max(r.top + r.height / 2, 0), innerHeight - 1);
+      var at = document.elementFromPoint(x, y);
+      if (at && at !== el && !el.contains(at) && getComputedStyle(el).pointerEvents !== "none")   // a parent on top counts: it's painted over it
+        return "covered by " + (at.contains(el) ? "its own " : "") + label(at) + " (z-index " + getComputedStyle(at).zIndex + ")";
+    }
+    return null;
+  }
+  function judge(op, t) {
+    if (!t.els.length) return "missing: nothing on this screen matches " + t.sel;
+    var shown = t.els.filter(function (el) { return el.getClientRects().length; });
+    if (!shown.length) return "ok: matches only elements not on screen now (checked when they show)";
+    var want = decls(op), wrong = [];
+    shown.slice(0, 3).forEach(function (el) {
+      Object.keys(want).forEach(function (p) {
+        var w = judgeProp(el, p, want[p]);
+        if (w && wrong.indexOf(w) < 0) wrong.push(w);
+      });
+      var s = seen(el, want);
+      if (s && wrong.indexOf(s) < 0) wrong.push(s);
+    });
+    return wrong.length ? "didn't take: " + wrong.slice(0, 3).join(" | ") : null;
   }
   function measure(op, before, t) {
     setTimeout(function () {
-      if (!t.els.length) { effect[op.id] = "missing: nothing on this screen matches " + t.sel; report(); return; }
-      var want = decls(op), wrong = [], judged = 0;
-      t.els.slice(0, 3).forEach(function (el) {
-        var cs = getComputedStyle(el);
-        Object.keys(want).forEach(function (p) {
-          var v = want[p];
-          if (/var\(|calc\(|%|em\b|inherit|initial|unset|auto/i.test(v)) return;       // can't judge on its own: before/after decides
-          var got, ok; judged++;
-          if ((p === "height" || p === "width") && px(v) !== null) {
-            got = el.getBoundingClientRect()[p];
-            if (cs.boxSizing !== "border-box") got -= p === "height"
-              ? parseFloat(cs.paddingTop) + parseFloat(cs.paddingBottom) + parseFloat(cs.borderTopWidth) + parseFloat(cs.borderBottomWidth)
-              : parseFloat(cs.paddingLeft) + parseFloat(cs.paddingRight) + parseFloat(cs.borderLeftWidth) + parseFloat(cs.borderRightWidth);
-            ok = Math.abs(got - px(v)) <= 1; got = Math.round(got) + "px";
-          } else {
-            got = cs.getPropertyValue(p); ok = !got || got === resolved(p, v) || got === v;
-          }
-          if (ok) return;
-          var why = (p === "height" || p === "width") ? sizeHolds(el, p) : [];
-          why = why.concat(rulesSetting(el, p).filter(function (r) { return r.indexOf(v) < 0; }).slice(0, 2));
-          var line = p + " asked " + v + ", is " + got + (why.length ? ": held by " + why.slice(0, 4).join("; ") : "");
-          if (wrong.indexOf(line) < 0) wrong.push(line);
-        });
-      });
-      if (wrong.length) effect[op.id] = "didn't take: " + wrong.slice(0, 3).join(" | ");
-      else if (snap(t) === before) effect[op.id] = judged ? "ok: already so" : "no visible change (already so, or a more specific rule wins)";
-      else effect[op.id] = "ok: changed";
+      var bad = judge(op, t);
+      effect[op.id] = bad || (snap(t) === before ? "ok: already so" : "ok: changed");
       report();
     }, 450);
   }
+  // A measuring frame (?dvmeasure=1, opened hidden by the toolbar for each option choice): judge every style edit of
+  // its choice once the page has settled, report, and tell the toolbar it's done.
+  var measuring = fixed && /[?&]dvmeasure=1/.test(location.search);
+  function measureAll() {
+    var list = active && options[active.set] && options[active.set].choices[active.choice] ? options[active.set].choices[active.choice].ops : [];
+    list.forEach(function (op) {
+      if (op.op !== "css" || !routeOk(op)) return;
+      var t = cssTargets(op);
+      if (t) { status[op.id] = status[op.id] || "ok"; effect[op.id] = judge(op, t) || "ok: changed"; }
+    });
+    report();
+    setTimeout(function () { tell({ dv: "measured", set: active && active.set, choice: active && active.choice }); }, 400);
+  }
+
   function onEvent(e) {
     if (e.type === "op" && e.op) {
       if (e.option) {
