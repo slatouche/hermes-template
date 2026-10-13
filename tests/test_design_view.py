@@ -167,6 +167,21 @@ def main():
     pk = app.pack()
     check("what the app fetched is in every note's context: data samples and picture routes",
           "The app's real data" in pk and '"card_id": "abc"' in pk and "card-image?card_id=abc" in pk, pk[-600:])
+    plans.clear()
+    app.consume(stream("PART 1 think | find why the title glows and fix the cause", "END"), rec, n, time.monotonic(),
+                on_plan=plans.append)
+    check("a change that needs working out is its own kind of part (think)", plans and plans[0][0]["kind"] == "think", plans)
+    r1 = app.layer.new_note("make the title glow", [{"sel": "h1.title"}], "#/")
+    app.layer.finish(dict(r1, verdict="quick", plan="Glow on the title"))
+    r2 = app.layer.new_note("it still looks wrong", [], "#/")
+    hint2 = app.ask({"id": r2["id"], "text": r2["note"], "route": "#/", "marks": []})
+    r3 = app.layer.new_note("now make the button blue", [], "#/")
+    hint3 = app.ask({"id": r3["id"], "text": r3["note"], "route": "#/", "marks": []})
+    r4 = app.layer.new_note("this one again", [{"sel": "h1.title"}], "#/")
+    hint4 = app.ask({"id": r4["id"], "text": r4["note"], "route": "#/", "marks": [{"sel": "h1.title"}]})
+    check("'still wrong' after a change: the planner is told to think", "isn't right yet" in hint2 and "Plan it as think" in hint2, hint2[-300:])
+    check("an unrelated note gets no such hint", "Plan it as think" not in hint3, hint3[-300:])
+    check("the same element marked again: the planner is told so", "on the same element" in hint4, hint4[-300:])
     part = {"k": 1, "kind": "review", "text": "the glow"}
     app.consume(stream("WHY The glow stacked three shadows; one underline now.", '{"op":"css","rule":".t{text-shadow:none}"}'),
                 rec, n, time.monotonic(), mode="edits", part=part)

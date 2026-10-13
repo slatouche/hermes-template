@@ -43,7 +43,7 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
 
 First the plan: split the note into parts, one line each, then a line END.
-PART 1 <quick|options|screen|background|function|review|ask|prefer> | <one short line for the owner: what you'll do>
+PART 1 <quick|think|options|screen|background|function|review|ask|prefer> | <one short line for the owner: what you'll do>
 PART 2 ...
 END
 Splitting: one part per separate ask; asks about the same element or area are one part; a note with one ask is one
@@ -52,6 +52,11 @@ part; at most 5 parts. Kinds:
   elements, placeholder content, a ready-made behavior, undo of named notes). A small taste remark ("a bit warmer",
   "tighter") is quick: make your best call. So is a problem the owner points out ("looks broken", "still wrong",
   "too big"): fix it; that is not a question.
+- think: a visible change that needs working out before the edits, so it gets thinking time: the cause isn't obvious
+  (it looks wrong but you can't see why from the map), it spans several elements or a drawn area or arrow, or the
+  owner says an earlier attempt didn't work ("still wrong", "again", "that broke it"; see "Notes so far"). Use it
+  when you would otherwise guess; plain changes stay quick. Never do a think part yourself here; it is done
+  separately.
 - options: the owner asks for choices ("options", "try some", "which"), or a big matter of taste with several good
   answers (a whole new look for something).
 - screen: a new screen or panel that doesn't exist yet.
@@ -85,8 +90,8 @@ Edits, each a JSON object on its own line:
 {"op":"insert","where":"before|after|into|start","ref":"<where>","html":"<markup>"}
 {"op":"attr","sel":"<what>","name":"<attribute>","value":"<value>"}
 {"op":"repeat","sel":"<the list's items>","n":8,"fill":{"<part>":["text 1","text 2"],"img@src":["url 1","url 2"]}}
-    one per list: the list ends up with n items (copies of its first), and fill sets the added copies' parts in
-    order (text, or an attribute after @); the list's real items keep their real content. Build one item, then repeat
+    one per list: the list ends up with n items (copies of its first), and fill sets each item's parts in order, one value
+    per item (text, or an attribute after @); the list's real items keep their real content (their values go unused). Build one item, then repeat
     it; never insert the same item many times.
 {"op":"remove","sel":"<what>"}
 {"op":"link","sel":"<what is clicked>","to":"#/route"}           clicking it goes to that screen (prototype navigation)
@@ -110,6 +115,10 @@ element's own style="...", a css edit for those properties needs !important. Do 
 visible and clickable; it is a mockup."""
 
 PART_RULES = {
+    "think": "Do only this part now, and work it out first: look at the map, the marks and what the earlier notes "
+             "already tried; find the real cause (which rule, element or size holds it; what an earlier edit left "
+             "behind) and fix that, undoing or overriding an earlier edit that caused it. Your FIRST line is WHY <one "
+             "sentence: the cause and the fix>. Then the edits. No plan, no END.",
     "review": "The owner asked a question about this: judge it. Think it through: is what they pointed at right for "
               "this app and its users, and if not, what should be there instead? Your FIRST line must be WHY <your judgement in "
               "one plain sentence: what you are changing, or why it is fine as it is>. Then the edits that "
@@ -637,6 +646,17 @@ class App:
                 return f'- an arrow the owner drew from {m.get("from")} to {m.get("to")} (usually: move the first there)'
             return f'- {m.get("sel")}\n  html: {(m.get("html") or "")[:600]}\n  styles: {m.get("styles") or ""}'
         marks = "\n".join(mark(m) for m in n.get("marks") or []) or "(none)"
+        hint = ""
+        if not undo and not redo:
+            prev = [h for h in self.layer.history if h["id"] != n["id"] and h.get("verdict") not in ("discard", "pick", "prefer", "answer")][-1:]
+            mine = {str(m.get("sel") or "") for m in n.get("marks") or []} - {""}
+            if prev:
+                same = mine & {str(x) for x in prev[0].get("marks") or []}
+                retry = re.search(r"\b(still|again|didn'?t work|not (fixed|working|right)|broke|worse|wrong)\b", n["text"], re.I)
+                if same or retry:
+                    hint = (f"\n\nThis follows {prev[0]['id']} ({(prev[0].get('plan') or '')[:120]})"
+                            + (" on the same element" if same else "") + (": the owner says it isn't right yet" if retry else "")
+                            + ". Plan it as think unless the fix is plain.")
         # The page's latest map of this screen, not the one from when the note was sent: a note that waited in the
         # queue sees what the notes before it changed.
         page = self.maps.get(n.get("route") or "#/") or n.get("map") or ""
@@ -647,7 +667,7 @@ class App:
                   f"{{\"op\":\"redo\",\"notes\":[...]}} with ids from the list. Owner: {n['text'] or 'the last undo'}") if redo \
             else f"Note {n['id']}: {n['text']}"
         return (f"Screen: {n.get('route') or '#/'}\nMap of the screen:\n{page[:9000]}\n\n"
-                f"Marked:\n{marks}\n\nNotes so far:\n{notes}\n\n{what}")
+                f"Marked:\n{marks}\n\nNotes so far:\n{notes}\n\n{what}{hint}")
 
     # ---- the quick path ----------------------------------------------------------------------------------------
     def worker(self):
@@ -814,7 +834,7 @@ class App:
             else:
                 msgs = [{"role": "system", "content": self.pack()},
                         {"role": "user", "content": self.ask(n) + focus + PART_RULES[p["kind"]]}]
-                think = p["kind"] == "review"                              # a judgement: worth the thinking time
+                think = p["kind"] in ("review", "think")                   # a judgement: worth the thinking time
                 e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
                                                        max_tokens=8000 if think else 3000, thinking=think),
                                           rec, n, t0, mode="edits", part=p)
@@ -826,7 +846,7 @@ class App:
                     # they know why it stays). A review that changed something says so in a line, no panel.
                     why = p.get("why") or ("Looked at it and left it as it is." if not e else "")
                     asked_why = re.search(r"\bwhy\b|\bhow come\b", n["text"], re.I)
-                    if why and (not e or asked_why):
+                    if why and ((not e and p["kind"] == "review") or asked_why):
                         self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
                                          text=why, s=round(time.monotonic() - t0, 2))
                     elif why:
@@ -1000,14 +1020,14 @@ class App:
                 proposal = {"name": m.group(1), "why": m.group(2).strip(), "js": ""}
                 continue
             if not planned:
-                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|options|screen|background|function|review|ask|prefer)>?\s*\|?\s*(.*)", line, re.I)
+                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|think|options|screen|background|function|review|ask|prefer)>?\s*\|?\s*(.*)", line, re.I)
                 if m and len(plan) < 5:
                     plan.append({"k": int(m.group(1)), "kind": m.group(2).lower(), "text": m.group(3).strip()})
                     continue
                 m = re.match(r"VERDICT\s+<?(\w+)>?\s*\|?\s*(.*)", line, re.I)       # the single-verdict form still works
                 if m and not plan:
                     kind_ = m.group(1).lower()
-                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "options", "screen", "background", "function", "review", "ask", "prefer")
+                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "think", "options", "screen", "background", "function", "review", "ask", "prefer")
                                  else "quick", "text": m.group(2).strip()})
                     finish_plan()
                     continue

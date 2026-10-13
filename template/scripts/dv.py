@@ -39,7 +39,8 @@ EDITS = """Edits (one JSON object each):
 {"op":"insert","where":"before|after|into|start","ref":"<where>","html":"<plain markup>"}
 {"op":"repeat","sel":"<the list's items>","n":8,"fill":{"<part>":["a","b"],"img@src":["url","url"]}}
    one per list: the list ends up with n items (copies of its first real one; copies click like it), and fill sets
-   the added copies' parts in order (text, or an attribute after @); the real items keep their real content.
+   each item's parts in order, one value per item (text, or an attribute after @); the real items keep their real
+   content (their values go unused).
    Several repeats of one list share the same copies.
 {"op":"remove","sel":"<what>"}  (hides it)     {"op":"link","sel":"<what is clicked>","to":"#/route"}
 {"op":"screen","route":"#/name","label":"Menu label"}  then inserts with "ref":"@screen:#/name" (adds a nav link;
