@@ -1570,15 +1570,19 @@ class App:
         part already noted is not noted again."""
         try:
             fn = [q["text"] for q in parts if q["kind"] == "function"]
+            doing = [q["text"] for q in parts if q["kind"] in ("change", "options", "screen", "background")]
             open_ = fnotes.items(self.notes_page)
             marks = ", ".join(str(m.get("sel") or m.get("kind") or "") for m in n.get("marks") or [] if m) or "-"
             text = (f"Open notes:\n" + ("\n".join(f"- {i['note'][:160]}" for i in open_[-30:]) or "(none)")
                     + "\n\nAlready noted from this message: " + ("; ".join(fn) or "nothing")
+                    + "\n\nBeing done in the mockup from this message now (the build carries it, so it is never a note): "
+                    + ("; ".join(doing) or "nothing")
                     + f"\n\nThe message (screen {n.get('route') or '#/'}, pointing at {marks}):\n{n['text'][:1500]}")
             for kind, val in stream_lines(mc, [{"role": "system", "content": NOTE_RULES}, {"role": "user", "content": text}],
                                           session=f"dv-{self.project}-notes", max_tokens=400):
                 m = re.match(r"NOTE\s+<?(function|usage|feel)>?\s*[|:\-–]\s*(.+)", val, re.I) if kind == "line" else None
-                if m and not any(same_note(m.group(2), x) for x in [i["note"] for i in open_] + fn):   # never twice
+                if m and not any(same_note(m.group(2), x) for x in [i["note"] for i in open_] + fn + doing):   # never twice,
+                    # and never the visual change itself (the mockup carries it into the build)
                     noted.append(fnotes.add(m.group(2).strip(), said=n["text"], screen=n.get("route") or "#/",
                                             source=f"design view {rec['id']}", page=self.notes_page, kind=m.group(1).lower()))
                     self.events.send("functions")
