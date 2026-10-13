@@ -35,6 +35,13 @@ def sh(*args, cwd=None):
     return r.stdout if r.returncode == 0 else ""
 
 
+def sh_out(*args, cwd=None):
+    # stdout regardless of exit code: a checker (vault-lint) exits 1 when it *has* findings.
+    r = subprocess.run(list(args), capture_output=True, text=True, cwd=cwd,
+                       env={**os.environ, "PATH": f"{HOME}/.local/bin:" + os.environ.get("PATH", "")})
+    return r.stdout
+
+
 def kanban(*args):
     out = sh("hermes", "kanban", *args, "--json")
     try:
@@ -48,10 +55,16 @@ def findings():
     tasks = kanban("list") or []
     diags = kanban("diagnostics") or []
     busy = {t.get("assignee") for t in tasks if t.get("status") == "running"}
+    done_ids = {t.get("id") for t in tasks if t.get("status") in ("done", "archived")}
     for d in diags:
         for item in d.get("diagnostics") or []:
             # Waiting behind its bot's running card (one card per bot at a time) is a queue, not a stranded card.
             if isinstance(item, dict) and item.get("kind") == "stranded_in_ready" and d.get("assignee") in busy:
+                continue
+            # A completed card's summary is history, not work. A ref it names can point at a card living on the
+            # fixture (rig) board, which the default-board check cannot see and reads as a phantom id; that used
+            # to wake the Manager once a day for nothing. Only open cards' prose can still be acted on.
+            if isinstance(item, dict) and item.get("kind") == "prose_phantom_refs" and d.get("task_id") in done_ids:
                 continue
             f[f"diag:{d.get('task_id')}:{str(item)[:60]}"] = f"board diagnostic on {d.get('task_id') or 'the board'}: {str(item)[:200]}"
     for t in tasks:
@@ -88,8 +101,8 @@ def findings():
             f[f"idle:{tid}"] = f"{tid} '{title}' has been ready for {int((NOW - last) // 3600)} h with nobody on it (assignee: {t.get('assignee') or 'none'})"
 
     status = HOME / "vault" / "00-status.md"
+    items = []
     if status.exists():
-        items = []
         head = status.read_text(errors="replace").split("---", 2)[1]
         try:
             import yaml                               # /usr/bin/python3 has it; Hermes' own python doesn't
@@ -107,7 +120,7 @@ def findings():
         cutoff = dt.datetime.fromtimestamp(NOW - 2 * 3600).strftime("%Y-%m-%d %H:%M")
         for line in log.read_text(errors="replace").splitlines()[-200:]:
             parts = [p.strip() for p in line.split("|")]
-            if len(parts) >= 4 and parts[0] >= cutoff and parts[1] not in ("manager", "default", "admin") \
+            if len(parts) >= 4 and parts[0] >= cutoff and parts[1] not in ("manager", "default", "admin", "build") \
                     and parts[2] == "handoff" and not re.search(r"\bt_[0-9a-f]{6,}", line):
                 f[f"nocard:{parts[0]}:{parts[1]}"] = f"{parts[1]} logged work with no card id: {parts[3][:120]}"
 
@@ -140,10 +153,16 @@ def findings():
         n = len(re.findall(r"^\d{4}-\d{2}-\d{2}", lessons.read_text(errors="replace"), re.M))
         if n > 40:
             f["lessons:size"] = f"system/lessons.md has {n} lessons (cap 40): merge or retire some"
-    lint = sh("/usr/bin/python3", str(ROOT_H / "scripts" / "vault-lint.py"), str(HOME / "vault"))
+    lint = sh_out("/usr/bin/python3", str(ROOT_H / "scripts" / "vault-lint.py"), str(HOME / "vault"))
     probs = lint.split("--- problems ---", 1)[-1].split("--- advisories ---", 1)[0].strip() if lint else ""
     if probs and probs != "none":
-        f["lint:" + hashlib.md5(probs.encode()).hexdigest()[:10]] = "vault lint problems: " + "; ".join(probs.splitlines()[:5])
+        # A lint problem already named in an open owner card (e.g. the design view's append-only ledger) is the
+        # owner's to settle, not a new finding: don't wake for it again.
+        owner_text = " ".join(items)
+        lines = [l for l in probs.splitlines()
+                 if not (l.split(":", 1)[0].strip() and l.split(":", 1)[0].strip() in owner_text)]
+        if lines:
+            f["lint:" + hashlib.md5("\n".join(lines).encode()).hexdigest()[:10]] = "vault lint problems: " + "; ".join(lines[:5])
     imp = HOME / "import"
     if imp.is_dir():
         for e in imp.iterdir():
