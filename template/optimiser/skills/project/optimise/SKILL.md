@@ -1,7 +1,7 @@
 ---
 name: optimise
 description: "Optimise the team: evidence pack to measured, tested proposals."
-version: 2.0.0
+version: 2.1.0
 author: Project template (categories adapted from Matt Pocock's retro skill, MIT)
 license: MIT
 platforms: [linux]
@@ -27,7 +27,9 @@ The slice is the team rules, one bot (its SOUL's source, its team page, skills i
 A tidy changes wording and place, never what a rule means. A change of meaning (a rule dropped because it's wrong, a new habit) is a normal proposal for the owner (section 6), not a tidy.
 
 ## 1. Read the evidence (no guessing)
-- The pack (`optimiser-gate.py`): per bot, cards done with their steps, model and tool seconds and context size; outliers; repeated card shapes; work done by the wrong role; the owner's chat reply times; builds and how each stage went; send-backs and blocks; skills changed; memory fill; a model change.
+- The pack (`optimiser-gate.py`): per bot, cards done with their steps, model and tool seconds and context size; outliers; repeated card shapes; work done by the wrong role; the owner's chat reply times; builds and how each stage went (including the look check and its reviews); send-backs and blocks; the design view (below); skills changed; memory fill; a model change.
+- **The design view** (where the owner spends most of their time): `vault/design/layer/history.jsonl` (each note: the owner's words, the route, how long it took in `s`, the plan, its `checks`, and how it ended: a plan starting `✓` done, `⚠` an issue put to the owner, verdict `ask` a question to them) and `undone.jsonl` (notes the owner took back: **the clearest sign a note went wrong**); finished rounds are in `layer/archive/<stamp>/`. Its log (`journalctl --user -u design-view.service`): `identified <note> in <s>` (working out what was meant: three looks, `it isn't clear, asking` when they disagreed), `picture`/`measured` lines (the headless browser's timings; `NONE` is a failure), `options <set>: … didn't take`. `vault/design/build-notes.md`: the open build notes and what happened to each (many `dropped` means the note check files things that aren't notes). How it works: `vault/system/overview.md` and `design-view.py`'s opening description.
+- **The owner's model is theirs:** the design view and the bots run on the model the owner chose. A finding is fixed in the process (what the model is given and asked, in which steps), never by proposing another model.
 - Open what the pack points at: `hermes kanban show <id>` (comments, block reasons, handoffs), the bot's own log (`references/card-speed.md` has the greps), the build's history (`~/.hermes/builds/<slug>.json`).
 - The owner's corrections since your last run: `grep -iE "owner|seb" ~/vault/log.md | tail -40` and their chat turns in the Manager's log (`grep "conversation turn:.*platform=desktop" ~/.hermes/profiles/manager/logs/agent.log | tail`). A correction the owner had to make twice is a finding.
 - Compare with your last measurements in `vault/system/optimiser/`.
@@ -59,7 +61,7 @@ A tidy changes wording and place, never what a rule means. A change of meaning (
 - **Model changed** (the pack says so): for each skill, run its task once without the skill on a copy and cut what the new model follows unaided; run every bot's eval (`run-eval.sh <bot>`) and compare with the last results.
 
 ## 5. Test on a copy
-Before proposing, show the change works: run the changed script on a copy in `scratch/`, a fixture card on the `rig` board (blocked at creation), a test copy of the design view (`design-view.py --port <spare> --layer <a copy> --no-cards`), or the bot's eval before and after a SOUL or skill change (`~/.hermes/scripts/run-eval.sh <bot>`; never write a change from the eval's own prompts). Record the before and after numbers.
+Before proposing, show the change works: run the changed script on a copy in `scratch/`, a fixture card on the `rig` board (blocked at creation), a test copy of the design view (`design-view.py --port <spare> --layer <a copy> --no-cards`), for how the design view understands notes the dry run (`POST /dv/dry-run` with the note, its marks and view, from `history.jsonl`: nothing changes) on the notes it got wrong, before and after, or the template's `tests/understanding_check.py` with cases from the current page, or the bot's eval before and after a SOUL or skill change (`~/.hermes/scripts/run-eval.sh <bot>`; never write a change from the eval's own prompts). Record the before and after numbers.
 
 ## 6. Propose (at most 5 per run)
 One file per change: `system/changes/<YYYY-MM-DD>-<slug>.md` with frontmatter `status: proposed`, `author: optimiser`, `promote: template` when every project would gain, and the sections **Evidence**, **Cause**, **Change** (the exact diff or file), **Removes**, **Gain** (measured or estimated, say which), **Tested** (how, with numbers), **Affects**, **Rollback**. Never touch approved acceptance checks or test plans. Then one card for the Manager: `Screen Optimiser proposals (<n>)`, a line per proposal, `Shape: quick`. Update your page in `system/optimiser/` and stop.

@@ -32,6 +32,7 @@ The layer is the design: ops.jsonl (the edits), history.jsonl (every note and wh
 (choices on show), data/ (fill data), config.json (where screens go).
 """
 import argparse
+import base64
 import json
 import os
 import pathlib
@@ -196,6 +197,7 @@ CHANGE_RULES = ("Make this change now: the edits only, one JSON object per line,
                 "section sticky. "
                 "Change only what the note is about; leave everything else as it is.")
 
+LOOK_TOLERANCE = 1.0   # % of a screen's pixels that may differ between the build and the agreed mockup (data, a cursor)
 VISUAL_FINAL = True    # the look-at-the-result check, on the headless browser's real screenshots (without one, a measured OK decides)
 
 FINAL_RULES = ("You check a change made for the owner's note by looking at the result. The pictures are real screenshots "
@@ -285,7 +287,8 @@ def kenv():
 
 
 NOT_A_NOTE = ("The mockup already carries every visual change into the build, so a look, layout, placement, "
-              "spacing, alignment or wording is never a note, even when the owner asked for it. A note is only what "
+              "spacing, alignment or wording is never a note, even when the owner asked for it, and nor is asking the "
+              "designer for options or ideas about one (\"options for where it could go\"). A note is only what "
               "the mockup can't show: what happens when something is used (clicks, saving, data, search results, "
               "what a popup does), how the owner uses the app or moves through it, and how it should behave over "
               "time (while scrolling, as things change, how fast it should feel). Never an instruction to you about "
@@ -859,6 +862,7 @@ class App:
         self.mirror = Mirror("127.0.0.1" if bind in ("0.0.0.0", "", "::") else bind, getattr(a, "port", 0))
         self.last_view = {}                 # the owner's screen as last seen (window size, scroll, option)
         self.app_v = 0                      # counts the app's own changes: the headless browser then reloads too
+        self.built_dir = None               # a build's front end for the look check (served at /built/)
         if self.mirror.ok:                  # the headless browser starts with the server (once it's serving) and stays up
             threading.Timer(2.0, lambda: self.mirror.call("follow", wait=False, view={"route": "#/", "key": self.mirror_key()})).start()
             threading.Thread(target=self.keep_mirror_current, daemon=True).start()
@@ -1958,26 +1962,40 @@ class App:
             swept = self.sweep("agreed")
         except Exception as e:
             swept = {"added": [], "error": str(e)[:120]}
-        open_ = fnotes.items(self.notes_page)
+        ours, others = self.round_notes()
         card = self.kanban(
             f"Build the agreed design ({stamp})", "manager",
-            f"The owner pressed Agreed in the design view: build this design into the main app. The design layer stays "
-            f"frozen until it is live.\n\nThe build is `{slug}`: branch `design/{stamp}`, worktree `{wt}`. Plan it as "
-            f"cards, each with the line `Build: {slug}` and `--workspace dir:{wt}`:\n"
-            f"1. Designer: fold the design layer into the real front end in the worktree: `dv.py export` prints the build "
-            f"sheet (tokens -> theme.css, rules -> ui.css, each simulated screen -> screens/<route>.html and a nav link, "
-            f"other edits -> the screens' markup). Same look, real files, no layer.\n"
-            f"2. Engineer: wire what must really work behind it (the API, data), in the same worktree.\n"
-            f"Each card runs only its own quick checks and commits; mark the check against the running app `(live)`. "
-            f"No per-card review, merge or restart: when this card and every card of the build are done, build.py checks "
-            f"the whole build once (suite + every card's checks), merges it into main, restarts the app and runs the live "
-            f"checks; the owner's mockup then unfreezes onto it. `Review: tester` on a card only for behaviour cases you "
-            f"write (one Tester review for the whole build). A defect noticed in the frozen mockup is fixed in the build, "
-            f"never in the layer. Don't merge or restart yourself. Progress: `build.py status {slug}`."
-            + (f"\n\nThe owner's build notes: {len(open_)} open on vault/design/build-notes.md"
-               + (f" ({len(swept['added'])} just found by the sweep of this round's messages: {', '.join(swept['added'])})" if swept.get("added") else "")
-               + ". Not part of this build unless the owner says so: tell them in one line, and plan them with them "
-                 "(work-planning, \"Build notes\")." if open_ else ""))
+            f"The owner pressed Agreed in the design view. The mockup is the main app with the visible changes they want: "
+            f"build them into the real app, exactly as they look, and make everything they show really work. The design "
+            f"layer stays frozen (the reference) until the build is live.\n\n"
+            f"The build is `{slug}`: branch `design/{stamp}`, worktree `{wt}`. Read the build sheet first: `dv.py export` "
+            f"(what the owner asked, change by change in their words, the edits, and this round's build notes).\n\n"
+            f"Plan it as few cards as the work allows (usually one Engineer card per area of the app), each with the line "
+            f"`Build: {slug}` and `--workspace dir:{wt}`:\n"
+            f"- **Engineer**: fold the look into the real front end exactly (tokens -> theme.css, rules -> ui.css, screens and "
+            f"markup) and make it work: the API, data, state and this round's build notes. Where it needs something the "
+            f"design didn't show (an empty, loading or error state, a confirmation), follow the design's language and list "
+            f"it under `Look decisions:` in the result. Before finishing: `dv.py look {wt}` (each screen against the agreed "
+            f"mockup; aim for none differing, or each difference explained). A change that would alter the agreed look "
+            f"itself is a question for the owner, through you: block the card and ask, don't decide it.\n"
+            f"- **Designer**: not needed to fold or check by default. The look check runs by itself when the build is checked, "
+            f"and only screens that still differ get one Designer look review. Plan a Designer card only for a design "
+            f"decision the mockup left open.\n"
+            f"- **Tester**: `Review: tester` only on a card with behaviour worth one review (forms, saving, a multi-step flow), "
+            f"with its cases in vault/qa/; one review for the whole build, never per card.\n"
+            f"Each card runs only its own quick checks and commits; mark the checks against the running app `(live)`. No "
+            f"per-card review, merge or restart: when every card is done, build.py checks the whole build once (suite, "
+            f"every card's checks, the look), runs the reviews it needs, merges into main, restarts the app and runs the "
+            f"live checks; the mockup then starts from the new app. A defect noticed in the frozen mockup is fixed in the "
+            f"build, never in the layer. Don't merge or restart yourself. Progress: `build.py status {slug}`."
+            + (f"\n\nThis round's build notes are part of this build (the functions behind the look): "
+               f"{', '.join(x['id'] for x in ours)}. Each card closes the ones it builds: `build-notes.py done <id> \"build {slug}\"`."
+               if ours else "")
+            + (f"\n\nOther open build notes ({len(others)}, vault/design/build-notes.md) are not in this build unless the "
+               f"owner says: tell them in one line which could fit, and plan the rest with them (work-planning, "
+               f"\"Build notes\")." if others else "")
+            + (f"\n({len(swept['added'])} were just found by the sweep of this round's messages: {', '.join(swept['added'])}.)"
+               if swept.get("added") else ""))
         try:
             self.build_py("start", slug, "--plan-card", card.get("id") or "")
         except (RuntimeError, ValueError) as e:
@@ -2048,27 +2066,104 @@ class App:
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True}
 
+    def round_notes(self):
+        """The build notes of this design round (noted from a note still in the layer: the functions behind the look),
+        and the other open ones. -> (this round's, others)"""
+        mine = {h["id"] for h in self.layer.history}
+        open_ = fnotes.items(self.notes_page)
+        ours = [x for x in open_ if (re.search(r"\bn\d+\b", x.get("source") or "") or [None])[0] in mine]
+        return ours, [x for x in open_ if x not in ours]
+
     def export(self):
-        """The build sheet: the layer, grouped the way a build uses it."""
+        """The build sheet: what the owner asked for, change by change (their words, what was done, the edits and the
+        screen), the functions behind it (this round's build notes), then the layer grouped the way a build uses it."""
         ops = list(self.layer.ops)
-        out = ["# Build sheet: the design layer to fold into the front end", ""]
+        stamp = (self.layer.state("FROZEN") or {}).get("at") or time.strftime("%Y%m%d-%H%M%S")
+        out = [f"# Build sheet: the design agreed {stamp}", "",
+               "The look below is agreed: build it into the real front end exactly (same tokens, rules and markup), and make "
+               "what it shows really work (the build notes). Where making it work needs something the design didn't show "
+               "(an empty state, an error, loading, a confirmation), follow the design's own language and list it under "
+               "`Look decisions:` in your result. Check the look with `dv.py look <worktree>`: each screen of the build "
+               "against the agreed mockup.", ""]
+        by_note = {}
+        for o in ops:
+            by_note.setdefault(o.get("note"), []).append(o)
+        changes = [h for h in self.layer.history if by_note.get(h["id"])]
+        if changes:
+            out += ["## What the owner asked, change by change", ""]
+            for h in changes:
+                out += [f"### {h['id']} · {h.get('route') or '#/'}", f"Owner: \"{(h.get('note') or '').strip()[:400]}\"",
+                        f"Done: {(h.get('plan') or '').lstrip('✓⚠ ').strip()[:300]}", "```"]
+                out += [json.dumps({k_: v for k_, v in o.items() if k_ not in ("id", "note")})[:600] for o in by_note[h["id"]]] + ["```", ""]
+        ours, others = self.round_notes()
+        if ours:
+            out += ["## Make it work: this round's build notes (part of this build)", ""]
+            out += [f"- **{x['id']}** ({x['kind']}) {x['note']}" + (f" · {x['screen']}" if x.get("screen") else "")
+                    + (f"\n  - owner: \"{x['said']}\"" if x.get("said") else "") for x in ours] + [
+                "", "When one is built, close it: `build-notes.py done <id> \"build <slug>\"`.", ""]
+        if others:
+            out += ["## Other open build notes (not in this build unless the owner says)", ""]
+            out += [f"- **{x['id']}** ({x['kind']}) {x['note']}" for x in others] + [""]
+        out += ["## The layer, grouped for the front end", ""]
         toks = [o for o in ops if o["op"] == "token"]
         if toks:
-            out += ["## Theme tokens (theme.css :root)", "```css", ":root {"] + [f"  {o['name']}: {o['value']};" for o in toks] + ["}", "```", ""]
+            out += ["### Theme tokens (theme.css :root)", "```css", ":root {"] + [f"  {o['name']}: {o['value']};" for o in toks] + ["}", "```", ""]
         css = [o for o in ops if o["op"] in ("css", "remove")]
         if css:
-            out += ["## Rules (ui.css)", "```css"] + [o["rule"] if o["op"] == "css" else f"{o['sel']} {{ display: none; }}  /* remove */"
-                                                    for o in css] + ["```", ""]
-        for s in [o for o in ops if o["op"] == "screen"]:
-            parts = [o["html"] for o in ops if o["op"] == "insert" and o.get("ref") == "@screen:" + s["route"]]
-            out += [f"## Screen {s['route']} ({s['label']}) -> screens/{s['route'][2:] or 'home'}.html, nav link '{s['label']}'",
+            out += ["### Rules (ui.css)", "```css"] + [o["rule"] if o["op"] == "css" else f"{o['sel']} {{ display: none; }}  /* remove */"
+                                                     for o in css] + ["```", ""]
+        for sc in [o for o in ops if o["op"] == "screen"]:
+            parts = [o["html"] for o in ops if o["op"] == "insert" and o.get("ref") == "@screen:" + sc["route"]]
+            out += [f"### Screen {sc['route']} ({sc['label']}) -> screens/{sc['route'][2:] or 'home'}.html, nav link '{sc['label']}'",
                     "```html"] + parts + ["```", ""]
         rest = [o for o in ops if o["op"] not in ("token", "css", "remove", "screen")
                 and not (o["op"] == "insert" and str(o.get("ref", "")).startswith("@screen:"))]
         if rest:
-            out += ["## Other edits (apply to the markup they name; behaviors become real code)", "```"]
-            out += [json.dumps({k: v for k, v in o.items() if k not in ("id", "note")}) for o in rest] + ["```"]
+            out += ["### Other edits (apply to the markup they name; behaviors become real code)", "```"]
+            out += [json.dumps({k_: v for k_, v in o.items() if k_ not in ("id", "note")}) for o in rest] + ["```"]
         return "\n".join(out) + "\n"
+
+    def look_routes(self):
+        """The screens the agreed design touches: where its notes were made, and its new screens."""
+        routes = [h.get("route") or "#/" for h in self.layer.history if any(o.get("note") == h["id"] for o in self.layer.ops)]
+        routes += [o["route"] for o in self.layer.ops if o["op"] == "screen"] + [o["on"] for o in self.layer.ops if o.get("on")]
+        return list(dict.fromkeys(r for r in routes if r))[:12] or ["#/"]
+
+    def look_check(self, worktree, out_dir):
+        """The look check: each screen of the agreed design, rendered by the headless browser twice at the owner's
+        window size, the agreed mockup (the app with the design layer) and the build (its own front end, served from
+        the worktree at /built/, no layer), compared pixel by pixel. The three pictures of each screen are saved in
+        out_dir (mockup, build, and the build with what differs in magenta). -> {"screens": [...], "differ": [...]}"""
+        if not self.mirror.ok:
+            return {"error": "no headless browser here (node and the project's Chromium are needed)"}
+        try:
+            rel = self.app_dir.resolve().relative_to((HOME / "workspace").resolve())
+        except ValueError:
+            return {"error": f"the app's front end ({self.app_dir}) isn't in the workspace repo, so a worktree doesn't have it"}
+        built = pathlib.Path(worktree).expanduser().resolve() / rel
+        if not (built / "index.html").is_file():
+            return {"error": f"no front end at {built}"}
+        out = pathlib.Path(out_dir).expanduser()
+        out.mkdir(parents=True, exist_ok=True)
+        for old in out.glob("*.png"):
+            old.unlink()
+        self.built_dir = built
+        view = {k_: v for k_, v in (self.last_view or {}).items() if k_ in ("w", "h")} or {"w": 1440, "h": 900}
+        screens = []
+        for i, route in enumerate(self.look_routes(), 1):
+            got = self.mirror.call("compare", timeout=60, view=dict(view, route=route, scroll=0, key=self.mirror_key() + ".look"))
+            if not got or got.get("error") or got.get("diff") is None:
+                screens.append({"route": route, "error": (got or {}).get("error") or "no answer"})
+                continue
+            name = re.sub(r"[^\w-]+", "-", urllib.parse.unquote(route)).strip("-") or "home"
+            files = {}
+            for what in ("mockup", "built", "overlay"):
+                f = out / f"{i:02d}-{name[:40]}-{what}.png"
+                f.write_bytes(base64.b64decode(got[what].split(",", 1)[1]))
+                files[what] = str(f)
+            screens.append({"route": route, "diff": round(got["diff"] * 100, 2), **files})
+        differ = [x for x in screens if x.get("diff", 0) >= LOOK_TOLERANCE]
+        return {"screens": screens, "differ": [x["route"] for x in differ], "tolerance": LOOK_TOLERANCE, "view": view}
 
     def watch_build(self):
         """While the agreed design is being built: its stage and cards from build.py, sent to the page when they
@@ -2209,6 +2304,8 @@ def make_handler(app):
                 return
             if path == "/app" or path.startswith("/app/"):
                 return self.file(app.app_dir, path[5:] or "index.html", inject=True)
+            if path.startswith("/built/") and app.built_dir:            # a build's own front end, for the look check
+                return self.file(app.built_dir, path[7:] or "index.html", inject=True)
             if path.startswith("/api/"):
                 if app.a.api_proxy:
                     return self.proxy()
@@ -2361,6 +2458,10 @@ def make_handler(app):
             if path == "/dv/sweep":                                  # the 🔧 panel's Sweep: notes the plans missed
                 threading.Thread(target=app.sweep, args=("asked",), daemon=True).start()
                 return self.send(200, {"started": True})
+            if path == "/dv/look":                                   # the look check: a build against the agreed mockup
+                if not d.get("worktree"):
+                    return self.send(400, {"error": "which worktree? (the build's, e.g. ~/wt/<slug>)"})
+                return self.send(200, app.look_check(str(d["worktree"]), str(d.get("out") or HOME / ".hermes" / "look")))
             if path == "/dv/agree":
                 return self.send(200, app.agree())
             if path == "/dv/unfreeze":

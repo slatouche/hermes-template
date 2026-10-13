@@ -33,6 +33,11 @@ Each comes from a real case in a project built from this template. The numbers a
 - **Spot:** the owner correcting the same thing twice; a rule in a SOUL the bot broke in the logs; a rule the bot follows with or without it (try removing it on a copy and re-running the eval).
 - **Fix:** a check or a script for the first; delete the second. Shorter context is faster and more obeyed.
 
+## The design view gets the owner wrong
+- **Spot:** the pack's design view line: notes taken back (undone) or ending in an issue (`⚠`), the same thing asked twice, a note over a minute, the design view asking the owner often (`it isn't clear`). Read those notes in `history.jsonl` and what the log says it understood (`identified … :`).
+- **Case:** TCG Proxy, 2026-10-14. Two lines between toolbar groups were read as text wrapping: the model saw whole-element pictures where a 1 px divider barely shows, and decided in one look. Fixed without changing the model: a close-up of each spot the owner pointed at (including where two marked things meet), exactly what is drawn there as numbered text entries, three looks at once that must point at the same entries, and a question to the owner when they don't agree. Measured on 9 notes x5: from about 2 in 3 right to 44 of 45 right, none wrong.
+- **Fix:** give the model the evidence as text it reads well (numbers, the drawn entries) and ask it in steps; make it point at what it means and check agreement; ask the owner rather than guess. Test with the dry run on the notes it got wrong.
+
 ## Rules creeping toward a limit
 - **Spot:** the pack's "loaded every session and near its limit" list: `AGENTS.md` (8 KB), a SOUL (10 KB). Each fix adds a line, each hire a table row, and the project section grows, until a file is over and gets trimmed in a hurry.
 - **Case:** TCG Proxy's `AGENTS.md` reached 8,410 bytes after one hire; the template's own part was 7.7 KB, leaving no room for the project's section and rows. Fixed by budgets: the template's part at most 6.5 KB (AGENTS.md) and 8.5 KB (the Manager's SOUL), held by `tests/test_budgets.py`; `hire.sh` refuses a row that would go over 8 KB.

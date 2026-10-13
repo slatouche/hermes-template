@@ -16,6 +16,8 @@
   // The design view's own headless browser (mirror.js) showing the owner's screen for its pictures: a fixed frame that
   // takes no live events either (it gets a fresh page whenever the edits change).
   var mirror = /[?&]dvmirror=1/.test(location.search);
+  // A build's own front end shown bare (the look check: the build against the agreed mockup): no design edits at all.
+  var bare = /[?&]dvbare=1/.test(location.search);
   var behaviors = window.__dvBehaviors = window.__dvBehaviors || {};
   var applying = false, timer = 0, ready = false;
 
@@ -278,7 +280,7 @@
       });
       if (ready && current().some(function (o) { return !now[o.id]; })) { location.reload(); return; }
       syncedV = d.v;
-      ops = d.ops || []; options = d.options || {}; cfg = Object.assign(cfg, d.config || {});
+      ops = bare ? [] : d.ops || []; options = bare ? {} : d.options || {}; cfg = Object.assign(cfg, d.config || {});
       if (active && !(options[active.set] && options[active.set].choices[active.choice])) { active = null; sessionStorage.removeItem("dv-opt"); }
       ready = true; apply(); postMap();
       tell({ dv: "loaded", options: options, active: active });

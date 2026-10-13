@@ -12,7 +12,14 @@
                                        sets up fast); passed, it waits in vault/design/behaviors/proposed/ and the
                                        Manager gets a card to judge fit (only approved ones are served)
   dv.py approve <name> | reject <name> "<why>"   the Manager's verdict on a proposed behavior
-  dv.py export                         the build sheet: the layer grouped for folding into the real front end
+  dv.py export                         the build sheet: what the owner asked, change by change (their words, what was
+                                       done, the edits), this round's build notes (the functions to make work), and
+                                       the layer grouped for folding into the real front end
+  dv.py look <worktree> [--out <dir>] [--json]   the look check: each screen of the agreed design, the build in the
+                                       worktree against the agreed mockup, at the owner's window size; prints how much
+                                       of each screen differs and saves the pictures (mockup, build, and the build with
+                                       what differs in magenta: look at those, not the whole screens). Default out:
+                                       ~/.hermes/look/
   dv.py landed                         an agreed design finished by hand is live: archive the layer, unfreeze
 
 Edits are the same as the quick path's: token, css, move, text, insert, attr, repeat, remove, link, behavior, screen
@@ -67,11 +74,11 @@ def base():
     return f"http://127.0.0.1:{port}"
 
 
-def call(path, body=None, raw=False):
+def call(path, body=None, raw=False, timeout=30):
     req = urllib.request.Request(base() + path, data=json.dumps(body).encode() if body is not None else None,
                                  headers={"Content-Type": "application/json"}, method="POST" if body is not None else "GET")
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
             data = r.read().decode()
     except urllib.error.HTTPError as e:
         data = e.read().decode()
@@ -180,6 +187,22 @@ def main(argv):
             print(f"rejected {rest[0]}")
     elif cmd == "export":
         print(call("/dv/export", raw=True))
+    elif cmd == "look":
+        if not rest or rest[0].startswith("--"):
+            sys.exit("dv: look <worktree> [--out <dir>] [--json]")
+        out = rest[rest.index("--out") + 1] if "--out" in rest else str(HOME / ".hermes" / "look")
+        r = call("/dv/look", {"worktree": rest[0], "out": out}, timeout=600)
+        if "--json" in rest:
+            print(json.dumps(r))
+        elif r.get("error"):
+            sys.exit(f"dv: {r['error']}")
+        else:
+            for x in r["screens"]:
+                print(f"{x['route']}: " + (f"couldn't compare ({x['error']})" if x.get("error") else
+                      f"{x['diff']}% differs" + ("  <- look: " + x["overlay"] if x["diff"] >= r["tolerance"] else "")))
+            print(f"{len(r['differ'])} of {len(r['screens'])} screens differ by {r['tolerance']}% or more "
+                  f"(at {r['view']['w']}x{r['view']['h']}); pictures in {out}")
+        return 1 if r.get("error") or r.get("differ") else 0
     elif cmd == "landed":
         print(call("/dv/landed", {}))
     else:

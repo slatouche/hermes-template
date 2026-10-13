@@ -76,10 +76,10 @@ One page per project (`1NN51`), the same everywhere: a toolbar above the app, th
 - **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **↶ Undo** and **↷ Redo** are one click (the last change, or the last undone one); or write what to undo ("undo the colour changes", "bring back the glow").
 - **Agreed → live:**
   1. **Agreed** freezes the mockup and starts a build; the Manager plans its cards.
-  2. The Designer folds the layer into the real front end on the build's branch, and the Engineer wires what must really work.
-  3. When they're done, the build is checked once (the full test suite and every card's checks, plus one Tester review if it needs one), merged into main and the app restarted, all by script. Then the layer empties and the design view starts again from the new app.
+  2. The Engineer builds it on the build's branch in one pass: your look exactly, and everything it shows made to really work, including the build notes you made during that design round (the build sheet, `dv.py export`, lists each change in your words). A state the design didn't show (empty, loading, error) follows its style and is listed for you; anything that would change the look you agreed comes back to you as a question.
+  3. When it's done, the build is checked once, all by script: the full test suite, every card's checks, and the **look check** (each screen of the build against your agreed mockup, pixel by pixel). A Designer looks only at screens that still differ, and a Tester runs only if the build has behaviour worth one review; each at most once. Then it's merged into main and the app restarted. The layer empties and the design view starts again from the new app.
   The toolbar shows each stage (planning, building 2/3 with who's on what, checking, going live). **Unfreeze** stops it before it goes live.
-- **Bots use `dv.py`** (on their PATH): map a screen, apply edits (they stream into your open page and report whether they landed), propose a behavior, export the build sheet.
+- **Bots use `dv.py`** (on their PATH): map a screen, apply edits (they stream into your open page and report whether they landed), propose a behavior, export the build sheet, check a build's look against the agreed mockup (`dv.py look`).
 - **New projects** start from the starter front end (`workspace/frontend`: `theme.css` tokens, `ui.css` components, `screens/*.html`, logic-only `app.js`, one `api.js` door to the back end), so design can begin from nothing and stays quick to change.
 - **Imported projects** get it with `design-view.sh up --app <front-end folder>` once the Manager knows where the front end lives.
 

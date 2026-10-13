@@ -6,8 +6,11 @@ Each card runs only its own quick checks and commits. Nothing is reviewed, teste
 card. When every card of the build is done, the build is checked once, as a whole, and goes live by script:
 
   planning -> building -> checking -> (reviewing) -> landing -> live
-    checking:  main merged into the branch, the full suite (scripts/run-tests.sh), then every card's checks again
-    reviewing: one Tester card for the whole build, only when a card says `Review: tester` and a Tester is hired
+    checking:  main merged into the branch, the full suite (scripts/run-tests.sh), then every card's checks again;
+               an agreed design's build also gets the look check (dv.py look: each screen of the build against the
+               agreed mockup, by the design view's headless browser)
+    reviewing: at most one Designer card (only when screens still differ from the agreed look) and one Tester card
+               (only when a card says `Review: tester`), each for the whole build, each only if that role is hired
     landing:   main checkout clean -> merge --no-ff -> restart the app's services -> each card's (live) checks;
                a failure puts main back where it was (our own merge, seconds old) and restarts again
   A failure at any step: one fix card for the Engineer with every failing check, on the same branch; the build
@@ -29,6 +32,7 @@ A card belongs to a build by one line in its body: `Build: <slug>`. Its workspac
 Items without a command and an arrow are listed as not run, never guessed at.
 """
 import fcntl
+import shutil
 import json
 import os
 import pathlib
@@ -307,23 +311,66 @@ def do_checking(b, board):
     b["check_report"] = "\n".join(report + tables)
     if bad:
         return fail(b, "card checks fail", b["check_report"], board)
-    wants_review = any(REVIEW_LINE.search(c.get("body") or "") for c in members(b, board))
-    if wants_review and (H / "profiles" / "tester").is_dir():
-        diff = git("log", "--oneline", f"{b['base']}..{b['branch']}", cwd=cwd)[1].strip()
-        card = create_card(f"Review build {b['slug']}", "tester",
-                           f"Review-of: {b['slug']}\nSession: review:{b['slug']}\nShape: scoped\n\n"
-                           f"## Outcome\nOne review of the whole build `{b['slug']}` ({b.get('title') or ''}) before it goes "
-                           f"live: its cards' behaviour against the test plan's cases (`vault/qa/`), on the branch "
-                           f"`{b['branch']}` in `{b['worktree']}` (run the app from there on a spare port in the project's "
-                           f"range; never the real app or its data).\n\n## Already checked by script (don't re-run)\n"
-                           f"```\n{b['check_report'][-4000:]}\n```\n\nCommits:\n```\n{diff[-2000:]}\n```\n\n"
-                           f"## Stop when\nYour result's first line is `APPROVED` (it then goes live by itself) or "
-                           f"`CHANGES: <the defects, each reproducible>` (they go to the Engineer as one card).",
-                           wt=b["worktree"])
-        b["review_card"] = card
-        stage(b, "reviewing", f"Tester reviewing (card {card})")
-        return
+    ms = members(b, board)
+    diff = git("log", "--oneline", f"{b['base']}..{b['branch']}", cwd=cwd)[1].strip()
+    reviews = []
+    if b.get("design"):                                          # an agreed design: does the build look like it?
+        stage(b, "checking", "the look: each screen of the build against the agreed mockup")
+        look = look_check(b)
+        b["check_report"] += "\n\n" + look["text"]
+        if look.get("differ") and (H / "profiles" / "designer").is_dir():
+            decisions = "\n".join(f"- {c.get('title')}: {ln.strip()}" for c in ms
+                                   for ln in re.findall(r"(?im)^.*look decisions?:.*$", c.get("result") or ""))
+            reviews.append({"who": "designer", "title": f"Look review: build {b['slug']}", "body":
+                f"Look-of: {b['slug']}\nShape: scoped\n\n## Outcome\nThe build `{b['slug']}` ({b.get('title') or ''}) passes its "
+                f"checks; these screens still differ from the agreed mockup. For each, look at its overlay picture (the build, "
+                f"with what differs in magenta), then the mockup and the build pictures beside it. Each difference is either a "
+                f"defect (the build doesn't match the agreed look: say what, where, and what it should be) or expected (real "
+                f"behaviour the design didn't show: real data, an empty or loading state, one of the Engineer's look "
+                f"decisions below that fits the design's language). Judge only the look; the checks covered what it does.\n\n"
+                f"## The look check\n```\n{look['text']}\n```\n\n## The Engineer's look decisions\n{decisions or '(none listed)'}\n\n"
+                f"Run `dv.py look {b['worktree']}` again to see it after a change.\n\n## Stop when\nYour result's first line "
+                f"is `APPROVED` (then a line per expected difference, for the owner) or `CHANGES: <each defect: the screen, "
+                f"what differs, what it should be>` (they go to the Engineer as one card)."})
+    if any(REVIEW_LINE.search(c.get("body") or "") for c in ms) and (H / "profiles" / "tester").is_dir():
+        reviews.append({"who": "tester", "title": f"Review build {b['slug']}", "body":
+            f"Review-of: {b['slug']}\nSession: review:{b['slug']}\nShape: scoped\n\n"
+            f"## Outcome\nOne review of the whole build `{b['slug']}` ({b.get('title') or ''}) before it goes "
+            f"live: its cards' behaviour against the test plan's cases (`vault/qa/`), on the branch "
+            f"`{b['branch']}` in `{b['worktree']}` (run the app from there on a spare port in the project's "
+            f"range; never the real app or its data).\n\n## Already checked by script (don't re-run)\n"
+            f"```\n{b['check_report'][-4000:]}\n```\n\nCommits:\n```\n{diff[-2000:]}\n```\n\n"
+            f"## Stop when\nYour result's first line is `APPROVED` (it then goes live by itself) or "
+            f"`CHANGES: <the defects, each reproducible>` (they go to the Engineer as one card)."})
+    if reviews:
+        b["reviews"] = reviews
+        return next_review(b)
     do_landing(b, board)
+
+
+def next_review(b):
+    """The next review the build waits for (a Designer's look review first, then a Tester's), one card each."""
+    r = b["reviews"].pop(0)
+    b["review_card"], b["review_by"] = create_card(r["title"], r["who"], r["body"], wt=b["worktree"]), r["who"]
+    stage(b, "reviewing", f"{r['who'].capitalize()} reviewing (card {b['review_card']})")
+
+
+def look_check(b):
+    """dv.py look on the build's worktree: each screen of the agreed design against the mockup. Pictures go to
+    ~/.hermes/builds/<slug>-look/ (removed when the build is live). -> {"text", "differ": [routes]}"""
+    out = BUILDS / f"{b['slug']}-look"
+    rc, txt = run([sys.executable, str(H / "scripts" / "dv.py"), "look", b["worktree"], "--out", str(out), "--json"], timeout=600)
+    try:
+        r = json.loads(txt.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        r = {"error": txt.strip()[-300:] or f"exit {rc}"}
+    if r.get("error"):
+        return {"text": f"Look check: couldn't run ({r['error']}); not judged", "differ": []}
+    rows = [f"{x['route']}: " + (f"couldn't compare ({x['error']})" if x.get("error") else f"{x['diff']}% differs"
+            + (f"  overlay {x['overlay']} · mockup {x['mockup']} · build {x['built']}" if x["diff"] >= r["tolerance"] else ""))
+            for x in r["screens"]]
+    return {"text": f"Look check (the build against the agreed mockup at {r['view']['w']}x{r['view']['h']}, "
+                    f"{r['tolerance']}% allowed):\n" + "\n".join(rows), "differ": r["differ"]}
 
 
 def services():
@@ -389,10 +436,12 @@ def do_landing(b, board):
     b["landed"] = {"commit": merged, "at": round(time.time()), "services": units}
     git("worktree", "remove", "--force", b["worktree"])
     git("branch", "-D", b["branch"])
+    shutil.rmtree(BUILDS / f"{b['slug']}-look", ignore_errors=True)    # the look check's pictures: done with
     stage(b, "live", f"live at {merged[:10]}" + (f"; restarted {', '.join(units)}" if units else ""))
     comment(b.get("plan_card"), f"Build {b['slug']} is live: merged {merged[:10]} into {b['base']}"
             + (f", restarted {', '.join(units)}" if units else "") + "."
-            + "".join(f"\nWaived (out of date): {k} — {v}" for k, v in (b.get("waived") or {}).items()))
+            + "".join(f"\nWaived (out of date): {k} — {v}" for k, v in (b.get("waived") or {}).items())
+            + "".join(f"\nApproved with: {x}" for x in b.get("approved_notes") or []))
     vault_log(f"Build {b['slug']} is live ({merged[:10]}): {b.get('title') or b['branch']}")
 
 
@@ -424,14 +473,17 @@ def advance(b, board):
         if not rc_:
             return
         if rc_.get("status") == "blocked":
-            return stage(b, "reviewing", "waiting: the Tester's review is blocked")
+            return stage(b, "reviewing", f"waiting: the {(b.get('review_by') or 'tester').capitalize()}'s review is blocked")
         if not finished(rc_):
             return
         verdict = (rc_.get("result") or "").strip()
-        b["review_card"] = None
+        b["review_card"], who = None, b.pop("review_by", None) or "tester"
         if re.match(r"^\**APPROVED\b", verdict, re.I):
-            return do_landing(b, board)
-        return fail(b, "the Tester asked for changes", verdict or "(no result written)", board)
+            if verdict.count("\n"):
+                b.setdefault("approved_notes", []).append(f"{who}: " + verdict.split("\n", 1)[1].strip()[:1500])
+            return next_review(b) if b.get("reviews") else do_landing(b, board)
+        b["reviews"] = []                                         # the fix is checked again from the start
+        return fail(b, f"the {who.capitalize()} asked for changes", verdict or "(no result written)", board)
     if st in ("checking", "landing"):                           # interrupted mid-way (a restart): do it again
         return do_checking(b, board)
 
@@ -545,6 +597,7 @@ def cmd_abort(args):
         sys.exit("build.py: it's landing right now; abort after it finishes")
     if b["state"] != "live":
         stage(b, "aborted", " ".join(args[1:]) or "aborted")
+    shutil.rmtree(BUILDS / f"{b['slug']}-look", ignore_errors=True)
     print(json.dumps({"slug": b["slug"], "state": b["state"]}))
 
 

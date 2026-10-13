@@ -3,13 +3,17 @@
 
 Reads, since the last run: the board (cards done, send-backs, blocks), every bot's own log (each card's model steps,
 model and tool seconds, largest context; slow tool calls), the owner's chat turns (how long each reply took), the
-builds (~/.hermes/builds: stages, failures), bot-written skills, memory fill and the model.
+builds (~/.hermes/builds: stages, failures, look checks), the design view (the owner's notes: how long each took, how
+each ended, which they took back; its log's timings and failures; the build notes), bot-written skills, memory fill
+and the model.
 Wakes the Optimiser only when there is something to look at:
   - an outlier card (over twice its bot's median and over 10 min), a slow tool call (over 20 s), a big context;
   - a card shape repeated 3+ times (a step done per piece of work that may belong once, or in a script);
   - work done by the wrong role (a Tester or Designer card that builds; not a builder's card under review);
   - a system change marked applied with no owner's yes behind it (only a tidy may be applied without one);
   - the owner's replies slow (p90 over 3 min), a send-back or a block, a build that failed or got stuck;
+  - the design view struggling: over a fifth of the owner's notes taken back or ending in an issue, a note over a
+    minute, or the design view asking the owner what they mean on over a fifth of the notes it worked out;
   - a skill written or changed by a bot, a memory over 85% full, a model change, or 10+ cards done;
   - a file every bot loads (AGENTS.md: 8 KB; a SOUL: 10 KB) at 90% of its limit: what to move or merge is a proposal.
 Every night it also picks tonight's tidy slice (tidy.py slices: the team rules, one bot's SOUL source, skills and
@@ -107,6 +111,68 @@ def pct(xs, p):
 def save(state):
     STATE.parent.mkdir(parents=True, exist_ok=True)
     STATE.write_text(json.dumps(state))
+
+
+def design_view(since):
+    """The owner's design view since the last run, by script: their notes (vault/design/layer/history.jsonl and the
+    layers archived since), how long each took and how each ended (done, an issue put to them, a question to them,
+    taken back by them: undone), its log (journalctl: the understanding step's timings, pictures that failed, slow model
+    replies), and the build notes. -> (lines for the pack, whether it's worth a look)"""
+    root = HOME / "vault" / "design" / "layer"
+    if not root.is_dir():
+        return [], False
+    notes, undone = [], set()
+    for d in [root] + sorted((root / "archive").glob("*")) if (root / "archive").is_dir() else [root]:
+        for name, into in (("history.jsonl", notes), ("undone.jsonl", None)):
+            f = d / name
+            for line in (f.read_text(errors="replace").splitlines() if f.exists() else []):
+                try:
+                    x = json.loads(line)
+                except ValueError:
+                    continue
+                if into is None:
+                    undone.add(x.get("note"))
+                else:
+                    into.append(x)
+    t = lambda x: time.mktime(time.strptime(x["at"], "%Y-%m-%d %H:%M:%S")) if re.match(r"\d{4}-", x.get("at") or "") else 0
+    notes = [x for x in notes if t(x) > since and x.get("verdict") not in ("discard", "pick", "frozen")]
+    if not notes:
+        return [], False
+    secs = [x["s"] for x in notes if isinstance(x.get("s"), (int, float))]
+    issue = [x for x in notes if str(x.get("plan") or "").startswith("⚠")]
+    asked = [x for x in notes if x.get("verdict") == "ask"]
+    back = [x for x in notes if x["id"] in undone]
+    slow = sorted([x for x in notes if (x.get("s") or 0) > 30], key=lambda x: -x["s"])
+    out = [f"- the design view: {len(notes)} notes from the owner, median {statistics.median(secs or [0]):.0f} s, "
+           f"slowest {max(secs or [0]):.0f} s; {len(issue)} ended in an issue put to them, {len(asked)} in a question "
+           f"to them, {len(back)} taken back by them (undone: the clearest sign a note went wrong)"]
+    for x in (back + issue)[:6]:
+        out.append(f"  - {x['id']} {'taken back' if x in back else 'issue'}: \"{(x.get('note') or '')[:90]}\" -> {(x.get('plan') or '')[:110]}")
+    for x in slow[:3]:
+        out.append(f"  - {x['id']} slow, {x['s']:.0f} s: \"{(x.get('note') or '')[:90]}\"")
+    log = subprocess.run(["journalctl", "--user", "-u", "design-view.service", "--since", f"@{int(since)}", "--no-pager", "-o", "cat"],
+                         capture_output=True, text=True, env=ENV).stdout if since else ""
+    real = r"^identified (?!dry-run |test )\S+ in "                # the owner's notes, not dry runs
+    ident = [float(m) for m in re.findall(real + r"([\d.]+) s", log, re.M)]
+    unclear = len(re.findall(real + r"[\d.]+ s: (?:it isn't clear|no agreement)", log, re.M))
+    if ident or unclear:
+        out.append(f"  - working out what the owner meant: {len(ident) + unclear} times, median {statistics.median(ident or [0]):.1f} s, "
+                   f"slowest {max(ident or [0]):.1f} s; it asked them {unclear} times")
+    for what, pat in (("pictures that failed", r"^picture \S+: NONE"), ("measured in the owner's page (no headless browser)", r"^measured \S+: in the owner"),
+                      ("option edits that didn't take", r"^options \S+: .* [1-9]\d* edit\(s\) didn't take"),
+                      ("looks that failed", r"^identify look failed")):
+        n = len(re.findall(pat, log, re.M))
+        if n:
+            out.append(f"  - {what}: {n}")
+    page = HOME / "vault" / "design" / "build-notes.md"
+    if page.exists():
+        text = page.read_text(errors="replace")
+        dropped = len(re.findall(r"went: dropped", text))
+        out.append(f"  - build notes: {len(re.findall(r'^- \[ \] ', text, re.M))} open, {dropped} dropped so far"
+                   + (" (many dropped: is the note check filing things that aren't notes?)" if dropped >= 5 else ""))
+    n = len(notes)
+    worth = (len(back) + len(issue)) * 5 > n or (slow and slow[0]["s"] > 60) or (ident and unclear * 5 > len(ident) + unclear)
+    return out, bool(worth)
 
 
 def main():
@@ -262,10 +328,12 @@ def main():
                        "fix_cards": len(b.get("fix_cards") or []), "stages": {k: round(v / 60, 1) for k, v in stages.items()}})
     bad_builds = [b for b in builds if b["fails"] or b["state"] == "stuck"]
 
+    dv_lines, dv_wake = design_view(since)
+
     state_now = {"last_run": NOW, "skills": seen, "model": model or state.get("model"), "sizes": sizes,
                  "tidied": tidied, "tidy_next": tidy_next}
     wake = (outliers or slow_tools or big or repeated or wrong or slow_chat or troubled or bad_builds or skills or full
-            or model_changed or len(done) >= 10 or near or tidy or unapproved)
+            or model_changed or len(done) >= 10 or near or tidy or unapproved or dv_wake)
     if not wake:
         save(state_now)
         print(json.dumps({"wakeAgent": False}))
@@ -314,6 +382,8 @@ def main():
         print("- builds:")
         for b in builds[:8]:
             print(f"  - {b['slug']}: {b['state']}, {b['fails']} failure(s), {b['fix_cards']} fix card(s); minutes per stage {b['stages']}")
+    for line in dv_lines:
+        print(line)
     print("- cards with send-backs or blocks:" + ("" if troubled else " none"))
     for t in troubled[:10]:
         print(f"  - {t}")

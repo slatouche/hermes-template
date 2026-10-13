@@ -300,6 +300,42 @@ Not covered: taste
     check("status: live comment on the plan card", any("is live" in x for x in
                                                       [c for c in board() if c["id"] == plan][0].get("comments", [])))
 
+    # ---- an agreed design: the look check; a Designer only when screens differ, then the Tester, once each ----------
+    (home / ".hermes" / "profiles" / "designer").mkdir(parents=True, exist_ok=True)
+    (home / ".hermes" / "scripts").mkdir(parents=True, exist_ok=True)
+    look_out = json.dumps({"screens": [{"route": "#/deck", "diff": 6.5, "overlay": "o.png", "mockup": "m.png", "built": "b.png"},
+                                       {"route": "#/", "diff": 0.1}], "differ": ["#/deck"], "tolerance": 1.0, "view": {"w": 1440, "h": 900}})
+    (home / ".hermes" / "scripts" / "dv.py").write_text(
+        "import pathlib, sys\nout = sys.argv[sys.argv.index('--out') + 1]\npathlib.Path(out).mkdir(parents=True, exist_ok=True)\n"
+        f"(pathlib.Path(out) / 'o.png').write_text('x')\nprint({look_out!r})\n")
+    b.cmd_start(["design-y", "--design", "y"])
+    b.cmd_ready(["design-y"])
+    c8 = card("Fold and wire", "Build: design-y\nReview: tester\n## Verification\n- `true` → exit 0\n", who="engineer")
+    setc(c8, status="done", result="Done.\nLook decisions: an empty state for a deck with no cards, in the panel's muted text")
+    tick()
+    looks = [c for c in board() if c["title"] == "Look review: build design-y"]
+    check("look: screens that differ -> one Designer review first, with the pictures and the Engineer's look decisions",
+          len(looks) == 1 and state("design-y")["state"] == "reviewing" and looks[0]["assignee"] == "designer"
+          and "#/deck: 6.5% differs" in looks[0]["body"] and "o.png" in looks[0]["body"] and "empty state" in looks[0]["body"]
+          and not [c for c in board() if c["title"] == "Review build design-y"], looks[0]["body"][:600] if looks else board()[-1])
+    setc(looks[0]["id"], status="done", result="APPROVED\n#/deck: the real card art differs from the placeholder; expected")
+    tick()
+    revs = [c for c in board() if c["title"] == "Review build design-y"]
+    check("look: approved -> then the Tester's one review", len(revs) == 1 and state("design-y")["state"] == "reviewing")
+    setc(revs[0]["id"], status="done", result="APPROVED: all cases pass")
+    tick()
+    check("look: both approved -> live; the look pictures are gone; the Designer's notes reach the plan's comment",
+          state("design-y")["state"] == "live" and not (home / ".hermes" / "builds" / "design-y-look").exists(),
+          state("design-y")["step"])
+    (home / ".hermes" / "scripts" / "dv.py").write_text(
+        "import json\nprint(json.dumps({'screens': [{'route': '#/', 'diff': 0.2}], 'differ': [], 'tolerance': 1.0, 'view': {'w': 1440, 'h': 900}}))\n")
+    b.cmd_start(["design-z", "--design", "z"])
+    b.cmd_ready(["design-z"])
+    c9 = card("Fold", "Build: design-z\n## Verification\n- `true` → exit 0\n", who="engineer", status="done")
+    tick()
+    check("look: every screen matches -> no Designer, no Tester asked for -> straight to live",
+          state("design-z")["state"] == "live" and not [c for c in board() if "design-z" in c["title"] and c["title"].startswith(("Look", "Review"))])
+
     # ---- main checkout has uncommitted work: never merged over, straight to the Manager --------------------------
     b.cmd_start(["dirty"])
     b.cmd_ready(["dirty"])

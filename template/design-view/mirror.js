@@ -8,6 +8,10 @@
      follow {view}                    get the page into the owner's state ahead of time (nothing comes back)
      shot   {view, marks, zoom, close, scrolled}  -> {image, zoom: [...], close: [{label, what, image}], scrolled: [{label, image}], missing}
      inspect {view, spec}             -> {value: the layer's measurements of the elements in spec}
+     compare {view}                   the look check: the screen in view as the agreed mockup, and the same screen of
+                                      the build's own front end (served at /built/, no design edits), compared pixel by
+                                      pixel -> {diff: share of pixels that differ, mockup, built, overlay (the build with
+                                      what differs in magenta)}
      measure {view}                   load a choice of an option set (view.opt) and have the layer judge its edits:
                                       it reports them to design-view.py (/dv/report), as the owner's page would
    It looks after itself: a crashed run's leftovers are cleared at start, it shuts down after 20 idle minutes (and
@@ -121,7 +125,8 @@ async function follow(v) {
   }
   const route = v.route || "#/";
   // the key changes with every edit (and when the app's own files change): a fresh page then, like the owner's reload
-  const doc = base + "/app/?dvopt=" + encodeURIComponent(v.opt || "none") + "&dvmirror=1" + (v.measure ? "&dvmeasure=1" : "")
+  const doc = base + (v.built ? "/built/" : "/app/") + "?dvopt=" + encodeURIComponent(v.opt || "none") + "&dvmirror=1"
+    + (v.built ? "&dvbare=1" : "") + (v.measure ? "&dvmeasure=1" : "")
     + "&k=" + encodeURIComponent(v.key || "");
   if (cur.doc !== doc) {
     const loaded = once("Page.loadEventFired", 10000);
@@ -170,9 +175,10 @@ const MARKS = `function (marks) {
   return missing;
 }`;
 const UNMARK = `(function () { var e = document.getElementById("dv-mirror-marks"); if (e) e.remove(); })()`;
-async function screenshot(clip) {
+async function screenshot(clip, lossless) {
   const p = { format: "jpeg", quality: 85, captureBeyondViewport: false };
-  if (clip) { p.clip = clip; p.format = "png"; }
+  if (clip) p.clip = clip;
+  if (clip || lossless) p.format = "png";
   return "data:image/" + p.format + ";base64," + (await cdp("Page.captureScreenshot", p)).data;
 }
 // Two big things compared (a list and a sidebar): their top edges side by side, with what's above them, so a gap or a
@@ -298,6 +304,32 @@ async function measure(v) {
   return { unjudged: left };
 }
 
+// The look check for one screen: the agreed mockup, then the build bare, at the same size and scroll; the pixels that
+// differ are counted (a small tolerance, so anti-aliasing doesn't count) and shown in magenta on the build's picture.
+async function compare(v) {
+  await follow(Object.assign({}, v, { built: false, opt: "none" }));
+  const mockup = await screenshot(null, true);
+  await follow(Object.assign({}, v, { built: true, opt: "none" }));
+  const built = await screenshot(null, true);
+  const got = await js(`function (p) {
+    return Promise.all([p.a, p.b].map(function (u) { return new Promise(function (ok) { var i = new Image(); i.onload = function () { ok(i); }; i.src = u; }); }))
+      .then(function (im) {
+        var w = Math.min(im[0].width, im[1].width), h = Math.min(im[0].height, im[1].height), c = document.createElement("canvas");
+        c.width = w; c.height = h;
+        var g = c.getContext("2d");
+        g.drawImage(im[0], 0, 0); var A = g.getImageData(0, 0, w, h).data;
+        g.clearRect(0, 0, w, h); g.drawImage(im[1], 0, 0); var B = g.getImageData(0, 0, w, h), d = B.data, n = 0;
+        for (var k = 0; k < d.length; k += 4) {
+          if (Math.abs(A[k] - d[k]) + Math.abs(A[k + 1] - d[k + 1]) + Math.abs(A[k + 2] - d[k + 2]) > 48) { n++; d[k] = 255; d[k + 1] = 0; d[k + 2] = 212; d[k + 3] = 255; }
+          else d[k + 3] = 70;
+        }
+        g.putImageData(B, 0, 0);
+        return { diff: n / (w * h), overlay: c.toDataURL("image/png") };
+      });
+  }`, { a: mockup, b: built });
+  return { diff: got.diff, mockup, built, overlay: got.overlay };
+}
+
 // ---- requests from design-view.py, one at a time ----------------------------------------------------------------------
 const queue = [];
 let busy = false, started = null, served = 0, idle = null;
@@ -315,6 +347,7 @@ async function pump() {
         : r.cmd === "inspect" ? (await follow(r.view || {}), { value: await js("function (s) { return window.__dv && __dv.inspect ? __dv.inspect(s) : null; }", r.spec || {}) })
         : r.cmd === "eval" ? (await follow(r.view || {}), { value: await js(r.expr) })   // for tests: read something off the page
         : r.cmd === "measure" ? await measure(r.view || {})
+        : r.cmd === "compare" ? await compare(r.view || {})
         : (await follow(r.view || {}), {});
       reply(Object.assign({ id: r.id, ms: Date.now() - t0 }, out));
     } catch (e) {

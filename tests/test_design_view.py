@@ -386,6 +386,21 @@ def main():
     v = m.view_of({"route": "#/x", "w": 99999, "h": "900", "scroll": -5, "opt": "s1:A", "scrollers": [{"sel": "#list", "top": 120}, "junk"]})
     check("the owner's view is cleaned before the headless browser shows it",
           v == {"route": "#/x", "w": 4000, "scroll": 0, "opt": "s1:A", "scrollers": [{"sel": "#list", "top": 120, "left": 0}]}, v)
+    made = next(h for h in reversed(app.layer.history) if any(o.get("note") == h["id"] for o in app.layer.ops))
+    real_page, app.notes_page = app.notes_page, app.layer.root / "sheet-notes.md"     # its own list, for this check
+    f_ours = m.fnotes.add("the count is a live total of the deck", said="this should be the live count", source=f"design view {made['id']}",
+                          page=app.notes_page)
+    f_old = m.fnotes.add("something from an older chat", source="chat", page=app.notes_page)
+    ours, others = app.round_notes()
+    sheet = app.export()
+    app.notes_page = real_page
+    check("the build sheet: what the owner asked, change by change (their words, what was done, the edits), then this "
+          "round's build notes as part of the build, the older ones apart",
+          [x["id"] for x in ours] == [f_ours] and f_old in [x["id"] for x in others]
+          and "## What the owner asked, change by change" in sheet and f"### {made['id']}" in sheet
+          and f'Owner: "{made["note"][:30]}' in sheet and "## Make it work: this round's build notes" in sheet
+          and f"**{f_ours}**" in sheet.split("## Other open")[0] and f"**{f_old}**" in sheet.split("## Other open")[1]
+          and "dv.py look" in sheet, sheet[:900])
     pf = app.layer.root / "prefs.json"
     pf.write_text(json.dumps(["keep a running backlog of notes", "no reasoning unless asked"]))
     run("drop: the backlog instruction", [{"kind": "prefer", "text": "Drop the backlog instruction, no running backlog from now on"}])
@@ -632,6 +647,11 @@ elif a[1] == "create":
         check("...and the Manager's plan card names the build and its worktree, recorded as the plan card",
               len(board) == 1 and board[0]["assignee"] == "manager" and f"Build: {r.get('build')}" in board[0]["body"]
               and b.get("worktree", "?") in board[0]["body"] and b.get("plan_card") == board[0]["id"], (board, b.get("plan_card")))
+        check("...which says how to build it: the Engineer folds the look exactly and makes it work, checks it with dv.py "
+              "look; the Designer and the Tester only when needed, once",
+              board and all(x in board[0]["body"] for x in ("dv.py export", "**Engineer**", f"dv.py look {b.get('worktree')}",
+                                                            "Look decisions:", "only screens that still differ", "never per card")),
+              board[0]["body"][:400] if board else board)
         time.sleep(6)
         st = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops").read()).get("build") or {}
         check("the toolbar follows the build's stage", st.get("state") == "planning" and st.get("rows"), st)
