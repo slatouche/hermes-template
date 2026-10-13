@@ -194,7 +194,8 @@
     if (!text) return;
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
-                 map: d ? d.map() : "", route: d ? d.route() : "#/", reply_to: replyTo };
+                 map: d ? d.map() : "", route: d ? d.route() : "#/", reply_to: replyTo,
+                 trail: d && d.trail ? d.trail() : [], errors: d && d.errors ? d.errors() : [] };
     if (replyTo) { showAnswer("Answered: " + question.question, "Your answer: " + text, []); }
     if (question) closeQuestion();                           // answered, or moved on to something else
     $("note").value = "";
@@ -391,6 +392,25 @@
   loadState();
   setInterval(function () { if (build.frozen) drawBuild(); }, 30000);   // the minutes on the chips
 
+  // ---- the function backlog: problems with what the app does, logged for the Manager (planned with them there) ----------
+  var functions = [];
+  function loadFunctions() {
+    fetch("/dv/functions", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
+      functions = d.items || [];
+      $("fns").hidden = !functions.length;
+      $("fns").textContent = "🔧 " + functions.length;
+      $("fns").title = functions.length + " function problem" + (functions.length === 1 ? "" : "s") + " on the Manager's backlog: click to see them";
+    }).catch(function () {});
+  }
+  $("fns").onclick = function () {
+    var st = { triage: "backlog", ready: "next", todo: "next", running: "being worked on", blocked: "waiting", review: "in review" };
+    showAnswer("Function problems with the Manager (" + functions.length + ")", functions.map(function (f) {
+      return "• " + f.title.replace(/^Function( \(urgent\))?: /, "") + "  (" + (st[f.status] || f.status) + ", " + f.id + ")";
+    }).join("\n") + "\n\nPlan them with the Manager in a chat: what goes in the next build, what gets checked first, what's dropped.", []);
+  };
+  loadFunctions();
+  setInterval(loadFunctions, 60000);
+
   // ---- live status --------------------------------------------------------------------------------------------------
   function elapsed(id) { return ((Date.now() - (t0[id] || Date.now())) / 1000).toFixed(1) + " s"; }
   function liveTick() {
@@ -405,7 +425,7 @@
   var parts = {};
   // Each part's route: ⚡ fast (one quick call), 🧠 thinking (worked out first), 💬 an answer, and the rest.
   var ROUTE = { quick: "⚡", options: "⚡", screen: "⚡", think: "🧠", review: "🧠", background: "🧠", answer: "💬",
-                ask: "❓", prefer: "📌", ack: "👍", function: "→" };
+                ask: "❓", prefer: "📌", ack: "👍", function: "🔧" };
   function routed(kind) { return (ROUTE[kind] || "") + " " + kind; }
   function partLine(id) {
     var ps = parts[id] || {}, marks = { doing: "…", starting: "…", done: "✓", card: "→ card", asked: "? question", failed: "✗" };
@@ -441,7 +461,8 @@
       if (!busy[e.note] && e.verdict === "direct") return;
       delete busy[e.note];
       var cs = e.cards && e.cards.length ? e.cards : (e.card ? [e.card] : []);
-      var extra = cs.map(function (c) { return " → card for the " + c.to + (c.id ? " (" + c.id + ")" : ""); }).join("");
+      var extra = cs.map(function (c) { return c.label ? " → " + c.label : " → card for the " + c.to + (c.id ? " (" + c.id + ")" : ""); }).join("");
+      if (cs.length) loadFunctions();
       if (parts[e.note]) {
         Object.keys(parts[e.note]).forEach(function (k) { var p = parts[e.note][k]; if (p.state === "doing" || p.state === "starting") p.state = "done"; });
         e.plan = partLine(e.note); delete parts[e.note];
@@ -451,6 +472,7 @@
           e.refused && e.refused.length ? "err" : "");
     }
     else if (e.type === "question") { showQuestion(e); }
+    else if (e.type === "functions") { loadFunctions(); }
     else if (e.type === "build") { setBuild(e); drawBuild(); }
     else if (e.type === "measure-options") { measureOptions(e); }
     else if (e.type === "data") {

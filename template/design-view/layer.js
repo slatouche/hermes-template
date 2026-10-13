@@ -652,7 +652,49 @@
     return true;
   }
 
+  // ---- what the app did, for a function problem the owner reports: their last actions on the page and the errors it
+  // logged (a failed picture or script too), sent with each note. Not in a side-by-side or measuring frame.
+  var trail = [], errs = [];
+  function keep(list, item) { item.t = Date.now() / 1000; list.push(item); if (list.length > 12) list.shift(); }
+  if (!fixed) {
+    document.addEventListener("click", function (ev) {
+      if (picking || !ev.target || !ev.target.closest) return;
+      var el = ev.target.closest("button, a, input, select, textarea, label, summary, [role=button], [data-dv-link]") || ev.target;
+      keep(trail, { did: "click", on: selectorFor(el), text: (el.innerText || el.value || el.getAttribute("aria-label") || "").trim().slice(0, 40), route: route() });
+    }, true);
+    document.addEventListener("change", function (ev) {
+      var el = ev.target; if (!el || !el.tagName || picking) return;
+      var file = el.type === "file", v = file ? Array.prototype.map.call(el.files || [], function (f) { return f.name + " (" + f.size + " B)"; }).join(", ")
+        : el.type === "password" ? "(hidden)" : String(el.value == null ? "" : el.value).slice(0, 60);
+      keep(trail, { did: file ? "chose file" : "set", on: selectorFor(el), text: v, route: route() });
+    }, true);
+    addEventListener("error", function (ev) {
+      var t = ev.target;
+      if (t && t !== window && t.tagName) {                // a picture, script or stylesheet that didn't load
+        var src = (t.currentSrc || t.src || t.href || "").replace(location.origin, "");
+        if (!/\/dv\//.test(src)) keep(errs, { kind: "didn't load", text: t.tagName.toLowerCase() + " " + src.slice(0, 200) });
+        return;
+      }
+      var f = (ev.filename || "").replace(location.origin, "");
+      if (!/\/dv\//.test(f)) keep(errs, { kind: "error", text: (ev.message || "error") + (f ? " at " + f + ":" + ev.lineno : "") });
+    }, true);
+    addEventListener("unhandledrejection", function (ev) {
+      var r = ev.reason; keep(errs, { kind: "promise", text: String(r && (r.message || r) || "rejected").slice(0, 300) });
+    });
+    var consoleError = console.error;
+    console.error = function () {
+      try {
+        keep(errs, { kind: "console", text: Array.prototype.map.call(arguments, function (a) {
+          return a instanceof Error ? a.message : typeof a === "object" ? JSON.stringify(a) : String(a);
+        }).join(" ").slice(0, 300) });
+      } catch (e) {}
+      return consoleError.apply(console, arguments);
+    };
+  }
+
   window.__dv = {
+    trail: function () { return trail.slice(); },
+    errors: function () { return errs.slice(); },
     map: map,
     route: route,
     sync: load,

@@ -64,10 +64,11 @@ One page per project (`1NN51`), the same everywhere: a toolbar above the app, th
   - **options:** 3 live versions, switched in the toolbar or shown **side by side**; "Use" folds one in and the rest vanish;
   - **screen:** a new simulated page with its own nav link;
   - **background:** the same call again with thinking on, about a minute, still live;
-  - **function:** a card for the Manager, because it needs real code;
+  - **function:** something that doesn't work, or needs real code (see below);
   - **think:** worked out first, then done;
   - **review / answer:** a question judged (and fixed if wrong) or answered;
   - **ask:** the designer's one-line question to you.
+- **Something doesn't work?** Say so in the box (mark it if it helps). The designer looks into it with thinking time, using what the page saw: your last clicks, any errors, and the API calls and their answers. A real problem goes on the **Manager's function backlog** with the steps, what should happen, what happens and the evidence; one already there gets your report added. If it works as designed, you get a short why (and **Log it anyway**). Nothing starts by itself: you plan the backlog with the Manager (what goes in the next build, what's checked first, what's dropped), and anything you raise with the Manager directly lands on the same list. Say "urgent" and the Manager takes it now. The toolbar's **🔧 n** shows what's on the backlog.
 - **Interactions:** behaviors (`sortable`, `toggle`, `dialog`, `tabs`, `toast`) make the mockup clickable without code. A new kind of interaction is proposed as a file, checked by script in about 2 s (no network, storage or eval, even disguised; sets up fast), and the Manager approves it for fit; after that every note can use it.
 - **Data:** an app with a back end runs a design copy on a copy of its data, so nothing you try touches your real data. **↻ Data** refreshes the copy from your real data (only changes are copied; your real data is only read), and a build going live does it automatically. An app without a back end uses placeholder data.
 - **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **↶ Undo** and **↷ Redo** are one click (the last change, or the last undone one); or write what to undo ("undo the colour changes", "bring back the glow").

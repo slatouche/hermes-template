@@ -2,7 +2,7 @@
 """state-pack.py: the project's state in a few hundred words, read in about a second, with no model.
 
 What the Manager would otherwise spend several steps reading at the start of a reply: the status page's fields,
-the board (running, next, blocked), the owner's queue, open builds and the last log lines. The Manager's
+the board (running, next, blocked), the function backlog, the owner's queue, open builds and the last log lines. The Manager's
 `state-pack` plugin adds it to each chat message when it has changed, so "where are we?" or "what needs me?"
 is answered from it in one step.
 
@@ -92,6 +92,11 @@ def main():
             lines.append(f"  next {c['id']} {c.get('assignee')}: {(c.get('title') or '')[:60]}")
         for c in blocked[:8]:
             lines.append(f"  blocked {c['id']} {c.get('assignee')}: {(c.get('title') or '')[:60]}")
+        backlog = [c for c in cards if c.get("status") == "triage" and str(c.get("title", "")).startswith("Function")]
+        if backlog:
+            lines.append(f"function backlog: {len(backlog)} (plan with the owner when they ask; work-planning)")
+            for c in backlog[:6]:
+                lines.append(f"  backlog {c['id']}: {(c.get('title') or '')[:70]}")
     bs = builds()
     if bs:
         lines.append("builds: " + "; ".join(bs))

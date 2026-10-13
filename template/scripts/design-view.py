@@ -13,8 +13,9 @@ What it serves:
 
 A note is one streamed model call (the quick path): a knowledge pack (rules, edit commands, the app's theme tokens,
 the brief, the layer so far) plus the screen, the marks and the note. The model answers a VERDICT line and then one
-edit per line; each edit is checked and sent to the page the moment it arrives. Notes that are not quick become
-kanban cards (background -> designer, function -> manager). No Hermes session is involved, so nothing grows or
+edit per line; each edit is checked and sent to the page the moment it arrives. A function problem (what the app
+does, not how it looks) is judged with the evidence (the owner's last actions, the page's errors, the API calls) and
+goes on the Manager's backlog (/dv/functions lists it); background work becomes a Designer card. No Hermes session is involved, so nothing grows or
 compacts: every call is the same size. The layer is the design: ops.jsonl (the edits), history.jsonl (every note
 and what it did, for undo), options/ (choices on show), data/ (fill data), config.json (where screens go).
 """
@@ -62,11 +63,15 @@ part; at most 5 parts. Kinds:
 - screen: a new screen or panel that doesn't exist yet.
 - background: interaction work no ready-made behavior covers (custom animation choreography, multi-step flows, new
   kinds of widget).
-- function: it needs real behaviour or data (parsing, saving, importing, accounts). The plan line is for the Manager.
+- function: something about what the app does, not how it looks: it doesn't work (a button does nothing, an error,
+  a wrong count or missing data, saving or importing fails), or it needs new real behaviour or data. It is looked
+  into separately with the evidence (never do it here) and goes on the Manager's backlog if it's real. The plan
+  line says what seems wrong. "Log it anyway" (or "put it on the backlog") is function too.
 - review: a judgement question about what's on the page ("should this…", "is this right?", "does this make
   sense?", "why is there…"): judge it, change it if it's clearly wrong, otherwise say briefly why it's fine. Only
-  for a question, never for a problem stated (that's quick). Never do a review part yourself here; it is thought
-  through separately.
+  for a question, never for a problem stated (that's quick). A question whether something works or its data is
+  right ("is the count broken?", "does this save?") is function. Never do a review part yourself here; it is
+  thought through separately.
 - answer: a question that wants information or an opinion, not a change ("what font is this?", "how would sorting
   work?", "what else could go here?"). It is answered, with changes offered for the owner to choose; the page
   doesn't change. Never do it yourself here.
@@ -141,6 +146,61 @@ PART_RULES = {
               "building it top to bottom, a section per insert, using the app's classes; plus a link edit for whatever "
               "opens it. No plan, no END.",
 }
+
+FUNCTION_RULES = """The owner says something in the app doesn't work as it should (what it does, not how it looks). You
+can't change the app's code. Judge the report and write it up for the Manager's backlog, so an Engineer can fix it
+later without asking the owner again. Work it out from the evidence first: the screen's map, what the owner marked,
+their last actions on the page, the errors the page logged, the API calls and what the API answered. The design
+view runs the app's real front end on a design copy of its back end and data (or on mock data): a fault can be the
+copy's, so say so when you suspect it.
+
+Answer in lines, each starting with its key, and nothing else:
+VERDICT bug | fine | unclear | same <card id>
+  bug: it doesn't do what it should, or the evidence shows a fault. fine: it works as designed and the owner
+  misread it. unclear: you can't tell without them. same: a card under "Already in the backlog" is this problem
+  (this report is added to it).
+TITLE <at most 50 characters: what's wrong, in the owner's words>        (bug)
+WHERE page | data | both | unknown: <one line, why you think so>          (bug, same)
+STEPS
+1. <each step to see it, from opening the screen>
+EXPECTED <what should happen>
+ACTUAL <what happens>
+EVIDENCE
+- <each fact that shows it: an error, an API answer, a count on the screen against the data>
+SAY <one short line for the owner: what you found; for fine, why it is right>
+QUESTION <one short question> :: <answer> :: <answer>                    (unclear only)
+No edits: nothing on the page changes for a function problem."""
+
+FN_KEYS = ("VERDICT", "TITLE", "WHERE", "STEPS", "EXPECTED", "ACTUAL", "EVIDENCE", "SAY", "QUESTION")
+URGENT = re.compile(r"\b(urgent|asap|right away|straight away|immediately|blocking me|can'?t (work|use it))\b", re.I)
+LOG_ANYWAY = re.compile(r"\blog (it|this)( anyway)?\b|\b(put|add) (it|this) (on|to) the backlog\b", re.I)
+
+
+def kenv():
+    """The environment for the hermes CLI: ~/.local/bin on the PATH, the default board."""
+    env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""))
+    env.pop("HERMES_KANBAN_BOARD", None)
+    return env
+
+
+def parse_function(text):
+    """The function judge's answer -> {verdict, same, title, where, steps, expected, actual, evidence, say, question}."""
+    got, key = {}, None
+    for line in text.splitlines():
+        m = re.match(r"\s*(%s)\b\s*[:|-]?\s*(.*)$" % "|".join(FN_KEYS), line)
+        if m:
+            key = m.group(1).lower()
+            got[key] = m.group(2).strip()
+        elif key and line.strip() and not line.lstrip().startswith("{"):   # never a stray edit line
+            got[key] = (got[key] + "\n" + line.strip()).strip()
+    v = (got.get("verdict") or "").split()
+    out = {k: got.get(k, "") for k in ("title", "where", "steps", "expected", "actual", "evidence", "say", "question")}
+    out["verdict"] = v[0].lower() if v and v[0].lower() in ("bug", "fine", "unclear", "same") else "bug"
+    out["same"] = v[1] if out["verdict"] == "same" and len(v) > 1 else ""
+    out["title"] = out["title"][:50].rstrip(" .")
+    out["where"] = re.sub(r"^(page|data|both|unknown)\s*[|:-]\s*", lambda m_: m_.group(1).lower() + ": ", out["where"], flags=re.I)
+    return out
+
 
 UNSAFE_HTML = re.compile(r"<\s*(script|iframe|object|embed|link|meta|base)\b|javascript:|\son[a-z]+\s*=", re.I)
 UNSAFE_CSS = re.compile(r"</|javascript:|@import|expression\(|behavior:", re.I)
@@ -535,7 +595,27 @@ window.__dvBehaviors["<name>"] = function (el, op) { /* plain DOM; no network, s
 
 def stream_lines(mc, messages, session, max_tokens=3000, thinking=False):
     """Yield the model's answer line by line as it arrives, then a final ('usage', {...}). Thinking is off for the
-    quick path (twice as fast, and it judges better); the deep path turns it on."""
+    quick path (twice as fast, and it judges better); the deep path turns it on. A thinking call that spends its whole
+    budget thinking and answers nothing (it happens: about one in three on a hard judgement) is asked once more
+    without thinking, so the part never ends empty."""
+    said, usage = False, {}
+    for kind, val in _stream(mc, messages, session, max_tokens, thinking):
+        if kind == "usage":
+            usage = val
+        else:
+            said = True
+            yield kind, val
+    if thinking and not said:
+        for kind, val in _stream(mc, messages, session, 3000, False):
+            if kind == "usage":
+                usage = {k: (usage.get(k) or 0) + (val.get(k) or 0) for k in ("prompt_tokens", "completion_tokens",
+                                                                                "prompt_cache_hit_tokens")}
+            else:
+                yield kind, val
+    yield "usage", usage
+
+
+def _stream(mc, messages, session, max_tokens, thinking):
     body = {"model": mc["model"], "messages": messages, "max_tokens": max_tokens, "temperature": 0.3, "stream": True,
             "stream_options": {"include_usage": True}}
     if "deepseek" in mc["model"].lower():
@@ -591,6 +671,8 @@ class App:
         threading.Thread(target=self.watch_app, daemon=True).start()
         self.build = {}
         self.api_seen, self.api_lock = {}, threading.Lock()
+        self.api_log = []                   # the last 40 API calls: evidence for a function problem
+        self.fn_cache, self.fn_made = (0, []), []
         threading.Thread(target=self.watch_build, daemon=True).start()
 
     # ---- the knowledge pack ------------------------------------------------------------------------------------
@@ -661,7 +743,12 @@ class App:
             if prev:
                 same = mine & {str(x) for x in prev[0].get("marks") or []}
                 retry = re.search(r"\b(still|again|didn'?t work|not (fixed|working|right)|broke|worse|wrong)\b", n["text"], re.I)
-                if same or retry:
+                fn_prev = prev[0].get("verdict") == "function" or any(q.get("kind") == "function" for q in prev[0].get("parts") or [])
+                if fn_prev and (same or retry):
+                    hint = (f"\n\nThis follows {prev[0]['id']}, a function problem sent to the Manager's backlog "
+                            f"({(prev[0].get('plan') or '')[:120]}). A report about that same problem is a function part "
+                            "(it is added to that card); don't mock up a fix for it.")
+                elif same or retry:
                     hint = (f"\n\nThis follows {prev[0]['id']} ({(prev[0].get('plan') or '')[:120]})"
                             + (" on the same element" if same else "") + (": the owner says it isn't right yet" if retry else "")
                             + ". Plan it as think unless the fix is plain.")
@@ -671,6 +758,8 @@ class App:
                 hint += "\n\nThe owner drew " + ("an arrow" if wide[0].get("kind") == "arrow" else "an area over several elements") + ": a change to it usually needs working out (think)."
             if re.search(r"\bthink\b", n["text"], re.I):
                 hint += "\n\nThe owner asked you to think: plan a change as think, a question as review."
+            if LOG_ANYWAY.search(n["text"]):
+                hint += "\n\nThe owner wants this logged for the Manager: plan it as one function part."
         # The page's latest map of this screen, not the one from when the note was sent: a note that waited in the
         # queue sees what the notes before it changed.
         page = self.maps.get(n.get("route") or "#/") or n.get("map") or ""
@@ -698,7 +787,7 @@ class App:
     def run_note(self, n):
         """One note: a single call that plans first (its parts, each with a kind) and then streams the edits for the
         quick parts. The moment the plan is in, every other part starts at the same time on its own: options and new
-        screens as their own calls, background work on the deep path, function changes as Manager cards. Then the
+        screens as their own calls, background work on the deep path, function problems judged for the backlog. Then the
         check: edits the owner's page says didn't take (it names what holds them; every option choice is checked in
         a hidden frame) get a repair call, and a second only when the first fixed some. One note, one record, one "done"."""
         if self.layer.frozen:
@@ -732,11 +821,10 @@ class App:
             for p in parts:
                 if p["kind"] == "quick" or inline:
                     continue
-                if p["kind"] == "function":
-                    c = self.card(rec, p)
-                    cards.append(c)
-                    self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="card", card=c,
-                                     s=round(time.monotonic() - t0, 2))
+                if p["kind"] == "function":                    # judged with the evidence, then the Manager's backlog
+                    th = threading.Thread(target=self.run_function, args=(mc, rec, n, t0, p, parts, cards), daemon=True)
+                    th.start()
+                    threads.append(th)
                 elif p["kind"] == "ack":
                     self.events.send("part", note=n["id"], k=p["k"], kind="ack", state="done", text="Noted",
                                      s=round(time.monotonic() - t0, 2))
@@ -745,14 +833,7 @@ class App:
                     self.events.send("part", note=n["id"], k=p["k"], kind="prefer", state="done", text=said_,
                                      s=round(time.monotonic() - t0, 2))
                 elif p["kind"] == "ask":
-                    q, *choices = [x.strip() for x in p["text"].split("::")]
-                    choices = [c for c in choices if c][:5]
-                    # Remembered until answered: the answer goes back with the question and the original note.
-                    self.pending[n["id"]] = {"question": q, "choices": choices, "note": n["text"],
-                                             "marks": n.get("marks") or [], "route": n.get("route") or "#/"}
-                    self.events.send("question", note=n["id"], question=q, choices=choices, about=n["text"][:200])
-                    self.events.send("part", note=n["id"], k=p["k"], kind="ask", state="asked", text=q,
-                                     s=round(time.monotonic() - t0, 2))
+                    self.ask_owner(n, p, p["text"], t0)
                 else:
                     th = threading.Thread(target=self.run_part, args=(mc, rec, n, t0, p, parts, add_up, cards), daemon=True)
                     th.start()
@@ -891,6 +972,130 @@ class App:
         except Exception as ex:
             self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="failed",
                              text=f"{type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
+
+    def ask_owner(self, n, p, text, t0):
+        """The designer's question to the owner ("question :: answer :: answer"), shown above the box. Remembered until
+        answered: the answer goes back with the question and the original note."""
+        q, *choices = [x.strip() for x in text.split("::")]
+        choices = [c for c in choices if c][:5]
+        self.pending[n["id"]] = {"question": q, "choices": choices, "note": n["text"],
+                                 "marks": n.get("marks") or [], "route": n.get("route") or "#/"}
+        self.events.send("question", note=n["id"], question=q, choices=choices, about=n["text"][:200])
+        self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="asked", text=q,
+                         s=round(time.monotonic() - t0, 2))
+
+    # ---- a function problem: judged with the evidence, then the Manager's backlog -------------------------------------
+    def log_api(self, method, path, code, ms, body=b""):
+        """Every API call the page makes, with a short answer for a failed one: evidence for a function problem."""
+        err = ""
+        if code >= 400:
+            err = (body[:300].decode("utf-8", "replace") if isinstance(body, bytes) else str(body)[:300]).strip()
+        with self.api_lock:
+            self.api_log.append({"t": time.time(), "m": method, "path": path[:200], "code": code, "ms": ms, "err": err})
+            del self.api_log[:-40]
+
+    def evidence(self, n):
+        """What the app did around the note: the owner's last actions, the page's errors, the API calls."""
+        out = []
+        trail = n.get("trail") or []
+        if trail:
+            out.append("The owner's last actions on the page (oldest first):\n" + "\n".join(
+                f"- {a.get('did')} {a.get('on')}" + (f' "{a.get("text")}"' if a.get("text") else "") + f" (on {a.get('route')})"
+                for a in trail[-12:]))
+        errs = n.get("errors") or []
+        out.append("Errors the page logged:\n" + ("\n".join(f"- {e.get('kind')}: {e.get('text')}" for e in errs[-10:]) or "(none)"))
+        with self.api_lock:
+            calls = [c for c in self.api_log if c["t"] > time.time() - 600][-25:]
+        out.append("The app's API calls in the last 10 minutes (oldest first):\n" + ("\n".join(
+            f"- {c['m']} {c['path']} -> {c['code']} ({c['ms']} ms)" + (f": {c['err']}" if c["err"] else "") for c in calls) or "(none)"))
+        out.append("The back end here: " + ("a design copy of the app's real back end, on a copy of its data"
+                                            if self.a.api_proxy else "mock data (writes are kept in memory only)"))
+        open_ = self.backlog()
+        out.append("Already in the backlog:\n" + ("\n".join(f"- {c['id']}: {c['title']}" for c in open_[:20]) or "(nothing)"))
+        return "\n\n".join(out)
+
+    def backlog(self, fresh=False):
+        """The open function backlog: cards whose title starts "Function" that aren't done (from here or the Manager)."""
+        if self.a.no_cards:
+            return list(self.fn_made)
+        if not fresh and time.time() - self.fn_cache[0] < 20:
+            return self.fn_cache[1]
+        try:
+            out = subprocess.run(["hermes", "kanban", "list", "--json"], capture_output=True, text=True, timeout=30, env=kenv())
+            rows = json.loads(out.stdout or "[]")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            return self.fn_cache[1]
+        items = [{"id": t["id"], "title": t.get("title", ""), "status": t.get("status")} for t in rows
+                 if str(t.get("title", "")).startswith("Function") and t.get("status") not in ("done", "archived")]
+        self.fn_cache = (time.time(), items)
+        return items
+
+    def run_function(self, mc, rec, n, t0, p, parts, cards):
+        """A function problem: one call with thinking time judges it from the evidence. A bug goes on the Manager's
+        backlog (a triage card nobody picks up until it's planned with the owner; "urgent" makes it ready for the
+        Manager now); the same problem already there gets this report as a comment; "works as designed" is answered
+        with why (and a "Log it anyway" button); unclear asks the owner one question."""
+        self.events.send("part", note=n["id"], k=p["k"], kind="function", state="doing", text=p["text"],
+                         s=round(time.monotonic() - t0, 2))
+        try:
+            ev = self.evidence(n)
+            plan = "\n".join(f"PART {q['k']} {q['kind']} | {q['text']}" for q in parts)
+            forced = LOG_ANYWAY.search(n["text"])
+            msgs = [{"role": "system", "content": self.pack().replace(RULES.split("\n\nEdits, each")[0], FUNCTION_RULES)},
+                    {"role": "user", "content": self.ask(n) + f"\n\nThe plan for this note:\n{plan}\n\nYour part: {p['text']}"
+                     + "\n\n## Evidence\n" + ev
+                     + ("\n\nThe owner asked for this to be logged: VERDICT bug (or same), with any doubt in EVIDENCE." if forced else "")}]
+            lines = []
+            for kind, val in stream_lines(mc, msgs, session=f"dv-{self.project}-deep", max_tokens=8000, thinking=True):
+                if kind == "line":
+                    lines.append(val)
+            if not lines:
+                raise RuntimeError("no answer from the designer; say \"log it anyway\" to log it as it is")
+            f = parse_function("\n".join(lines))
+            if forced and f["verdict"] in ("fine", "unclear"):
+                f["verdict"] = "bug"
+            f["title"] = f["title"] or p["text"][:50]
+            rec["function"] = {k: f[k] for k in ("verdict", "title", "where", "say")}
+            el = lambda: round(time.monotonic() - t0, 2)
+            if f["verdict"] == "unclear" and f["question"]:
+                return self.ask_owner(n, p, f["question"], t0)
+            if f["verdict"] == "fine":
+                self.events.send("answer", note=n["id"], title="Works as designed?", kind="answer",
+                                 text=f["say"] or "It looks right to me.",
+                                 suggest=["Log it anyway: " + n["text"][:160]], s=el())
+                self.events.send("part", note=n["id"], k=p["k"], kind="function", state="done", text="works as designed", s=el())
+                return
+            report = self.fn_report(rec, n, f, ev)
+            if f["verdict"] == "same" and any(c["id"] == f["same"] for c in self.backlog()):
+                c = self.kanban_comment(f["same"], "Reported again from the design view:\n\n" + report)
+                c["label"] = f"added to {f['same']} on the backlog"
+            else:
+                urgent = bool(URGENT.search(n["text"]))
+                c = self.kanban(("Function (urgent): " if urgent else "Function: ") + f["title"], "manager", report,
+                                extra=[] if urgent else ["--triage"])
+                c["label"] = ("for the Manager now (urgent)" if urgent else "on the Manager's backlog") + f": {f['title']}"
+                if self.a.no_cards:
+                    self.fn_made.append({"id": c["id"], "title": c["title"], "status": "ready" if urgent else "triage"})
+                self.fn_cache = (0, self.fn_cache[1])
+            rec["function"]["card"] = c.get("id")
+            cards.append(c)
+            self.events.send("part", note=n["id"], k=p["k"], kind="function", state="card", card=c,
+                             text=f["say"] or c["label"], s=el())
+            self.events.send("functions", n=len(self.backlog()))
+        except Exception as ex:
+            self.events.send("part", note=n["id"], k=p["k"], kind="function", state="failed",
+                             text=f"{type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
+
+    def fn_report(self, rec, n, f, ev):
+        marks = ", ".join(str(m.get("sel") or m.get("from") or "") for m in n.get("marks") or []) or "-"
+        return (f"From the design view, note {rec['id']} on screen {n.get('route') or '#/'}, {time.strftime('%Y-%m-%d %H:%M')}. "
+                f"Backlog: plan it with the owner (work-planning, \"The function backlog\").\n\n"
+                f"Owner's words: {n['text'][:1000]}\nMarked: {marks}\n"
+                f"Where it seems to be: {f['where'] or 'unknown'}\n\n"
+                f"Steps:\n{f['steps'] or '-'}\n\nExpected: {f['expected'] or '-'}\nWhat happens: {f['actual'] or '-'}\n\n"
+                f"Evidence:\n{f['evidence'] or '-'}\n\n"
+                "The design view runs the app's real front end on a design copy of its back end and data: reproduce it on "
+                f"the real app before fixing.\n\n---\nWhat the design view saw:\n{ev.split(chr(10) * 2 + 'Already in the backlog:')[0][:2500]}")
 
     def saw_api(self, path, body, ctype):
         """What the app fetched from its API (the design copy's real data, or the mock's): the last answer per endpoint,
@@ -1099,6 +1304,9 @@ class App:
             except ValueError as e:
                 refused.append(f"{e}: {line[:120]}")
                 continue
+            if mode == "main" and not (option or screen) and not any(q["kind"] == "quick" for q in plan):
+                rec.setdefault("dropped", []).append(line[:160])  # the plan has no change to make here (e.g. only
+                continue                                           # a function problem): an edit is a stray, kept out
             if into:                                               # a repair of one option choice: the fix goes in it alone
                 o2 = self.layer.add(op, rec, into)
                 if got is not None:
@@ -1142,7 +1350,7 @@ class App:
         kind = part["kind"] if part else rec["verdict"]
         what = part["text"] if part else rec["plan"]
         who = "designer" if kind == "background" else "manager"
-        title = ("Design (background): " if who == "designer" else "Function change from the mockup: ") + (what or rec["note"])[:80]
+        title = ("Design (background): " if who == "designer" else "From the mockup: ") + (what or rec["note"])[:80]
         body = (f"From the design view, note {rec['id']} on screen {rec.get('route') or '#/'}.\n\nOwner's note: {rec['note']}\n"
                 f"Marked: {', '.join(rec.get('marks') or []) or '-'}\nThis part ({kind}): {what}\n")
         if who == "designer":
@@ -1150,18 +1358,25 @@ class App:
                      "streams into the owner's mockup; nothing in the app's code. Group your edits with --group <this card>.")
         return self.kanban(title, who, body)
 
-    def kanban(self, title, who, body):
+    def kanban(self, title, who, body, extra=()):
         if self.a.no_cards:                                       # a test copy: say what would be carded, make nothing
-            return {"to": who, "id": "not-made (test copy)", "title": title[:80]}
-        env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""))
-        env.pop("HERMES_KANBAN_BOARD", None)
+            return {"to": who, "id": f"not-made-{len(self.fn_made) + 1}", "title": title[:80], "body": body[:6000]}
         try:
-            out = subprocess.run(["hermes", "kanban", "create", title, "--assignee", who, "--body", body, "--json"],
-                                 capture_output=True, text=True, timeout=60, env=env)
+            out = subprocess.run(["hermes", "kanban", "create", title, "--assignee", who, "--body", body, *extra, "--json"],
+                                 capture_output=True, text=True, timeout=60, env=kenv())
             m = re.search(r'"(?:id|task_id)"\s*:\s*"([^"]+)"', out.stdout)
             return {"to": who, "id": m.group(1) if m else None}
         except Exception as e:
             return {"to": who, "error": str(e)[:120]}
+
+    def kanban_comment(self, cid, text):
+        if self.a.no_cards:
+            return {"to": "manager", "id": cid, "comment": True}
+        try:
+            subprocess.run(["hermes", "kanban", "comment", cid, text], capture_output=True, text=True, timeout=60, env=kenv())
+            return {"to": "manager", "id": cid, "comment": True}
+        except Exception as e:
+            return {"to": "manager", "id": cid, "error": str(e)[:120]}
 
     # ---- agreed -> built into the main app by build.py -> live ---------------------------------------------------------
     def build_py(self, *args):
@@ -1403,6 +1618,8 @@ def make_handler(app):
             if path == "/dv/report":
                 ids = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("ids", [""])[0].split(",")
                 return self.send(200, {i: app.reports.get(i) for i in ids if i})
+            if path == "/dv/functions":                              # the open function backlog (the toolbar's count)
+                return self.send(200, {"items": app.backlog()})
             if path == "/dv/export":
                 return self.send(200, app.export(), "text/markdown; charset=utf-8")
             if path == "/dv/status":
@@ -1441,7 +1658,9 @@ def make_handler(app):
                     p = base / (key + ".json")
                     if p.is_file():
                         app.saw_api(self.path, p.read_bytes(), "application/json")
+                        app.log_api("GET", self.path, 200, 0)
                         return self.send(200, p.read_bytes())
+                app.log_api("GET", self.path, 404, 0, f"no mock data for {key}")
                 return self.send(404, {"error": f"no mock data for {key}"})
             if path == "/favicon.ico":
                 return self.send(204, b"", "image/x-icon")
@@ -1454,13 +1673,16 @@ def make_handler(app):
             data = self.rfile.read(n) if n else None
             hdrs = {k: v for k, v in self.headers.items() if k.lower() in ("content-type", "accept", "range")}
             req = urllib.request.Request(app.a.api_proxy.rstrip("/") + self.path, data=data, headers=hdrs, method=self.command)
+            t = time.monotonic()
             try:
                 with urllib.request.urlopen(req, timeout=120) as r:
                     code, body, ctype = r.status, r.read(), r.headers.get("Content-Type", "application/octet-stream")
             except urllib.error.HTTPError as e:
                 code, body, ctype = e.code, e.read(), e.headers.get("Content-Type", "application/json")
             except (urllib.error.URLError, OSError) as e:
+                app.log_api(self.command, self.path, 502, round((time.monotonic() - t) * 1000), f"the back end didn't answer ({e})")
                 return self.send(502, {"error": f"the design copy of the back end didn't answer ({e})"})
+            app.log_api(self.command, self.path, code, round((time.monotonic() - t) * 1000), body)
             if self.command == "GET" and code == 200:
                 app.saw_api(self.path, body, ctype)
             self.send(code, body, ctype)
@@ -1491,8 +1713,10 @@ def make_handler(app):
                             f"Now do what the original note asked, using this answer.")
                     marks = marks or q["marks"]
                 nid = app.layer.note_id()
+                clip = lambda xs, keys: [{k: str(x.get(k) or "")[:300] for k in keys} for x in (xs if isinstance(xs, list) else [])[-12:] if isinstance(x, dict)]
                 app.notes.put({"id": nid, "text": text[:3000], "marks": marks, "ask": bool(d.get("ask")), "undo": bool(d.get("undo")), "redo": bool(d.get("redo")),
-                               "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/")})
+                               "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/"),
+                               "trail": clip(d.get("trail"), ("did", "on", "text", "route")), "errors": clip(d.get("errors"), ("kind", "text"))})
                 waiting = app.notes.qsize() - (0 if app.status["busy"] else 1)
                 app.events.send("received", note=nid, text=text[:140], queued=max(0, waiting))
                 return self.send(200, {"id": nid, "queued": max(0, waiting)})
@@ -1581,6 +1805,7 @@ def make_handler(app):
                 return self.send(200 if ok else 404, {"ok": ok})
             if path.startswith("/api/"):                             # a mock write: kept in memory, echoed back
                 key = self.api_path()
+                app.log_api(self.command, self.path, 200, 0)
                 cur = app.mem.get(key)
                 if cur is None:
                     p = app.layer.root / "data" / (key + ".json")

@@ -197,6 +197,91 @@ def main():
                 rec, n, time.monotonic(), mode="edits", part=part)
     check("a review's reasoning is kept with its part (shown only when needed)", part.get("why", "").startswith("The glow"), part)
 
+    # ---- a function problem: judged with the evidence, then the Manager's backlog -------------------------------------
+    f = m.parse_function("VERDICT bug\nTITLE Import button does nothing on a Moxfield link that is far too long to fit\n"
+                         "WHERE data: the API answered 500\nSTEPS\n1. Open #/decks\n2. Paste a link, click Import\n"
+                         "EXPECTED the deck appears\nACTUAL nothing happens\nEVIDENCE\n- POST /api/import -> 500\n- console: boom")
+    check("the judge's write-up is read, steps and evidence over several lines, the title cut to 50",
+          f["verdict"] == "bug" and f["steps"].count("\n") == 1 and "boom" in f["evidence"] and len(f["title"]) <= 50
+          and f["where"].startswith("data"), f)
+    check("'same <id>' names the backlog card; an unreadable verdict counts as a bug (logged, not lost)",
+          m.parse_function("VERDICT same t_0042\nSAY it's on the list")["same"] == "t_0042"
+          and m.parse_function("I think it's broken")["verdict"] == "bug")
+    check("a stray edit line in the write-up is left out of it",
+          m.parse_function('VERDICT bug\nSAY it is dead\n{"op":"link","sel":"b","to":"#/x"}')["say"] == "it is dead")
+    rx = app.layer.new_note("new deck does nothing", [], "#/")
+    ex, _, _, _ = app.consume(stream("PART 1 function | New deck does nothing", "END", '{"op":"behavior","name":"toast","sel":"b","text":"soon"}'),
+                              rx, {"id": rx["id"], "text": rx["note"], "route": "#/"}, time.monotonic(), on_plan=lambda p: None)
+    check("a plan with no change to make keeps no edits from the planning call", ex == 0 and rx.get("dropped"), (ex, rx.get("dropped")))
+    app.log_api("POST", "/api/import", 500, 41, b'{"error":"boom"}')
+    app.log_api("GET", "/api/decks", 200, 12)
+    nf = {"id": "n90", "text": "the import button does nothing", "route": "#/decks", "marks": [{"sel": "#import"}],
+          "trail": [{"did": "set", "on": "#link", "text": "https://moxfield.com/decks/x", "route": "#/decks"},
+                    {"did": "click", "on": "#import", "text": "Import", "route": "#/decks"}],
+          "errors": [{"kind": "console", "text": "import failed: 500"}]}
+    ev = app.evidence(nf)
+    check("the evidence: the owner's last actions, the page's errors, the API calls with a failed one's answer, the backlog",
+          "click #import" in ev and "import failed: 500" in ev and "POST /api/import -> 500" in ev and '"boom"' in ev
+          and "Already in the backlog" in ev, ev)
+    calls = []
+
+    def fake_stream(mc, msgs, session, max_tokens, thinking):
+        calls.append(thinking)
+        if not thinking:
+            yield "line", "VERDICT fine"
+        yield "usage", {"completion_tokens": max_tokens}
+    real_stream = m._stream
+    m._stream = fake_stream
+    out = list(m.stream_lines({}, [], "s", 8000, thinking=True))
+    m._stream = real_stream
+    check("a thinking call that answers nothing is asked once more without thinking (never an empty part)",
+          calls == [True, False] and ("line", "VERDICT fine") in out and out[-1] == ("usage", {"prompt_tokens": 0, "completion_tokens": 11000, "prompt_cache_hit_tokens": 0}), (calls, out))
+    said_lines = []
+    m.stream_lines = lambda mc, msgs, session, max_tokens=3000, thinking=False: (
+        [("line", x) for x in said_lines] + [("usage", {})])
+    evq = app.events.add()
+
+    def judge(text, lines):
+        said_lines[:] = lines
+        r_ = app.layer.new_note(text, [], "#/decks")
+        n_ = dict(nf, text=text, id=r_["id"])
+        cards_ = []
+        app.run_function({}, r_, n_, time.monotonic(), {"k": 1, "kind": "function", "text": text}, [], cards_)
+        evs = []
+        while not evq.empty():
+            evs.append(json.loads(evq.get()))
+        return r_, cards_, evs
+    r1, c1, e1 = judge("the import button does nothing", ["VERDICT bug", "TITLE Import does nothing", "EVIDENCE", "- 500"])
+    check("a bug goes on the backlog as a triage card for the Manager, with the steps and the evidence",
+          c1 and app.backlog() and app.backlog()[0]["title"] == "Function: Import does nothing"
+          and app.backlog()[0]["status"] == "triage" and r1["function"]["card"] == c1[0]["id"]
+          and any(e.get("state") == "card" for e in e1), (c1, app.backlog()))
+    first = app.backlog()[0]["id"]
+    r2, c2, e2 = judge("import still broken", [f"VERDICT same {first}", "SAY already on the list"])
+    check("the same problem again: added to that card, no second card", len(app.backlog()) == 1 and c2
+          and c2[0].get("comment") and c2[0]["id"] == first, (c2, app.backlog()))
+    r3, c3, e3 = judge("the total shows 59, not 60", ["VERDICT fine", "SAY The commander is counted apart: 59 + 1."])
+    ans = [e for e in e3 if e["type"] == "answer"]
+    check("works as designed: no card, a short why, and 'Log it anyway'", not c3 and ans
+          and "commander" in ans[0]["text"] and ans[0]["suggest"][0].startswith("Log it anyway"), (c3, e3))
+    r4, c4, _ = judge("Log it anyway: the total shows 59, not 60", ["VERDICT fine", "SAY it's right"])
+    check("'log it anyway' logs it whatever the judge thinks", c4 and len(app.backlog()) == 2, (c4, app.backlog()))
+    r5, c5, _ = judge("saving decks is broken, urgent", ["VERDICT bug", "TITLE Saving decks fails"])
+    check("'urgent' makes it ready for the Manager now, not backlog", c5 and app.backlog()[-1]["status"] == "ready"
+          and app.backlog()[-1]["title"].startswith("Function (urgent): "), app.backlog())
+    r6, c6, e6 = judge("the import is weird", ["VERDICT unclear", "QUESTION Which link did you paste? :: Moxfield :: Archidekt"])
+    check("unclear: one question to the owner, no card", not c6 and any(e["type"] == "question" and e["choices"] == ["Moxfield", "Archidekt"]
+          for e in e6) and r6["id"] in app.pending, e6)
+    rf = app.layer.new_note("new deck does nothing", [], "#/")
+    app.layer.finish(dict(rf, verdict="function", plan="New deck does nothing"))
+    rs = app.layer.new_note("the new deck button is still dead", [], "#/")
+    hs = app.ask({"id": rs["id"], "text": rs["note"], "route": "#/", "marks": []})
+    check("'still broken' after a function problem: the same report for the backlog, not a mocked-up fix",
+          "function problem sent to the Manager's backlog" in hs and "Plan it as think" not in hs, hs[-300:])
+    hl = app.ask({"id": "n99", "text": "log it anyway please", "route": "#/", "marks": []})
+    check("'log it anyway' tells the planner it's a function part", "plan it as one function part" in hl, hl[-200:])
+    app.events.drop(evq)
+
     # ---- the server ------------------------------------------------------------------------------------------------
     (home / ".hermes").mkdir(exist_ok=True)
     shutil.copytree(ROOT / "design-view", home / ".hermes" / "design-view")
@@ -261,6 +346,8 @@ def main():
         code, body = post("/dv/reset-data", {})
         ops_now = json.loads(get("/dv/ops")[1])
         check("placeholder data: no Data refresh, and the toolbar is told so", code == 409 and ops_now.get("data") is False, (code, body))
+        code, fl = get("/dv/functions")
+        check("the toolbar's backlog count has its endpoint", code == 200 and json.loads(fl) == {"items": []}, fl)
         code, sheet = get("/dv/export")
         check("the build sheet groups tokens and rules", code == 200 and "--bg: #000;" in sheet and "h1{color:red}" in sheet, sheet[:400])
         code, body = post("/api/decks", {"name": "New"})

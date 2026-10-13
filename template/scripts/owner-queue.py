@@ -6,6 +6,7 @@
 
 A card waits on the owner when it is blocked as `needs_input` (a decision, an answer, an approval) or
 `capability` (something only a person can do: a secret, a purchase, a physical step), or sits in triage.
+The function backlog (triage cards titled "Function…") is not on it: those are planned with the Manager.
 Those cards never time out and nothing re-runs them: the rest of the board carries on, and only cards that
 depend on them wait. The Manager goes through this list with the owner one item at a time, records each
 answer on its card and unblocks it.
@@ -39,6 +40,8 @@ def queue():
         for t in kanban("--board", slug, "list") or []:
             if t.get("status") not in ("blocked", "triage"):
                 continue
+            if t["status"] == "triage" and str(t.get("title", "")).startswith("Function"):
+                continue                                   # the function backlog: planned with the Manager
             d = kanban("--board", slug, "show", t["id"]) or {}
             blocks = [e for e in d.get("events", []) if e.get("kind") == "blocked"]
             last = blocks[-1] if blocks else {}

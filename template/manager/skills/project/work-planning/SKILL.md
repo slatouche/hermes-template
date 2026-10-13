@@ -1,7 +1,7 @@
 ---
 name: work-planning
 description: "Cut cards, route review, unstick blocked work."
-version: 1.2.0
+version: 1.3.0
 author: Project template (card brief adapted from Matt Pocock's to-tickets skill, MIT)
 license: MIT
 platforms: [linux]
@@ -34,7 +34,7 @@ Every change to the app's code is a **build**: one branch, the cards that make i
    - **Numbers before pictures.** A colour, size, gap, count or overflow is read from the DOM in one call; a look (`vision_analyze`, 30-60 s) only for what only a look answers, once, on the finished change, cropped.
    - **A layout complaint is reproduced at the owner's widths** (1280, 1100, 900, 760) before anything changes.
    - **No check depends on another card running**, and **no check writes into a real channel**: a test of the design view runs on a throwaway copy of it (`design-view.py --port <spare> --layer <a copy> --no-cards`), never the owner's; a fixture card goes on the `rig` board, blocked at creation, so it can never ring the owner. Close what a check created as part of the check.
-4. **Design notes don't need cards:** the owner's notes in the design view are done there, in seconds, with no card. What reaches you from it: function changes (a card each), behavior proposals to review, and the build after Agreed (see "The design view" below).
+4. **Design notes don't need cards:** the owner's notes in the design view are done there, in seconds, with no card. What reaches you from it: function problems (on the backlog, below), behavior proposals to review, and the build after Agreed (see "The design view" below).
 5. **Give related cards one `Session:` topic** (`<area>:<thing>`, e.g. `engineer:deck-view`) so the same bot resumes what it knows. Unrelated work, a new topic; a stale or confused topic, `Session: new <topic>`. A long session does slow later cards, but the fix is compaction (it summarises a big session, and tidies one 45 minutes after work stops), never a fresh topic for speed: if rounds on a big session stay slow, tell the owner and propose a lower compaction threshold. `~/.hermes/scripts/hermes-worker.py --topics` (with `HERMES_HOME` set to the bot's profile) lists them.
 6. **Title at most 50 characters, no trailing punctuation** (the branch name is built from it).
 7. **Settings:** `idempotency_key`; `max_runtime_seconds` 3600 for code, 1800 for research and docs; workspace `dir:<the build's worktree>` for code (the build's cards share it), `dir` on `~/workspace` for docs and vault work; `skills=[...]` only for task-specific skills. Don't pin a model on a card that goes to review. The title is positional on `create`; more in `references/kanban-cli.md`.
@@ -81,9 +81,16 @@ Everything that needs the owner's decision, answer, approval or hands is **a car
 
 ## The design view (what reaches you from it)
 The owner designs on `<API port + 51>`: notes are done there by one model call each (quick parts, options, simulated screens, reviews of a question), so they never become cards. Three things do:
-- **`Function change from the mockup: …`**: a part of a note that needs real behaviour or data. Card it for the Engineer like any request (and tell the owner if it changes scope).
+- **`Function: …`** (or `Function (urgent): …`): a problem with what the app does, judged there from the evidence and written up for the backlog (below).
 - **`Review proposed behavior: <name>`**: a new interaction for the mockup that already passed `behavior-check.py` (safe, registers itself, sets up fast; one that fails never reaches you). What's left is fit: does it do what the note needs, as a reusable interaction? `dv.py approve <name>` or `dv.py reject <name> "<why>"`. A minute, no harness.
 - **`Build the agreed design (<stamp>)`**: the owner pressed Agreed; the layer is frozen and `build.py` has already made the build (`design-<stamp>`, its worktree named in the card). Cut its cards as the card says (a Designer card folds the layer into the front end, Engineer cards wire what must really work), each with the `Build:` line and the worktree, and complete your card: that starts the build. It goes live on the main app by itself when its checks pass, and the owner's mockup unfreezes onto it; the owner watches the stages on the toolbar. A defect noticed in the frozen mockup is fixed in the build, never as a mockup card.
+
+## The function backlog
+Problems with what the app does (not how it looks) and small function asks wait here until you plan them **with the owner**. One list, wherever they were raised: **triage cards titled `Function: <what's wrong>`**, assigned to you. Triage is a parking column here (`kanban.auto_decompose` is off), so nothing runs them; they are not in `/queue` (that's for decisions), and the state pack lists them.
+- **From the design view:** the owner reports it there; the designer judges it from the evidence (their last clicks, the page's errors, the API calls and answers) and makes the card: steps, expected, what happens, evidence, and whether it looks like the page or the data. A report of a problem already on the backlog becomes a comment on that card. "Works as designed" makes no card (the owner can say "log it anyway").
+- **From a chat:** when the owner raises one with you, look for it on the backlog first (`hermes kanban list --status triage --json`); there, comment on it; new, `hermes kanban create "Function: <what's wrong>" --assignee manager --triage --body "<their words, steps, expected, what happens>"`. Say in one line it's on the backlog; don't start work on it unasked.
+- **Planning it** (when the owner asks to go through it, or before cutting the next build): take each card with them and decide: into a build (cut the Engineer card from it with a check that fails while the bug is there, the `Build:` line and worktree, then archive the backlog card with a comment naming the build), a Tester card to reproduce it first, or dropped (archive with their reason). Its write-up came from the design view's copy of the back end and data: reproduce it on the real app before fixing.
+- **`Function (urgent): …`** arrives `ready` because the owner said it's urgent: plan it now (a build of one, or fix and verify it yourself when they're in front of it) and tell them.
 
 ## Sign-off brief (once per feature, readable on a phone)
 What shipped; the `Verified:` evidence lines; links or screenshots; what checks can't see (taste, motion, a real print); and one question. Changes the owner asks for become new cards, never quiet patches.

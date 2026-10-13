@@ -84,6 +84,7 @@ hermes config set kanban.max_in_progress_per_profile "$KANBAN_MAX_PER_PROFILE"
 hermes config set kanban.dispatch_interval_seconds 10        # a ready card starts within seconds (a cheap database check)
 hermes config set kanban.failure_limit "$KANBAN_FAILURE_LIMIT"
 hermes config set kanban.review_dispatch true
+hermes config set kanban.auto_decompose false            # triage waits for the Manager (the function backlog, owner escalations)
 hermes config set kanban.auto_subscribe_on_create true
 hermes config set gateway.multiplex_profiles true
 
