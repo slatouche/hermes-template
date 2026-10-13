@@ -9,16 +9,27 @@ What it serves:
                with layer.js added to its index.html
   /api/...     a mock API: layer/data/<path>.json, else snapshot/<path>.json; writes are kept in memory only
   /dv/...      the toolbar's own files, the layer's edits (/dv/ops), live events (/dv/events), notes (/dv/note),
-               direct edits (/dv/op), undo (/dv/undo), picking an option (/dv/pick)
+               direct edits (/dv/op), undo (/dv/undo), picking an option (/dv/pick), where the owner is (/dv/view),
+               and a dry run of a note (/dv/dry-run: what it would be taken to mean and planned as; nothing changes)
 
-A note is one streamed model call (the quick path): a knowledge pack (rules, edit commands, the app's theme tokens,
-the brief, the layer so far) plus the screen, the marks and the note. The model answers a VERDICT line and then one
-edit per line; each edit is checked and sent to the page the moment it arrives. A function point (what the app
-does, not how it looks) is noted, not worked on: its plan line goes on the running list vault/design/function-notes.md
-(function-notes.py) with what the page saw, for the Manager to plan with the owner (/dv/functions lists the open ones);
-background work becomes a Designer card. No Hermes session is involved, so nothing grows or
-compacts: every call is the same size. The layer is the design: ops.jsonl (the edits), history.jsonl (every note
-and what it did, for undo), options/ (choices on show), data/ (fill data), config.json (where screens go).
+The design view's eyes are its own headless browser (design-view/mirror.js, the project's Chromium), kept running
+beside this server: it shows the app as the owner has it (page, window size, scroll, option, the edits so far) and
+takes every picture (real screenshots) and every measurement; the owner's own page draws and measures nothing, so it
+stays smooth. It stays current by itself (every edit, undo or app change reloads it) and tidies up after itself.
+
+A note, in turn (direct model calls, thinking off; no Hermes session, so every call is the same size):
+  1. What the owner means: each spot they pointed at (a mark, a drawn box, where two marks meet) as a sharp close-up
+     with exactly what is drawn there as numbered entries; three looks at once say what the thing is and what's wrong
+     with it, pointing at entries. Two that agree go ahead; looks that don't are put to the owner as a question.
+  2. The plan: the note's parts (a change, options, a new screen, background work, a function point, an answer, ...).
+  3. Each change: the elements measured, the change made from the numbers, checked up to twice (the numbers, and
+     what is drawn at the spots before and after), then a final look at the result. DONE, or an ISSUE put to the
+     owner like a question (more words, try again with thinking, or undo).
+Options never change the mockup: each choice is its own set, checked in the headless browser. A function point (what
+the app does, not how it looks) is only noted, on the running list vault/design/build-notes.md (build-notes.py), for
+the Manager to plan with the owner (/dv/functions lists the open ones); background work becomes a Designer card.
+The layer is the design: ops.jsonl (the edits), history.jsonl (every note and what it did, for undo), options.json
+(choices on show), data/ (fill data), config.json (where screens go).
 """
 import argparse
 import json
@@ -26,6 +37,7 @@ import os
 import pathlib
 import queue
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -46,76 +58,75 @@ def _sibling(name):
     return mod
 
 
-fnotes = _sibling("function-notes")                    # the running list of function and usage notes
+fnotes = _sibling("build-notes")                    # the running list of function and usage notes
 ASSETS = pathlib.Path(os.environ.get("DV_ASSETS") or HOME / ".hermes" / "design-view")   # a test copy can bring its own
 TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8",
          ".json": "application/json", ".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg",
          ".jpeg": "image/jpeg", ".webp": "image/webp", ".gif": "image/gif", ".ico": "image/x-icon",
          ".woff2": "font/woff2", ".txt": "text/plain; charset=utf-8"}
 
-RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
+PLAN_RULES = """You are the designer of a live web app, reading a note from its owner. A picture of their screen comes
+with it; anything they marked is outlined in magenta and lettered A, B, ... (the same letters as under "Marked"), and a
+sharp close-up of each spot they pointed at follows it. Use the pictures to see what they point at and what else they
+mean ("the other box", "like the sidebar"); the screen map lists the real elements with their selectors. When the note
+comes with what they mean already worked out (the thing, and what's wrong with it), plan from that. Plan the work; you
+don't make any change here.
 
-First the plan: split the note into parts, one line each, then a line END.
-PART 1 <quick|think|options|screen|background|function|review|answer|ask|prefer|ack> | <one short line for the owner: what you'll do>
-PART 2 ...
-END
-Splitting: one part per separate ask; asks about the same element or area are one part; a note with one ask is one
-part; at most 5 parts. Kinds:
-- quick: a visible change you can make now with the edits below (style, spacing, colour, move, text, add or repeat
-  elements, placeholder content, a ready-made behavior, undo of named notes). A small taste remark ("a bit warmer",
-  "tighter") is quick: make your best call. So is a problem the owner points out ("looks broken", "still wrong",
-  "too big"): fix it; that is not a question.
-- think: a visible change that needs working out before the edits, so it gets thinking time: the cause isn't obvious
-  (it looks wrong but you can't see why from the map), it spans several elements or a drawn area or arrow, or the
-  owner says an earlier attempt didn't work ("still wrong", "again", "that broke it"; see "Notes so far"). Use it
-  when you would otherwise guess; plain changes stay quick. Never do a think part yourself here; it is done
-  separately.
-- options: the owner asks for choices ("options", "try some", "which"), or a big matter of taste with several good
-  answers (a whole new look for something).
+Split the note into parts: one per separate ask; asks about the same element or area are one part; at most 5. Kinds:
+- change: anything visible to change on the page now: style, spacing, size, alignment, position, wording, adding,
+  removing or repeating elements, placeholder content, a ready-made behavior, undoing or bringing back earlier notes
+  ("undo the colour change"), a taste remark ("a bit warmer"), a problem they point out ("looks broken", "still
+  wrong"), or a question whether something looks right ("is this aligned?": judged, and changed if it isn't).
+- options: they ask for choices ("options", "try some", "which"), or a big matter of taste with several good answers.
 - screen: a new screen or panel that doesn't exist yet.
-- background: interaction work no ready-made behavior covers (custom animation choreography, multi-step flows, new
-  kinds of widget).
-- function: anything about what the app does, not how it looks: something that doesn't work (a button does
-  nothing, an error, a wrong count or missing data, saving fails), new real behaviour or data, or a functional or
-  usage point inside design feedback ("…possibly with actions to fix the issues it finds"). It is only noted, for
-  proper work later: never work on it or mock up a fix. The plan line IS the note: one line, specific enough to act
-  on later without asking (name the thing on screen and what it should do or what goes wrong). A note with a
-  visible change too gets both: e.g. "this shouldn't be in my list of cards, it should be the last item in the
-  sidebar, maybe with actions to fix the issues it finds" -> PART 1 quick | move the issues panel to the end of the
-  sidebar column; PART 2 function | the issues panel in the sidebar should offer actions that fix the issues it lists.
-  "Note it" (or "put it on the backlog") is function too.
-- review: a judgement question about what's on the page ("should this…", "is this right?", "does this make
-  sense?", "why is there…"): judge it, change it if it's clearly wrong, otherwise say briefly why it's fine. Only
-  for a question, never for a problem stated (that's quick). A question whether something works or its data is
-  right ("is the count broken?", "does this save?") is function: noted, checked later. Never do a review part yourself here; it is
-  thought through separately.
-- answer: a question that wants information or an opinion, not a change ("what font is this?", "how would sorting
-  work?", "what else could go here?"). It is answered, with changes offered for the owner to choose; the page
-  doesn't change. Never do it yourself here.
-- prefer: a standing instruction about how you work with the owner, not about the page ("stop explaining unless
-  you need me", "always tell me the percentage", "use British spelling"). The plan line is the instruction in a few
-  words; it is kept and applies to every later note. To drop one they gave before: "drop: <it>".
-- ack: a reaction with nothing to do ("nice", "much better", "ok"). Nothing changes.
-- Undo and redo in words ("undo the colour change", "bring back the glow"): a quick part with an undo or redo edit
-  naming the notes (ids from "Notes so far"; one marked [taken back] can be brought back).
-- ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question; when there are a
-  few clear answers, add them after it, each after " :: " (e.g. "Which one should go? :: the toolbar button :: the
-  nav link"). The owner's answer comes back as a new note with your question and their original note.
+- background: interaction work no ready-made behavior covers (custom animation, multi-step flows, new kinds of widget).
+- function: anything about what the app does, not how it looks: something that doesn't work, real behaviour or data,
+  how fast it is, remembering a place or a choice, saving, what happens when something is used, or a usage point
+  inside design feedback. It is only noted for later (a build note), never mocked up. Its text IS the note: one line,
+  specific enough to act on later without asking. A note with a visible change too gets both parts. "Note it" or "put
+  it on the backlog" is function too.
+- answer: a question that wants information or an opinion, not a change ("what font is this?"). Nothing changes.
+- ask: you can't tell what they want. The text is one short question; with a few clear answers, add each after " :: ".
+- prefer: a standing instruction about how you work with them ("stop explaining unless you need me"); the text is
+  the instruction in their words. To remove one they gave before, the text starts with "drop:".
+- ack: a reaction with nothing to do ("nice", "ok").
 
-Then the work, under END:
-- the edits for every quick part, one per line, in order;
-- only if the note is a single part of kind options or screen, do it here:
-  options: a line OPTION A <short name>, its edits, then OPTION B, OPTION C (each set stands alone);
-  screen: a line SCREEN #/<route> <menu label>, then insert edits with "ref":"@screen" (into the new screen) building
-  it top to bottom, a section per insert, using the app's classes; plus a link edit for whatever opens it;
-- nothing for any other part: those are done separately, at the same time.
+Answer with only this JSON, no other text:
+{"parts": [{"kind": "<kind>", "text": "<one short line for the owner: what will happen>",
+            "marked": ["A"],
+            "target": [{"what": "<what will actually change, as you see it (often the marked thing; for a mark round a
+                         whole area, the element inside it that changes)>", "selector": "<from the map, or ''>"}],
+            "refers_to": [{"what": "<what it should match or behave like, or anything else it points to>",
+                           "selector": "<from the map, or ''>"}],
+            "work": "align|move|spacing|size|style|text|add|remove|scroll|undo|judge|other",
+            "done_when": "<what must be true, measurably, when it's done: only what the note asks, in its terms ('the card
+                          list's gap under the header equals the sidebar's, at rest and scrolled'); never a number or a
+                          target the owner didn't give>"}]}
+"marked", "target", "refers_to", "work" and "done_when" only for change parts."""
+
+
+IDENTIFY = ("Answer in four labelled parts:\n"
+            "THING: what do you think is the thing they are talking about? Look closely at the close-ups and at what is "
+            "drawn in each. List the candidates: the things at their spots that their words could mean, quoting the "
+            "entries; when they give numbers or places (\"2 lines\", \"1 on the left\"), count each candidate there. Then "
+            "say which candidate fits all their words and numbers. What is between two things they marked is in the "
+            "close-up of where they meet. When they ask for something to be added, the thing is the place where it "
+            "should go (often empty now) and what it should match, not something already there.\n"
+            "SHORT: that thing in a few words a person would use (\"the double divider between the search box and CARDS\").\n"
+            "POINT: the numbered entries that are that thing (\"B|A.1, B|A.2\").\n"
+            "WRONG: what is wrong with it, according to what they asked (if they ask for something new rather than point "
+            "out a problem: what they want of it). One or two short lines.")
+
+
+RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
 
 Edits, each a JSON object on its own line:
 {"op":"token","name":"--x","value":"..."}                 change a theme token (preferred: the whole app follows)
 {"op":"css","rule":"<selector> { ... }"}                     a CSS rule written with the tokens
 {"op":"move","sel":"<what>","where":"before|after|into|start","ref":"<where>"}
 {"op":"text","sel":"<what>","text":"<new text>"}
-{"op":"insert","where":"before|after|into|start","ref":"<where>","html":"<markup>"}
+{"op":"insert","where":"before|after|into|start","ref":"<where>","html":"<markup>"}   into the first match of ref;
+    add "each":true to put it into every match (each row of a list gets its own copy)
 {"op":"attr","sel":"<what>","name":"<attribute>","value":"<value>"}
 {"op":"repeat","sel":"<the list's items>","n":8,"fill":{"<part>":["text 1","text 2"],"img@src":["url 1","url 2"]}}
     one per list: the list ends up with n items (copies of its first), and fill sets each item's parts in order, one value
@@ -143,17 +154,12 @@ element's own style="...", a css edit for those properties needs !important. Do 
 visible and clickable; it is a mockup."""
 
 PART_RULES = {
-    "think": "Do only this part now, and work it out first: look at the map, the marks and what the earlier notes "
-             "already tried; find the real cause (which rule, element or size holds it; what an earlier edit left "
-             "behind) and fix that, undoing or overriding an earlier edit that caused it. Your FIRST line is WHY <one "
-             "sentence: the cause and the fix>. Then the edits. No plan, no END.",
-    "review": "The owner asked a question about this: judge it. Think it through: is what they pointed at right for "
-              "this app and its users, and if not, what should be there instead? Your FIRST line must be WHY <your judgement in "
-              "one plain sentence: what you are changing, or why it is fine as it is>. Then the edits that "
-              "carry it out (none if it is fine). No plan, no END.",
     "options": "Do only this part now: give 3 choices. A line OPTION A <short name>, its edits, then OPTION B and OPTION "
                "C (more when the owner asks for a range); each set stands alone and touches only what this part is "
-               "about, and the choices differ visibly in exactly what was asked. A size: set it and release what holds "
+               "about. Nothing changes outside the choices: every edit comes after an OPTION line, and what every choice "
+               "needs is repeated in each. The choices are different answers to exactly what was asked (\"where could "
+               "it go\": three different places; \"what colour\": three different colours), never one answer in "
+               "three styles. A size: set it and release what holds "
                "the element in the same rule (min-/max- size, flex grow/shrink, grid stretch: the map shows them). A share "
                "of a picture (\"the top 55% of the card\") comes from its own shape (the map's \"image WxH\"): its box "
                "gets aspect-ratio: W / (H x share), height: auto, min-height: 0, flex: none, and the img object-fit: "
@@ -169,11 +175,137 @@ NOTE_IT = re.compile(r"\blog (it|this)\b|\bnote (it|this) (down|for later)\b|\b(
                      r"(backlog|list)\b|\bfor later\b", re.I)
 
 
+ASKS_UNDO = re.compile(r"\b(undo|undid|revert|take (it |that |this )?back|taken back|put (it |that |this )?back|bring (it |that |this )?back|"
+                       r"redo|go back|as it was|before (the|my) )", re.I)
+
+
+def same_note(a, b):
+    """Two notes saying the same thing: most of their words in common."""
+    wa, wb = (set(re.findall(r"[a-z0-9]{3,}", x.lower())) for x in (a, b))
+    return bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.75
+
+
+CHANGE_RULES = ("Make this change now: the edits only, one JSON object per line, no plan, no END. Work from the measured "
+                "numbers, not from estimates. To match something, copy the values measured on it literally (10px, "
+                "rgb(11, 14, 22)): never a theme token unless the measurements show it resolves to that exact value. Where "
+                "the measurements name the rule behind a difference, fix that (change or override that rule for the same "
+                "elements) instead of adding something on top. For how something behaves while scrolling, copy the setup of "
+                "the element it should behave like (from \"while scrolling\" in the measurements: its own scroll area with a "
+                "set height, or a sticky container and its top offset); where the measurements give a recipe (\"To behave "
+                "like ...\"), apply it, then make the gaps match the measured numbers. Never make a whole column or "
+                "section sticky. "
+                "Change only what the note is about; leave everything else as it is.")
+
+VISUAL_FINAL = True    # the look-at-the-result check, on the headless browser's real screenshots (without one, a measured OK decides)
+
+FINAL_RULES = ("You check a change made for the owner's note by looking at the result. The pictures are real screenshots "
+               "of the screen now: picture 1 is the whole screen (the owner's marks outlined in magenta, lettered), then "
+               "the pictures listed above (close-ups: A is what changed, R1, R2 what it was compared with; and the screen "
+               "scrolled, when the note is about scrolling). Does the result look like what the owner asked (\"done "
+               "when\")? Judge only what was asked; ignore everything else. Exact sizes, gaps and line-ups (a few px) "
+               "can't be judged by eye: take them from the measurements when there are some (a gap is between elements' "
+               "own edges, their border or background, not the content inside them). Judge by the pictures how it looks: "
+               "colour, shape, centring, what shows and what's hidden, and anything the numbers miss. Judge scrolling "
+               "only by pictures of it scrolled, or the measurements of it scrolled. Answer one line: first what you see "
+               "that decides it (and why, when it isn't what was asked), then the verdict last: \"... -> MET\" or "
+               "\"... -> NOT MET\".")
+
+VERIFY_RULES = ("You just made a change for the owner's note. Below: what the note means, the measurements before and after "
+                "the change, what is drawn at the spots they pointed at before and after (lines, boxes, text: compare the "
+                "entries), and a picture of the screen after it. Judge by these (the gaps under the top bars as the owner "
+                "sees them in each state, the differences listed, what is drawn), not by estimating from the picture or from "
+                "where boxes sit (a box can sit apart from another and draw no line): is the note's "
+                "\"done_when\" now true in the numbers, and did nothing else move or break? Judge only against what the note "
+                "asks: never a number or a target the owner didn't give (\"the same\" is met by any equal values). First line OK or FIX <what is still wrong, "
+                "quoting the numbers>. After FIX, the edits that finish it, one JSON object per line. If the numbers moved "
+                "the right way, keep your approach and only adjust values; change the approach only if it made things worse.")
+
+
+def point_ids(text):
+    """The entries a look points at: "B|A.1, B|A.2", "A.12-A.18", "A.12–18" or "A.3, 4, 5" -> ["A.12", "A.13", ...]"""
+    out, label = [], None
+    for m in re.finditer(r"([A-Z](?:\|[A-Z])*)\.(\d+)(?:\s*(?:-|–|—|to)\s*(?:[A-Z](?:\|[A-Z])*\.)?(\d+))?|(?<![\w.])(\d+)(?![\w.])", text):
+        if m.group(1):
+            label, a = m.group(1), int(m.group(2))
+            b = int(m.group(3)) if m.group(3) else a
+            out += [f"{label}.{i}" for i in range(a, min(b, a + 40) + 1)]
+        elif label:                                            # a bare number after one with a letter: same close-up
+            out.append(f"{label}.{m.group(4)}")
+    return out
+
+
+def thing_of(entry):
+    """Which thing an entry of "what is drawn" is, for telling whether two looks mean the same: the element, and for a
+    line which way it runs (the same border listed in two close-ups, or any of seven alike drag dots, is one thing; a
+    panel's side border and its bottom border are not)."""
+    el = re.search(r'border of (\S+)|scrollbar of (\S+)|::\w+ of (\S+)|(?:picture|graphic) (\S+)|, in (\S+?)\)$|^(\S+?)(?: "[^"]*")?: a box', entry)
+    if not el:
+        return None
+    name = next(g for g in el.groups() if g)
+    way = re.match(r"(vertical|horizontal) line", entry)
+    return (way.group(1) + " " if way else "") + name
+
+
+def spots_text(zoom):
+    """What is drawn at each spot the owner pointed at, as one text (from the headless browser's close-ups)."""
+    return "\n\n".join(f"[{z.get('label')}: {str(z.get('what') or '')[:90]}]\n{z.get('drawn')}" for z in zoom or [] if z.get("drawn"))[:5000]
+
+
+def view_of(v):
+    """The owner's screen as their page reported it (window size, scroll, lists scrolled, option), cleaned. -> dict"""
+    if not isinstance(v, dict):
+        return {}
+    num = lambda x, lo, hi: max(lo, min(hi, int(x))) if isinstance(x, (int, float)) else None
+    out = {"route": str(v.get("route") or "#/")[:100], "w": num(v.get("w"), 320, 4000), "h": num(v.get("h"), 240, 3000),
+           "scroll": num(v.get("scroll"), 0, 10 ** 6) or 0, "opt": str(v.get("opt") or "none")[:80],
+           "scrollers": [{"sel": str(x.get("sel") or "")[:200], "top": num(x.get("top"), 0, 10 ** 6) or 0,
+                          "left": num(x.get("left"), 0, 10 ** 6) or 0}
+                         for x in (v.get("scrollers") if isinstance(v.get("scrollers"), list) else [])[:8] if isinstance(x, dict)]}
+    return {k: x for k, x in out.items() if x is not None}
+
+
+def with_image(n, text):
+    """A note's message to the model, with its pictures: the whole screen (marks outlined and lettered), then a sharp
+    close-up of each mark, where details too fine for the whole screen (a 1 px line, a border, a few px) show."""
+    if not n.get("image"):
+        return text
+    zoom = [z for z in n.get("zoom") or [] if str(z.get("image") or "").startswith("data:image/")]
+    legend = ("\n\nPictures: 1 = the whole screen, the marks outlined in magenta and lettered; then a close-up of each "
+              "spot they pointed at, without the outline: " + "; ".join(f"{i} = {z.get('label')}: {str(z.get('what') or '')[:90]}"
+                                                       for i, z in enumerate(zoom, 2)) + ".") if zoom else ""
+    return ([{"type": "text", "text": text + legend}, {"type": "image_url", "image_url": {"url": n["image"]}}]
+            + [{"type": "image_url", "image_url": {"url": z["image"]}} for z in zoom])
+
+
 def kenv():
     """The environment for the hermes CLI: ~/.local/bin on the PATH, the default board."""
     env = dict(os.environ, PATH=f"{HOME}/.local/bin:" + os.environ.get("PATH", ""))
     env.pop("HERMES_KANBAN_BOARD", None)
     return env
+
+
+NOT_A_NOTE = ("The mockup already carries every visual change into the build, so a look, layout, placement, "
+              "spacing, alignment or wording is never a note, even when the owner asked for it. A note is only what "
+              "the mockup can't show: what happens when something is used (clicks, saving, data, search results, "
+              "what a popup does), how the owner uses the app or moves through it, and how it should behave over "
+              "time (while scrolling, as things change, how fast it should feel). Never an instruction to you about "
+              "how to work, nothing about you or the notes list itself, and never something already on the list "
+              "(open or done) in other words.")
+
+NOTE_RULES = ("You check one message the owner sent their app's designer for what is worth keeping for later work: "
+              "what something should do or how it should work (function), how they use the app or move through it "
+              "(usage), how it should behave or feel (feel: \"should feel instant\", \"should keep my place\"). " + NOT_A_NOTE +
+              " Only what they said or clearly meant. Answer only lines NOTE <function|usage|feel> | <one specific line, "
+              "enough to act on later without asking>; nothing worth keeping (most messages): a single line NONE.")
+
+SWEEP_RULES = ("You read every message the owner sent the designer in this design round, with what each one became. "
+               "Find what is worth keeping for later work and is not on their notes list yet: what something should do "
+               "or how it should work (function), how they use it or move through the app (usage), how it should behave "
+               "or feel (feel). " + NOT_A_NOTE + " Skip questions, reactions, undos, complaints that a change didn't "
+               "work, and messages marked [taken back]. Only what they said or clearly meant; merge what several "
+               "messages say into one note; few notes is normal. One line each, specific enough to act on later "
+               "without asking:\nNOTE <function|usage|feel> | <the note> | <the message ids it came from>\n"
+               "Nothing new: a single line NONE.")
 
 
 UNSAFE_HTML = re.compile(r"<\s*(script|iframe|object|embed|link|meta|base)\b|javascript:|\son[a-z]+\s*=", re.I)
@@ -249,7 +381,7 @@ def check_op(op):
     if k in ("undo", "redo") and not (isinstance(op["notes"], list) and all(re.fullmatch(r"n\d+", str(n)) for n in op["notes"])):
         raise ValueError("undo needs note ids")
     if op.get("on") is not None and not re.fullmatch(r"#/[A-Za-z0-9_/-]*", str(op["on"])):
-        raise ValueError("bad on")
+        op.pop("on")                # a route with an item in it (one deck's page): the edit applies on every screen
     return op
 
 
@@ -580,7 +712,9 @@ def stream_lines(mc, messages, session, max_tokens=3000, thinking=False):
             said = True
             yield kind, val
     if thinking and not said:
-        for kind, val in _stream(mc, messages, session, 3000, False):
+        nudge = messages + [{"role": "user", "content": "You used all your thinking time without answering. Answer now, "
+                             "from what you can see, in exactly the format asked above (no plan, no PART lines)."}]
+        for kind, val in _stream(mc, nudge, session, 3000, False):
             if kind == "usage":
                 usage = {k: (usage.get(k) or 0) + (val.get(k) or 0) for k in ("prompt_tokens", "completion_tokens",
                                                                                 "prompt_cache_hit_tokens")}
@@ -622,6 +756,79 @@ def _stream(mc, messages, session, max_tokens, thinking):
     yield "usage", usage or {}
 
 
+
+def find_chrome():
+    """A Chromium for the design view's own headless browser: Hermes' (its browser tool installs one), or the system's."""
+    found = sorted(HOME.glob(".hermes/tools/chromium-*/chrome-linux64/chrome"))
+    return str(found[-1]) if found else next(filter(None, (shutil.which(c) for c in ("chromium", "chromium-browser", "google-chrome"))), None)
+
+
+class Mirror:
+    """The design view's eyes: one headless Chromium beside this server (design-view/mirror.js), kept running and showing
+    the app as the owner has it (screen, window size, scroll, option, the edits so far), so every picture is a real
+    screenshot, pixel-true and taken in a moment. Nothing is saved. Started on first use, and again if it stops; without
+    node or a Chromium, the owner's page draws the pictures instead."""
+
+    def __init__(self, host, port):
+        self.base, self.chrome, self.node = f"http://{host}:{port}", find_chrome(), shutil.which("node")
+        self.ok = bool(self.chrome and self.node and (ASSETS / "mirror.js").is_file())
+        self.proc, self.lock, self.wait, self.n = None, threading.Lock(), {}, 0
+
+    def alive(self):
+        return bool(self.proc and self.proc.poll() is None)
+
+    def stop(self):
+        """Shut it down (the server is stopping): it takes its Chromium and its temporary profile with it."""
+        if self.alive():
+            try:
+                self.proc.stdin.close()
+                self.proc.wait(5)
+            except (OSError, subprocess.TimeoutExpired):
+                self.proc.kill()
+
+    def _up(self):
+        if self.proc and self.proc.poll() is None:
+            return self.proc
+        self.proc = subprocess.Popen([self.node, str(ASSETS / "mirror.js"), self.chrome, self.base], stdin=subprocess.PIPE,
+                                     stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1)
+        threading.Thread(target=self._read, args=(self.proc,), daemon=True).start()
+        return self.proc
+
+    def _read(self, proc):
+        for line in proc.stdout:
+            try:
+                m = json.loads(line)
+            except ValueError:
+                continue
+            w = self.wait.get(m.get("id"))
+            if w:
+                w[1] = m
+                w[0].set()
+
+    def call(self, cmd, timeout=25.0, wait=True, **args):
+        """One request (see mirror.js). -> its answer, or None (not running, or no answer in time)."""
+        if not self.ok:
+            return None
+        holder = [threading.Event(), None]
+        with self.lock:
+            self.n += 1
+            rid = self.n
+            if wait:
+                self.wait[rid] = holder
+            try:
+                proc = self._up()
+                proc.stdin.write(json.dumps({"id": rid, "cmd": cmd, **args}) + "\n")
+                proc.stdin.flush()
+            except OSError:
+                self.proc = None
+                self.wait.pop(rid, None)
+                return None
+        if not wait:
+            return None
+        holder[0].wait(timeout)
+        self.wait.pop(rid, None)
+        return holder[1]
+
 class App:
     def __init__(self, a):
         self.a = a
@@ -645,9 +852,19 @@ class App:
         threading.Thread(target=self.watch_app, daemon=True).start()
         self.build = {}
         self.api_seen, self.api_lock = {}, threading.Lock()
-        self.api_log = []                   # the last 40 API calls: what the page saw, kept with a function note
-        # The running list: vault/design/function-notes.md (a test copy keeps its own, inside its layer).
-        self.notes_page = (self.layer.root if a.no_cards else self.layer.root.parent) / "function-notes.md"
+        self.api_log = []                   # the last 40 API calls: what the page saw, kept with a build note
+        self.page_wait = {}                 # a measure or picture request to the owner's page -> [event, result]
+        self.page_seen = 0.0                # when an open page last reported in (maps, reports, replies)
+        bind = getattr(a, "bind", "")
+        self.mirror = Mirror("127.0.0.1" if bind in ("0.0.0.0", "", "::") else bind, getattr(a, "port", 0))
+        self.last_view = {}                 # the owner's screen as last seen (window size, scroll, option)
+        self.app_v = 0                      # counts the app's own changes: the headless browser then reloads too
+        if self.mirror.ok:                  # the headless browser starts with the server (once it's serving) and stays up
+            threading.Timer(2.0, lambda: self.mirror.call("follow", wait=False, view={"route": "#/", "key": self.mirror_key()})).start()
+            threading.Thread(target=self.keep_mirror_current, daemon=True).start()
+        self.recent = {}                    # the last 20 notes as sent (with their picture), for "try again"
+        # The running list: vault/design/build-notes.md (a test copy keeps its own, inside its layer).
+        self.notes_page = (self.layer.root if a.no_cards else self.layer.root.parent) / "build-notes.md"
         threading.Thread(target=self.watch_build, daemon=True).start()
 
     # ---- the knowledge pack ------------------------------------------------------------------------------------
@@ -681,7 +898,15 @@ class App:
             prefs = []
         standing = ("\n\n## The owner's standing instructions (keep to these in every answer and edit)\n"
                     + "\n".join(f"- {x}" for x in prefs)) if prefs else ""
-        return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + standing + self.api_pack() + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
+        try:
+            open_ = fnotes.items(self.notes_page)
+        except (OSError, SystemExit):
+            open_ = []
+        fn = ("\n\n## The owner's build notes\nEvery function part you plan is saved, as you plan it, to the owner's "
+              "build notes (vault/design/build-notes.md; the toolbar's 🔧 button lists them); the Manager plans them "
+              "with the owner later. You can't read more of it or change it here. Open now:\n"
+              + ("\n".join(f"- {i['id']} ({i['kind']}): {i['note'][:160]}" for i in open_[-15:]) or "(none)"))
+        return (RULES.replace("{{EXTRA_BEHAVIORS}}", extra) + standing + fn + self.api_pack() + "\n\n## Design brief\n" + brief + "\n\n## Agreed so far\n" + agreed +
                 "\n\n## App theme tokens\n" + self.tokens() + "\n\n## App component classes\n" + self.classes() +
                 "\n\n## The design layer so far (edits on top of the app)\n" + self.layer.summary())
 
@@ -709,11 +934,16 @@ class App:
                         f'{", ".join((m.get("inside") or [])[:12]) or "-"}')
             if m.get("kind") == "arrow":
                 return f'- an arrow the owner drew from {m.get("from")} to {m.get("to")} (usually: move the first there)'
-            return f'- {m.get("sel")}\n  html: {(m.get("html") or "")[:600]}\n  styles: {m.get("styles") or ""}'
-        marks = "\n".join(mark(m) for m in n.get("marks") or []) or "(none)"
+            return (f'- {m.get("sel")}\n  html: {(m.get("html") or "")[:600]}\n  styles: {m.get("styles") or ""}'
+                    + (f'\n  measured: {m.get("facts")}' if m.get("facts") else ""))
+        marks = "\n".join("- " + chr(65 + i) + ": " + mark(m)[2:] for i, m in enumerate(n.get("marks") or [])) or "(none)"
+        if n.get("image"):
+            marks += "\n(The picture with this note shows these marks outlined in magenta, lettered as above.)"
         hint = ""
         if not undo and not redo:
-            prev = [h for h in self.layer.history if h["id"] != n["id"] and h.get("verdict") not in ("discard", "pick", "prefer", "answer")][-1:]
+            back = {u["note"] for u in self.layer.undone}       # a note the owner took back isn't one to follow up
+            prev = [h for h in self.layer.history if h["id"] != n["id"] and h["id"] not in back
+                    and h.get("verdict") not in ("discard", "pick", "prefer", "answer")][-1:]
             mine = {str(m.get("sel") or "") for m in n.get("marks") or []} - {""}
             if prev:
                 same = mine & {str(x) for x in prev[0].get("marks") or []}
@@ -726,13 +956,13 @@ class App:
                 elif same or retry:
                     hint = (f"\n\nThis follows {prev[0]['id']} ({(prev[0].get('plan') or '')[:120]})"
                             + (" on the same element" if same else "") + (": the owner says it isn't right yet" if retry else "")
-                            + ". Plan it as think unless the fix is plain.")
+                            + ".")
             wide = [m for m in n.get("marks") or [] if m.get("kind") == "arrow"
                     or (m.get("kind") == "area" and len(m.get("inside") or []) >= 3)]
             if wide:
                 hint += "\n\nThe owner drew " + ("an arrow" if wide[0].get("kind") == "arrow" else "an area over several elements") + ": a change to it usually needs working out (think)."
             if re.search(r"\bthink\b", n["text"], re.I):
-                hint += "\n\nThe owner asked you to think: plan a change as think, a question as review."
+                hint += "\n\nThe owner asked you to think it through."
             if NOTE_IT.search(n["text"]):
                 hint += "\n\nThe owner wants this noted for later: plan it as a function part."
         # The page's latest map of this screen, not the one from when the note was sent: a note that waited in the
@@ -754,28 +984,39 @@ class App:
             self.status["queued"] = self.notes.qsize()
             self.status["busy"] = n["id"]
             try:
+                if not n.get("image"):
+                    got = self.look(n, zoom=True)
+                    n["image"], n["zoom"] = got.get("image"), got.get("zoom") or []
                 (self.run_answer if n.get("ask") else self.run_note)(n)
             except Exception as e:                                      # a failed note never stops the worker
                 self.events.send("error", note=n["id"], message=f"{type(e).__name__}: {str(e)[:200]}")
             self.status["busy"] = None
 
     def run_note(self, n):
-        """One note: a single call that plans first (its parts, each with a kind) and then streams the edits for the
-        quick parts. The moment the plan is in, every other part starts at the same time on its own: options and new
-        screens as their own calls, background work on the deep path, function points noted for later. Then the
-        check: edits the owner's page says didn't take (it names what holds them; every option choice is checked in
-        a hidden frame) get a repair call, and a second only when the first fixed some. One note, one record, one "done"."""
+        """One note, in the design view's one flow. A picture of the owner's screen comes with it (their marks outlined).
+        1. The plan (one fast call, no thinking): the note's parts, and for each change what it is about (the marked
+           element, what else it refers to, the kind of work).
+        2. Each change part: the owner's page measures the elements involved (inspect: exact numbers, what differs and
+           the rule behind it); the change is made from those numbers; then checked up to twice (measured again, a new
+           picture, the edits that didn't take and why: OK, or FIX with the edits that finish it); then a final check of
+           the before and after pictures: DONE, or ISSUE, which is put to the owner like a question (more words, try
+           again with thinking, or undo).
+        Options, new screens, background work, answers, questions, standing instructions and build notes keep their own
+        paths, in parallel. One note, one record, one "done"."""
         if self.layer.frozen:
             self.events.send("done", note=n["id"], verdict="frozen", plan="The mockup is frozen while it's built.", s=0)
             return
         mc = model_config()
         if not mc:
             raise RuntimeError("no model config/key for the design view")
+        n["think"] = bool(n.get("think") or re.search(r"\bthink\b", n["text"], re.I))
+        self.recent[n["id"]] = n
+        for k in list(self.recent)[:-20]:
+            self.recent.pop(k, None)
         rec = self.layer.new_note(n["text"], n.get("marks"), n.get("route"), nid=n["id"])
         t0 = time.monotonic()
         self.events.send("doing", note=n["id"], text=n["text"][:140])
-        msgs = [{"role": "system", "content": self.pack()}, {"role": "user", "content": self.ask(n)}]
-        said, main_ids, threads, cards, noted = [], [], [], [], []
+        threads, cards, noted, finals = [], [], [], []
         tally = {"edits": 0, "refused": [], "usage": []}
         tlock = threading.Lock()
 
@@ -785,69 +1026,52 @@ class App:
                 tally["refused"] += r
                 tally["usage"].append(u or {})
 
-        def on_plan(parts):
-            rec["parts"] = [{k: p[k] for k in ("k", "kind", "text")} for p in parts]
-            rec["verdict"] = parts[0]["kind"] if len(parts) == 1 else "mixed"
-            rec["plan"] = parts[0]["text"] if len(parts) == 1 else " · ".join(f"{p['kind']}: {p['text']}" for p in parts)
-            el = round(time.monotonic() - t0, 2)
-            self.events.send("plan", note=n["id"], parts=rec["parts"], s=el)
-            self.events.send("verdict", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], s=el)
-            inline = len(parts) == 1 and parts[0]["kind"] in ("options", "screen")
-            for p in parts:
-                if p["kind"] == "quick" or inline:
-                    continue
-                if p["kind"] == "function":                    # noted for later, on the spot: no call, no wait
-                    self.note_function(rec, n, p, t0, cards, noted)
-                elif p["kind"] == "ack":
-                    self.events.send("part", note=n["id"], k=p["k"], kind="ack", state="done", text="Noted",
-                                     s=round(time.monotonic() - t0, 2))
-                elif p["kind"] == "prefer":
-                    said_ = self.prefer(p["text"])
-                    self.events.send("part", note=n["id"], k=p["k"], kind="prefer", state="done", text=said_,
-                                     s=round(time.monotonic() - t0, 2))
-                elif p["kind"] == "ask":
-                    self.ask_owner(n, p, p["text"], t0)
-                else:
-                    th = threading.Thread(target=self.run_part, args=(mc, rec, n, t0, p, parts, add_up, cards), daemon=True)
-                    th.start()
-                    threads.append(th)
-
-        e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}"), rec, n, t0, said=said,
-                                  on_plan=on_plan, got=main_ids)
-        add_up(e, r, u)
-        if main_ids:
-            # The check: the owner's open page measured each quick edit. Edits that matched nothing on this screen,
-            # or didn't come out as asked (and what holds them), get a repair call in the same note; a second one only
-            # when the first fixed some but not all.
-            ids, prev = main_ids, None
-            for _ in range(2):
-                bad = self.not_landed(ids, n.get("route") or "#/")
-                if not bad or (prev is not None and len(bad) >= prev):
-                    break
-                self.events.send("part", note=n["id"], k=0, kind="check", state="fixing",
-                                 text=f"{len(bad)} edit(s) didn't take; fixing", s=round(time.monotonic() - t0, 2))
-                fix = msgs + [{"role": "assistant", "content": "\n".join(said)},
-                              {"role": "user", "content": "Checked on the owner's page, these edits didn't take effect:\n" +
-                               why_lines(bad) + "\n" + REPAIR_RULES + " Edits only, no plan."}]
-                new = []
-                e, r, u, _ = self.consume(stream_lines(mc, fix, session=f"dv-{self.project}"), rec, n, t0, mode="edits", got=new)
-                add_up(e, r, u)
-                rec["repaired"] = rec.get("repaired", 0) + len(bad)
-                ids, prev = new, len(bad)
-                if not new:
-                    break
-        if n["id"] in self.layer.options:                     # the main call's own option set (a note that is only options)
-            e, r = self.check_options(mc, msgs, rec, n, t0, n["id"])
-            add_up(e, r, {})
+        parts, u = self.plan(mc, n)
+        add_up(0, [], u)
+        rec["parts"] = [{k: p[k] for k in ("k", "kind", "text")} for p in parts]
+        rec["verdict"] = parts[0]["kind"] if len(parts) == 1 else "mixed"
+        rec["plan"] = parts[0]["text"] if len(parts) == 1 else " · ".join(f"{p['kind']}: {p['text']}" for p in parts)
+        el = round(time.monotonic() - t0, 2)
+        self.events.send("plan", note=n["id"], parts=rec["parts"], s=el)
+        self.events.send("verdict", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], s=el)
+        th = threading.Thread(target=self.note_check, args=(mc, rec, n, parts, noted), daemon=True)   # build notes
+        th.start()
+        threads.append(th)
+        changes = []
+        for p in parts:
+            if p["kind"] == "change":
+                changes.append(p)
+            elif p["kind"] == "function":                      # a build note, on the spot: no call, no wait
+                self.note_function(rec, n, p, t0, cards, noted)
+            elif p["kind"] == "ack":
+                self.events.send("part", note=n["id"], k=p["k"], kind="ack", state="done", text="Noted", s=round(time.monotonic() - t0, 2))
+            elif p["kind"] == "prefer":
+                said_as = n["text"].strip() if re.match(r"\s*drop\s*:", n["text"], re.I) else p["text"]   # their own "drop:"
+                self.events.send("part", note=n["id"], k=p["k"], kind="prefer", state="done", text=self.prefer(said_as),
+                                 s=round(time.monotonic() - t0, 2))
+            elif p["kind"] == "ask":
+                self.ask_owner(n, p, p["text"], t0)
+            else:
+                th = threading.Thread(target=self.run_part, args=(mc, rec, n, t0, p, parts, add_up, cards), daemon=True)
+                th.start()
+                threads.append(th)
+        for p in changes:                                      # one at a time: they share the owner's page
+            try:
+                finals.append(self.do_change(mc, rec, n, t0, p, parts, add_up))
+            except Exception as ex:
+                finals.append(f"ISSUE {type(ex).__name__}: {str(ex)[:120]}")
         for th in threads:
             th.join(timeout=300)
         usage = {k: sum((x.get(k) or 0) for x in tally["usage"]) for k in ("prompt_tokens", "completion_tokens", "prompt_cache_hit_tokens")}
         rec["s"] = round(time.monotonic() - t0, 2)
         rec["tokens"] = {"in": usage["prompt_tokens"], "cached": usage["prompt_cache_hit_tokens"], "out": usage["completion_tokens"]}
         rec["refused"] = tally["refused"]
-        if not tally["edits"] and rec.get("verdict") in (None, "quick"):
-            rec["said"] = "\n".join(said)[:2000]                    # a quick note that changed nothing: keep why
-        rec["verdict"] = rec["verdict"] or "quick"
+        if finals:
+            rec["final"] = finals
+            issue = next((f for f in finals if f.upper().startswith("ISSUE")), None)
+            rec["plan"] = ("⚠ " + issue[5:].strip(" :")) if issue else ("✓ " + " · ".join(f[4:].strip(" :") for f in finals))
+            if issue:
+                self.issue(n, issue[5:].strip(" :"))
         if cards:
             rec["cards"] = cards
         if noted:
@@ -856,6 +1080,324 @@ class App:
         self.events.send("done", note=n["id"], verdict=rec["verdict"], plan=rec["plan"], edits=tally["edits"],
                          refused=tally["refused"], card=cards[0] if len(cards) == 1 else None, cards=cards, noted=noted,
                          s=rec["s"], tokens=rec["tokens"])
+
+    def identify(self, mc, n, looks=3):
+        """What the owner means, worked out before anything is planned (their way of asking it): what is the thing
+        they're talking about, and what is wrong with it according to their note. It sees the whole screen, a close-up of
+        each spot they pointed at (a mark, the box they drew, where two marks meet) and, read from the page, exactly what
+        is drawn in each spot as numbered entries (lines, boxes, text, icons, where they sit: the model reads that far
+        better than fine pixels), and points at the entries it means.
+        One look can still pick the wrong thing on an ambiguous note (n145: about 1 in 4), so it takes three looks at
+        once (no slower): when two point at the same thing, that's what is meant; when they don't, it isn't clear, and
+        the owner is asked which one, with the candidates as answers.
+        -> {"thing", "short", "wrong"} | {"ask": [short, ...]} | {} (nothing pointed at)"""
+        zoom = n.get("zoom") or []
+        if not zoom or not n.get("image"):
+            return {}
+        t0, entries, blocks = time.monotonic(), {}, []
+        for i, z in enumerate(zoom, 2):
+            if not z.get("drawn"):
+                continue
+            head, *rest = str(z["drawn"]).split("\n")
+            for j, line in enumerate(rest, 1):
+                entries[f"{z.get('label')}.{j}"] = line
+            blocks.append(f"[picture {i}: {z.get('label')}, {str(z.get('what') or '')[:90]}]\n{head}\n"
+                          + "\n".join(f"{z.get('label')}.{j} {line}" for j, line in enumerate(rest, 1)))
+        intro = (f"The owner of a web app wrote this note about their screen: \"{n['text'][:1500]}\"\n"
+                 f"What they pointed at:\n" + "\n".join(f"- {chr(65 + i)}: " + ("a box they drew on the screen" if m.get("kind") == "area" else
+                                                      f"an arrow from {m.get('from')} to {m.get('to')}" if m.get("kind") == "arrow" else str(m.get("sel")))
+                                                      for i, m in enumerate(n.get("marks") or []))
+                 + ("\n\nWhat is drawn in each close-up, read from the page (exact; px from the close-up's top-left, before "
+                    "it was enlarged), as numbered entries:\n" + "\n\n".join(blocks) if blocks else ""))
+        msgs = [{"role": "user", "content": with_image(n, intro + "\n\n" + IDENTIFY)}]
+        done, arrived = threading.Condition(), []
+
+        def look():
+            try:
+                a = "\n".join(v for k, v in stream_lines(mc, msgs, session=f"dv-{self.project}-identify", max_tokens=900) if k == "line")
+            except Exception as e:                             # one look failing still leaves the others
+                a = ""
+                print(f"identify look failed: {type(e).__name__}: {str(e)[:120]}", flush=True)
+            with done:
+                arrived.append(a)
+                done.notify_all()
+
+        def read(a):
+            part = lambda name: (re.search(rf"\b{name}\W*(.*?)(?=\n\s*\W*(THING|SHORT|POINT|WRONG)\b|\Z)", a or "", re.S) or [None, ""])[1].strip()
+            key = frozenset(filter(None, (thing_of(entries[x]) for x in point_ids(part("POINT")) if x in entries)))
+            return {"thing": part("THING")[:1200], "short": part("SHORT")[:120], "wrong": part("WRONG")[:600], "key": key} \
+                if part("THING") or part("SHORT") else None
+        # Two looks agree when they point at some of the same thing, or name it in mostly the same words
+        words = lambda t: set(re.findall(r"[a-z]{3,}", t.lower())) - {"the", "and", "for", "with", "that", "this", "their"}
+        same = lambda a, b: bool(a["key"] & b["key"]) or \
+            len(words(a["short"]) & words(b["short"])) * 2 >= max(1, len(words(a["short"]) | words(b["short"])))
+
+        def agreed(reads):
+            backed = [sum(same(r, o) for o in reads if o is not r) for r in reads]
+            best = max(range(len(reads)), key=lambda i: backed[i]) if reads else None
+            return reads[best] if best is not None and backed[best] >= 1 else None
+        for _ in range(looks):
+            threading.Thread(target=look, daemon=True).start()
+        # As soon as two agree, that's it: a slow third look isn't waited for (one took 19 s). Without agreement after
+        # two, the third gets a few seconds more.
+        deadline, reads, got = time.monotonic() + 60, [], None
+        with done:
+            while True:
+                reads = [r for r in map(read, arrived) if r]
+                got = agreed(reads)
+                if got or len(arrived) >= looks or time.monotonic() > deadline:
+                    break
+                if len(arrived) >= 2:
+                    deadline = min(deadline, time.monotonic() + 3)
+                done.wait(max(0.05, deadline - time.monotonic()))
+        took = time.monotonic() - t0
+        if not reads:
+            return {}
+        if not got and len(reads) > 1:                         # they put it differently: same thing or not? (one short call)
+            got, groups = self.same_thing(mc, n, reads)
+            if not got and len(groups) > 1:
+                shorts = [g[0]["short"] for g in groups][:3]
+                print(f"identified {n.get('id', '-')} in {time.monotonic() - t0:.1f} s: it isn't clear, asking: {shorts}", flush=True)
+                return {"ask": shorts}
+        r = got or reads[0]
+        print(f"identified {n.get('id', '-')} in {took:.1f} s ({len(reads)} looks): {r['short']} / {r['wrong'][:150]}", flush=True)
+        return {k: r[k] for k in ("thing", "short", "wrong")}
+
+    def same_thing(self, mc, n, reads):
+        """Looks that put it differently: one short text call groups them by the thing on screen they mean. Two in one
+        group: that's what is meant. -> (the reading to go with or None, [groups of readings, biggest first])"""
+        listed = "\n".join(f"{i}. {r['short']}: {r['thing'][-400:]}" for i, r in enumerate(reads, 1))
+        out = " ".join(v for k, v in stream_lines(mc, [{"role": "user", "content":
+                       f"The owner's note: \"{n['text'][:600]}\"\nThree readings of what it is about:\n{listed}\n\n"
+                       "Which readings mean the same thing on the screen (the same element or the same spot, however they "
+                       "put it)? Answer one line: the groups, numbers joined by + and groups split by | (\"1+3 | 2\")."}],
+                       session=f"dv-{self.project}-identify", max_tokens=60) if k == "line")
+        groups, seen = [], set()
+        for g in re.findall(r"\d+(?:\s*\+\s*\d+)*", out):
+            idx = [int(x) - 1 for x in re.findall(r"\d+", g) if 0 < int(x) <= len(reads) and int(x) - 1 not in seen]
+            seen.update(idx)
+            if idx:
+                groups.append([reads[i] for i in idx])
+        groups += [[r] for i, r in enumerate(reads) if i not in seen]
+        groups.sort(key=len, reverse=True)
+        return (groups[0][0] if len(groups[0]) >= 2 else None), groups
+
+    def plan(self, mc, n):
+        """The note's parts, from the note and the picture (one fast call). Unreadable: one change part with the note."""
+        brief_p = HOME / "vault" / "design" / "brief.md"
+        brief = brief_p.read_text(encoding="utf-8", errors="replace")[:1500] if brief_p.exists() else ""
+        try:
+            prefs = json.loads((self.layer.root / "prefs.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            prefs = []
+        system = PLAN_RULES + ("\n\nThe owner's standing instructions:\n" + "\n".join(f"- {x}" for x in prefs) if prefs else "") \
+            + (f"\n\nDesign brief (short):\n{brief}" if brief else "")
+        out, usage = [], {}
+        got = self.identify(mc, n) if n.get("identify", True) else {}
+        if got.get("ask"):                                     # it isn't clear which thing they mean: ask, don't guess
+            n["seen"] = "asked: " + " | ".join(got["ask"])
+            return [{"k": 1, "kind": "ask", "text": "Which do you mean? :: " + " :: ".join(got["ask"])}], {}
+        n["seen"] = f"{got.get('short', '')}: {got.get('wrong', '')}".strip(": ")
+        meant = (f"\n\nWhat the owner means, worked out from the close-ups:\n- The thing they're talking about: {got['short']}. "
+                 f"{got['thing']}\n- What is wrong with it, by their note: {got['wrong']}\nNow: what needs a fix, and how? (the plan)"
+                 if got.get("thing") else "")
+        for k, v in stream_lines(mc, [{"role": "system", "content": system}, {"role": "user", "content": with_image(n, self.ask(n) + meant)}],
+                                 session=f"dv-{self.project}-plan", max_tokens=1500):
+            if k == "line":
+                out.append(v)
+            else:
+                usage = v
+        text = "\n".join(out)
+        m = re.search(r"\{.*\}", text, re.S)
+        try:
+            got = json.loads(m.group(0)) if m else {}
+        except ValueError:
+            got = {}
+        kinds = ("change", "options", "screen", "background", "function", "answer", "ask", "prefer", "ack")
+        parts = []
+        for i, q in enumerate((got.get("parts") or [])[:5], 1):
+            if isinstance(q, dict) and q.get("kind") in kinds:
+                parts.append({"k": i, "kind": q["kind"], "text": str(q.get("text") or "")[:300], "marked": q.get("marked") or [],
+                              "target": [r for r in q.get("target") or [] if isinstance(r, dict)][:3],
+                              "refers_to": [r for r in q.get("refers_to") or [] if isinstance(r, dict)][:4], "work": q.get("work") or "",
+                              "done_when": str(q.get("done_when") or "")[:300]})
+        return parts or [{"k": 1, "kind": "change", "text": n["text"][:200], "marked": [], "refers_to": [], "work": "other"}], usage
+
+    def look(self, n, close=None, scrolled=None, zoom=False):
+        """A real screenshot of the owner's screen as they had it for this note (the headless browser: same page, window
+        size, scroll and option, with the edits as they are now), their marks outlined and lettered; on request a sharp
+        close-up of each element in a spec, and the screen scrolled. The owner's page never draws one (it froze it for
+        seconds). Tried twice; without it the note still goes, on its words, marks and measurements. Each picture is
+        logged (journal): where it came from and how long it took. -> {"image", "close": [...], "scrolled": [...]} or {}"""
+        t = time.monotonic()
+        for _ in (1, 2):
+            got = self.mirror.call("shot", view=self.view_for(n), marks=n.get("marks") or [], close=close, scrolled=scrolled,
+                                   zoom=zoom)
+            if got and got.get("image"):
+                print(f"picture {n.get('id', '-')}: headless {got.get('ms')} ms, {len(got.get('zoom') or [])} of the marks, "
+                      f"{len(got.get('close') or [])} close-ups, "
+                      f"{len(got.get('scrolled') or [])} scrolled" + (f", not on screen: {got['missing']}" if got.get("missing") else ""), flush=True)
+                return got
+        print(f"picture {n.get('id', '-')}: NONE after {time.monotonic() - t:.1f} s ({(got or {}).get('error') or 'no answer'})", flush=True)
+        return {}
+
+    def view_for(self, n):
+        """The owner's screen for this note, for the headless browser: their view, the note's page, the edits as now."""
+        return dict(n.get("view") or self.last_view or {}, route=n.get("route") or "#/", key=self.mirror_key())
+
+    def mirror_key(self):
+        """What the headless browser's page is made of: the edits, the app's own files, the design view's scripts and the
+        approved behaviors. When it changes, the page is loaded fresh."""
+        try:
+            own = max((f.stat().st_mtime for d in (ASSETS, BEHAVIORS / "approved") if d.is_dir() for f in d.iterdir() if f.is_file()), default=0)
+        except OSError:
+            own = 0
+        return f"{self.layer.version}.{self.app_v}.{int(own)}"
+
+    def keep_mirror_current(self):
+        """While the headless browser is up, it follows every change (an edit, an undo, the app or the design view
+        updated) to the owner's last screen in the background, so the next picture is ready. Asleep (idle), it isn't
+        woken: it loads fresh when next needed."""
+        last = None
+        while True:
+            time.sleep(2.0)
+            try:
+                key = self.mirror_key()
+                if key != last and self.last_view and self.mirror.alive():
+                    self.mirror.call("follow", wait=False, view=dict(self.last_view, key=key))
+                last = key
+            except Exception:
+                pass
+
+    def measure(self, n, spec):
+        """The elements a change is about, measured exactly (inspect), in the headless browser showing the owner's
+        screen (nothing runs in the owner's page); without it, in the owner's own page. -> text ("" if nothing)"""
+        got = self.mirror.call("inspect", view=self.view_for(n), spec=spec)
+        if got and isinstance(got.get("value"), str):
+            print(f"measured {n.get('id', '-')}: headless {got.get('ms')} ms", flush=True)
+            return got["value"]
+        print(f"measured {n.get('id', '-')}: in the owner's page ({(got or {}).get('error') or 'headless browser unavailable'})", flush=True)
+        return self.page_call("inspect", spec=spec, route=n.get("route") or "#/") or ""
+
+    def page_call(self, what, timeout=6.0, **args):
+        """Ask the owner's open page (on the note's screen) to measure (inspect), when the headless browser can't."""
+        if time.time() - self.page_seen > 600:              # no page of the owner's open: nothing to ask
+            return None
+        req = f"{what}-{time.monotonic_ns()}"
+        ev = threading.Event()
+        self.page_wait[req] = [ev, None]
+        self.events.send("page-call", req=req, what=what, **args)
+        ev.wait(timeout)
+        return self.page_wait.pop(req, [None, None])[1]
+
+    def do_change(self, mc, rec, n, t0, p, parts, add_up):
+        """One change part: measured, made from the numbers, checked up to twice, then the final check.
+        -> "DONE <what changed>" or "ISSUE <what's wrong>"."""
+        route, think = n.get("route") or "#/", bool(n.get("think"))
+        stage = lambda text: self.events.send("stage", note=n["id"], k=p["k"], text=text, s=round(time.monotonic() - t0, 2))
+        letters = {chr(65 + i): m for i, m in enumerate(n.get("marks") or []) if isinstance(m, dict)}
+        marked = [letters[x] for x in p.get("marked") or [] if x in letters] or list(letters.values())
+        targets = [t for t in p.get("target") or [] if isinstance(t, dict) and (t.get("selector") or t.get("what"))]
+        spec = {"marked": [t.get("selector") or "" for t in targets] if targets else
+                          [m.get("sel") or m.get("from") for m in marked if m.get("sel") or m.get("from")],
+                "refers": [{"selector": r.get("selector") or "", "what": r.get("what") or ""} for r in p.get("refers_to") or []]}
+        meaning = json.dumps(dict({k: p.get(k) for k in ("text", "marked", "target", "refers_to", "work", "done_when")},
+                                  seen_at_the_marks=n.get("seen") or ""), ensure_ascii=False)
+        focus = "\n\nThe plan for this note:\n" + "\n".join(f"{q['k']}. {q['kind']}: {q['text']}" for q in parts) + f"\n\nThis part: {meaning}"
+        stage(f"understood: {p['text'][:90]} · measuring")
+        before = self.measure(n, spec) if (spec["marked"] or spec["refers"]) else ""
+        stage("changing" + (" (thinking)" if think else ""))
+        sysmsg = {"role": "system", "content": self.pack()}
+        call = lambda text, img, said=None, got=None, deep=False: self.consume(
+            stream_lines(mc, [sysmsg, {"role": "user", "content": with_image({"image": img}, text)}], session=f"dv-{self.project}-change",
+                         max_tokens=8000 if deep else 3000, thinking=deep), rec, n, t0, mode="edits", part=p, said=said, got=got)
+        e, r, u, _ = call(self.ask(n) + focus + (f"\n\nMeasured on the page now (exact):\n{before[:6000]}" if before else "")
+                          + "\n\n" + CHANGE_RULES, n.get("image"), deep=think)    # thinking, when asked for, goes here only
+        add_up(e, r, u)
+        after_img, ok, verdict = None, False, "FIX not checked"
+        drawn_before, drawn_after = spots_text(n.get("zoom")), ""
+        for rnd in (1, 2, 3):
+            if rnd == 3 and ok:
+                break
+            stage(f"checking (round {rnd})")
+            after = self.measure(n, spec) if before else ""
+            seen_now = self.look(n, zoom=bool(n.get("zoom")))
+            after_img, drawn_after = seen_now.get("image"), spots_text(seen_now.get("zoom"))
+            ids = [o["id"] for o in self.layer.ops if o.get("note") == n["id"]]
+            bad = self.not_landed(ids, route, wait=1.0)
+            said, new = [], []
+            vtext = (self.ask(n) + focus + (f"\n\nMeasured before the change:\n{before[:5000]}" if before else "")
+                     + (f"\n\nMeasured after the change:\n{after[:5000]}" if after else "")
+                     + (f"\n\nWhat is drawn at the spots they pointed at, before the change:\n{drawn_before}\n\nAnd now:\n{drawn_after}"
+                        if drawn_before and drawn_after else "")
+                     + (f"\n\nYour edits that didn't take (the page says why):\n{why_lines(bad)}\n{REPAIR_RULES}" if bad else "")
+                     + "\n\n" + VERIFY_RULES)
+            if rnd == 3:                                       # after a second fix: check it, no more edits
+                said = [v for k, v in stream_lines(mc, [sysmsg, {"role": "user", "content": with_image({"image": after_img or n.get("image")},
+                        vtext + " This is the last check: answer OK or FIX only, no edits.")}], session=f"dv-{self.project}-change",
+                        max_tokens=600) if k == "line"]
+            else:
+                e, r, u, _ = call(vtext, after_img or n.get("image"), said=said, got=new)
+                add_up(e, r, u)
+            verdict = next((x for x in said if not x.startswith("{")), "OK")
+            ok = verdict.upper().startswith("OK")
+            rec.setdefault("checks", []).append(f"{p['k']}.{rnd} {verdict[:160]}")
+            if ok or not new or rnd == 3:
+                break
+            after_img = None
+        if after_img is None:
+            after_img = self.look(n).get("image")
+        if not ok:                                             # the numbers still say no: never "done"
+            return "ISSUE " + re.sub(r"^FIX\W*", "", verdict)[:220]
+        if before and not (VISUAL_FINAL and self.mirror.ok):   # measured and confirmed: that decides, unless the final
+            return "DONE " + (re.sub(r"^OK\W*", "", verdict) or p["text"])[:180]   # check has real screenshots to look at
+        stage("final check: does it look like what you asked?")
+        scrolly = p.get("work") == "scroll" or re.search(r"scroll", f"{p['text']} {p.get('done_when') or ''}", re.I)
+        got = (self.look(n, close=spec, scrolled=spec if scrolly else None, zoom=bool(n.get("zoom"))) if self.mirror.ok
+               else {"image": after_img})
+        drawn_now = spots_text(got.get("zoom"))
+        met, said = self.final_check(mc, n, p, got.get("image") or after_img, got.get("close"), got.get("scrolled"),
+                                     (self.measure(n, spec) if before else "")
+                                     + (f"\n\nWhat is drawn at the spots they pointed at, before the change:\n{drawn_before}"
+                                        f"\n\nAnd now (compare the entries: what went, what's left, what's new):\n{drawn_now}"
+                                        if drawn_before and drawn_now else ""))
+        if met is False:
+            return "ISSUE " + ("it measures right but doesn't look it: " if before else "") + said
+        return "DONE " + (said if met else (re.sub(r"^OK\W*", "", verdict) or p["text"]))[:180]
+
+    def final_check(self, mc, n, p, after_img, close=None, scrolled=None, measured=""):
+        """The result against the ask, by eye: the screen now, a close-up of each element involved, and the screen
+        scrolled when the ask is about scrolling; with the exact measurements for sizes and gaps. -> (met, said)"""
+        pics = [{"type": "image_url", "image_url": {"url": after_img}}] if str(after_img or "").startswith("data:image/") else []
+        legend = []
+        for c in close or []:
+            if str(c.get("image") or "").startswith("data:image/"):
+                pics.append({"type": "image_url", "image_url": {"url": c["image"]}})
+                legend.append(f"picture {len(pics)}: close-up of {c.get('label')} = {str(c.get('what') or '')[:80]}")
+        for c in scrolled or []:
+            if str(c.get("image") or "").startswith("data:image/"):
+                pics.append({"type": "image_url", "image_url": {"url": c["image"]}})
+                legend.append(f"picture {len(pics)}: {str(c.get('label') or 'the screen scrolled')[:160]}")
+        if not pics:
+            return None, "no picture to look at"
+        text = (f"The owner's note: {n['text'][:1000]}\nThe change: {p['text']}\nDone when: {p.get('done_when') or p['text']}\n"
+                + ("\n".join(legend) + "\n" if legend else "")
+                + (f"\nMeasured on the screen now (exact):\n{measured[:5000]}\n" if measured else "") + "\n" + FINAL_RULES)
+        out = [v for k_, v in stream_lines(mc, [{"role": "user", "content": [{"type": "text", "text": text}] + pics}],
+                                           session=f"dv-{self.project}-final", max_tokens=400) if k_ == "line"]
+        said = " ".join(out).strip()
+        m = re.search(r"(.*?)\W*\b(NOT MET|MET)\W*$", said, re.I | re.S)          # the verdict comes last
+        m = m or re.match(r"\W*()(NOT MET|MET)\b", said, re.I)                        # (or first, the old way)
+        if not m:
+            return None, said[:220]
+        return m.group(2).upper() == "MET", (m.group(1).strip() or said)[:220]
+
+    def issue(self, n, what):
+        """A change that didn't come out: put to the owner like a question, with what they can do about it."""
+        self.pending[n["id"]] = {"question": what, "choices": [], "note": n["text"], "marks": n.get("marks") or [],
+                                 "route": n.get("route") or "#/", "issue": True}
+        self.events.send("question", note=n["id"], question="⚠ " + what, choices=[], about=n["text"][:200],
+                         actions=[{"label": "↻ Try again with thinking", "do": "retry"}, {"label": "✕ Undo this", "do": "undo"}])
 
     def run_answer(self, n):
         """A note sent as a question only (dv API "ask": the toolbar sends everything through the plan now, where a
@@ -868,7 +1410,7 @@ class App:
         rec["verdict"], t0 = "answer", time.monotonic()
         self.events.send("doing", note=n["id"], text=n["text"][:140])
         msgs = [{"role": "system", "content": self.pack().replace(RULES.split("\n\nEdits, each")[0], ANSWER_RULES)},
-                {"role": "user", "content": self.ask(n)}]
+                {"role": "user", "content": with_image(n, self.ask(n))}]
         ans, sugg, usage = self.answer_stream(mc, msgs, n, t0, think=True, usage_out=True)
         rec["answer"], rec["suggest"], rec["plan"] = ans, sugg, (ans.split("\n")[0] if ans else "")[:200]
         rec["s"] = round(time.monotonic() - t0, 2)
@@ -904,14 +1446,14 @@ class App:
         try:
             if p["kind"] == "answer":
                 msgs = [{"role": "system", "content": self.pack().replace(RULES.split("\n\nEdits, each")[0], ANSWER_RULES)},
-                        {"role": "user", "content": self.ask(n) + focus + "Answer only this part."}]
+                        {"role": "user", "content": with_image(n, self.ask(n) + focus + "Answer only this part.")}]
                 ans, sugg = self.answer_stream(mc, msgs, n, t0, think=False)
                 rec["answer"], rec["suggest"] = ans, sugg
                 e, r, u = 0, [], {}
             elif p["kind"] == "background":
                 others = "\n\n".join(f"Map of {r}:\n{m[:5000]}" for r, m in list(self.maps.items())[-5:] if r != n.get("route"))
                 msgs = [{"role": "system", "content": self.pack() + DEEP_RULES},
-                        {"role": "user", "content": self.ask(n) + (f"\n\nOther screens:\n{others}" if others else "") + focus}]
+                        {"role": "user", "content": with_image(n, self.ask(n) + (f"\n\nOther screens:\n{others}" if others else "") + focus)}]
                 e, r, u, proposal = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}-deep", max_tokens=12000,
                                                               thinking=True), rec, n, t0, mode="deep", part=p)
                 if proposal:
@@ -920,7 +1462,7 @@ class App:
                     cards.append(self.card(rec, p))                       # it couldn't: the Designer takes it
             else:
                 msgs = [{"role": "system", "content": self.pack()},
-                        {"role": "user", "content": self.ask(n) + focus + PART_RULES[p["kind"]]}]
+                        {"role": "user", "content": with_image(n, self.ask(n) + focus + PART_RULES[p["kind"]])}]
                 think = p["kind"] in ("review", "think")                   # a judgement: worth the thinking time
                 e, r, u, _ = self.consume(stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
                                                        max_tokens=8000 if think else 3000, thinking=think),
@@ -931,9 +1473,16 @@ class App:
                 if think:
                     # The reasoning is shown only when it's needed: the owner asked why, or nothing was changed (so
                     # they know why it stays). A review that changed something says so in a line, no panel.
-                    why = p.get("why") or ("Looked at it and left it as it is." if not e else "")
+                    why = p.get("why") or ""
                     asked_why = re.search(r"\bwhy\b|\bhow come\b", n["text"], re.I)
-                    if why and ((not e and p["kind"] == "review") or asked_why):
+                    if not why and not e:                          # it came back with nothing: say so, plainly
+                        msg = ("Couldn't work this out, so nothing changed. Marking exactly what you mean (both things, "
+                               "to match one to the other) helps.")
+                        self.events.send("part", note=n["id"], k=0, kind=p["kind"], state="failed", text=msg,
+                                         s=round(time.monotonic() - t0, 2))
+                        if len(parts) == 1:
+                            rec["plan"] = msg
+                    elif why and ((not e and p["kind"] == "review") or asked_why):
                         self.events.send("answer", note=n["id"], title=f"Why ({p['text'][:60]})", kind="review",
                                          text=why, s=round(time.monotonic() - t0, 2))
                     elif why:
@@ -961,7 +1510,7 @@ class App:
 
     # ---- a function point: noted for later, with what the page saw ------------------------------------------------------
     def log_api(self, method, path, code, ms, body=b""):
-        """Every API call the page makes, with a short answer for a failed one (kept with a function note)."""
+        """Every API call the page makes, with a short answer for a failed one (kept with a build note)."""
         err = ""
         if code >= 400:
             err = (body[:300].decode("utf-8", "replace") if isinstance(body, bytes) else str(body)[:300]).strip()
@@ -997,12 +1546,12 @@ class App:
                 c = self.kanban("Function (urgent): " + text[:70], "manager",
                                 f"The owner said it's urgent, in the design view (note {rec['id']}, screen {n.get('route') or '#/'}).\n\n"
                                 f"Note: {text}\nOwner's words: {n['text'][:1000]}\n" + "\n".join(self.saw(n))
-                                + "\n\nIt is also on vault/design/function-notes.md: when it's dealt with, function-notes.py done <id> \"<where it went>\".")
+                                + "\n\nIt is also on vault/design/build-notes.md: when it's dealt with, build-notes.py done <id> \"<where it went>\".")
                 c["label"] = "for the Manager now (urgent)"
                 cards.append(c)
                 extra.append(f"urgent: card {c.get('id')} for the Manager")
             fid = fnotes.add(text, said=n["text"], screen=n.get("route") or "#/", source=f"design view {rec['id']}",
-                             evidence=self.saw(n) + extra, page=self.notes_page)
+                             evidence=self.saw(n) + extra, page=self.notes_page, kind="function")
             noted.append(fid)
             self.events.send("part", note=n["id"], k=p["k"], kind="function", state="noted", text=f"{fid}: {text[:100]}",
                              s=round(time.monotonic() - t0, 2))
@@ -1011,10 +1560,74 @@ class App:
             self.events.send("part", note=n["id"], k=p["k"], kind="function", state="failed",
                              text=f"not noted: {type(ex).__name__}: {str(ex)[:120]}", s=round(time.monotonic() - t0, 2))
 
-    def open_notes(self):
-        """The open function notes (the toolbar's 🔧 list)."""
+    def note_check(self, mc, rec, n, parts, noted):
+        """Every message is checked for notes for later (function, usage, feel) by one small call of its own (just the
+        message and the open notes, no knowledge pack), in parallel with the work once the plan is in. What a function
+        part already noted is not noted again."""
         try:
-            return [{"id": i["id"], "note": i["note"], "screen": i["screen"], "when": i["when"]} for i in fnotes.items(self.notes_page)]
+            fn = [q["text"] for q in parts if q["kind"] == "function"]
+            open_ = fnotes.items(self.notes_page)
+            marks = ", ".join(str(m.get("sel") or m.get("kind") or "") for m in n.get("marks") or [] if m) or "-"
+            text = (f"Open notes:\n" + ("\n".join(f"- {i['note'][:160]}" for i in open_[-30:]) or "(none)")
+                    + "\n\nAlready noted from this message: " + ("; ".join(fn) or "nothing")
+                    + f"\n\nThe message (screen {n.get('route') or '#/'}, pointing at {marks}):\n{n['text'][:1500]}")
+            for kind, val in stream_lines(mc, [{"role": "system", "content": NOTE_RULES}, {"role": "user", "content": text}],
+                                          session=f"dv-{self.project}-notes", max_tokens=400):
+                m = re.match(r"NOTE\s+<?(function|usage|feel)>?\s*[|:\-–]\s*(.+)", val, re.I) if kind == "line" else None
+                if m and not any(same_note(m.group(2), x) for x in [i["note"] for i in open_] + fn):   # never twice
+                    noted.append(fnotes.add(m.group(2).strip(), said=n["text"], screen=n.get("route") or "#/",
+                                            source=f"design view {rec['id']}", page=self.notes_page, kind=m.group(1).lower()))
+                    self.events.send("functions")
+        except Exception as ex:
+            print(f"note check {n['id']}: {type(ex).__name__}: {ex}", file=sys.stderr, flush=True)
+
+    def sweep(self, why="asked"):
+        """Every message since the last sweep, read once more (one call, thinking on) for notes the plans missed; new
+        ones go on the list with source "sweep". Runs on demand (the 🔧 panel, /dv/sweep) and before the Manager plans an
+        agreed build. -> {"added": [...], "read": n}"""
+        mc = model_config()
+        if not mc:
+            return {"added": [], "read": 0, "error": "no model config"}
+        state_f = self.layer.root / "sweep.json"
+        try:
+            since = json.loads(state_f.read_text(encoding="utf-8")).get("at", "")
+        except (OSError, ValueError):
+            since = ""
+        msgs = [h for h in self.layer.history if (h.get("at") or "") > since and h.get("verdict") not in ("pick", "discard", "direct")
+                and h.get("note") and not str(h["note"]).startswith(("picked option", "discarded the options"))]
+        if not msgs:
+            return {"added": [], "read": 0}
+        t0 = time.monotonic()
+        self.events.send("sweep", state="started", n=len(msgs), why=why)
+        listed = fnotes.items(self.notes_page) + fnotes.items(self.notes_page, done=True)
+        back = {u["note"] for u in self.layer.undone}
+        text = ("Their notes list now:\n" + ("\n".join(f"- {i['id']} ({i['kind']}): {i['note'][:200]}" for i in listed) or "(empty)")
+                + "\n\nTheir messages, oldest first (id [what it became]: words):\n"
+                + "\n".join(f"{h['id']} [{h.get('verdict')}: {(h.get('plan') or '')[:90]}]{' [taken back]' if h['id'] in back else ''}: "
+                            f"{str(h['note'])[:400]}" for h in msgs))
+        lines = [v for k, v in stream_lines(mc, [{"role": "system", "content": SWEEP_RULES}, {"role": "user", "content": text}],
+                                            session=f"dv-{self.project}-sweep", max_tokens=8000, thinking=True) if k == "line"]
+        added = []
+        for ln in lines:
+            m = re.match(r"NOTE\s+<?(function|usage|feel)>?\s*[|:\-–]\s*([^|]+?)\s*(?:\|\s*(.*))?$", ln, re.I)
+            if not m or any(same_note(m.group(2), i["note"]) for i in listed):
+                continue
+            listed.append({"note": m.group(2)})
+            ids = re.findall(r"n\d+", m.group(3) or "")
+            said = " / ".join(str(h["note"])[:200] for h in msgs if h["id"] in ids)[:400]
+            added.append(fnotes.add(m.group(2).strip(), said=said, screen=next((h.get("route") for h in msgs if h["id"] in ids), "") or "",
+                                    source="sweep of " + (", ".join(ids[:6]) or "the round"), page=self.notes_page, kind=m.group(1).lower()))
+        state_f.write_text(json.dumps({"at": msgs[-1].get("at") or "", "note": msgs[-1]["id"], "added": added,
+                                       "t": time.strftime("%Y-%m-%d %H:%M")}), encoding="utf-8")
+        self.events.send("sweep", state="done", added=added, n=len(msgs), s=round(time.monotonic() - t0, 1))
+        self.events.send("functions")
+        return {"added": added, "read": len(msgs)}
+
+    def open_notes(self):
+        """The open build notes (the toolbar's 🔧 list)."""
+        try:
+            return [{"id": i["id"], "kind": i["kind"], "note": i["note"], "screen": i["screen"], "when": i["when"]}
+                    for i in fnotes.items(self.notes_page)]
         except (OSError, SystemExit):
             return []
 
@@ -1071,8 +1684,9 @@ class App:
         return said_
 
     def check_options(self, mc, msgs, rec, n, t0, sid, p=None):
-        """Every choice of an option set is checked: the toolbar renders each in a hidden frame at the owner's view
-        size and reports its edits. A choice with edits that didn't take gets its own repair call (only its failures,
+        """Every choice of an option set is checked: the headless browser loads each at the owner's view size and the
+        layer reports its edits (nothing loads in the owner's page; without the headless browser, the toolbar does it
+        in hidden frames). A choice with edits that didn't take gets its own repair call (only its failures,
         its fix added to it alone, the calls in parallel), and is checked again; a second round only when the first
         fixed some. -> (edits added, refused)."""
         if sid not in self.layer.options:
@@ -1081,8 +1695,14 @@ class App:
         ids = [o["id"] for c in self.layer.options[sid]["choices"].values() for o in c["ops"]]
         prev, edits, refused, lock = None, 0, [], threading.Lock()
         for _ in range(2):
-            self.events.send("measure-options", set=sid, choices=list(self.layer.options[sid]["choices"]), route=route)
-            bad = self.not_landed(ids, route, wait=10)
+            if self.mirror.ok:                                 # each choice judged in the headless browser, one after another
+                for c in list(self.layer.options[sid]["choices"]):
+                    self.mirror.call("measure", view=dict(self.view_for(n), opt=f"{sid}:{c}"), timeout=20)
+            else:                                              # (no headless browser: the owner's page does it in frames)
+                self.events.send("measure-options", set=sid, choices=list(self.layer.options[sid]["choices"]), route=route)
+            bad = self.not_landed(ids, route, wait=2 if self.mirror.ok else 10)
+            print(f"options {sid}: {len(self.layer.options[sid]['choices'])} choices judged "
+                  f"{'in the headless browser' if self.mirror.ok else 'in the owner page'}, {len(bad)} edit(s) didn't take", flush=True)
             if not bad or (prev is not None and len(bad) >= prev):
                 break
             where = {o["id"]: c for c, ch in self.layer.options[sid]["choices"].items() for o in ch["ops"]}
@@ -1129,7 +1749,7 @@ class App:
 
         def settled(i):                      # a css edit reports "ok" when applied, then its measurement
             r = self.reports.get(i)
-            return bool(r) and not (byid[i]["op"] == "css" and r["status"] == "ok")
+            return bool(r) and not (byid[i]["op"] in ("css", "remove") and r["status"] == "ok")
         end = time.monotonic() + wait
         while time.monotonic() < end and not all(settled(i) for i in ids):
             time.sleep(0.15)
@@ -1148,6 +1768,7 @@ class App:
         END, handed to on_plan), option and screen markers, a behavior proposal (deep path), and the edits, each
         checked, stored and sent to the page. mode: main | edits (a part or a repair) | deep."""
         option, screen, edits, refused, usage, sid, proposal = None, None, 0, [], {}, None, None
+        shared = []                                            # options: edits before the first choice (each gets them)
         plan, planned = [], mode != "main"
 
         def finish_plan():
@@ -1207,6 +1828,10 @@ class App:
                 option = (sid, m.group(1))
                 self.layer.add_choice(sid, m.group(1), m.group(2).strip()[:60] or m.group(1))
                 self.events.send("option", note=n["id"], set=sid, choice=m.group(1), name=m.group(2).strip()[:60])
+                for b in shared:                               # what came before the first choice belongs to each one
+                    o2 = self.layer.add(dict(b), rec, option)
+                    edits += 1
+                    self.events.send("op", note=n["id"], op=o2, option={"set": sid, "choice": option[1]}, s=round(time.monotonic() - t0, 2))
                 continue
             m = re.match(r"SCREEN\s+(#/[\w/-]*)\s*(.*)", line)
             if m:
@@ -1225,7 +1850,11 @@ class App:
             except ValueError as e:
                 refused.append(f"{e}: {line[:120]}")
                 continue
-            if mode == "main" and not (option or screen) and not any(q["kind"] == "quick" for q in plan):
+            if op["op"] in ("undo", "redo") and not ASKS_UNDO.search(n["text"]):
+                rec.setdefault("dropped", []).append(line[:160])  # only the owner takes notes back: never as a side effect
+                continue
+            if mode == "main" and not (option or screen) and not any(q["kind"] == "quick" for q in plan) \
+                    and not (op["op"] in ("undo", "redo") and [x for x in op["notes"] if x != n["id"]]):
                 rec.setdefault("dropped", []).append(line[:160])  # the plan has no change to make here (e.g. only
                 continue                                           # a function problem): an edit is a stray, kept out
             if into:                                               # a repair of one option choice: the fix goes in it alone
@@ -1235,6 +1864,9 @@ class App:
                 self.events.send("op", note=n["id"], op=o2, option={"set": into[0], "choice": into[1]},
                                  s=round(time.monotonic() - t0, 2))
                 edits += 1
+                continue
+            if part and part.get("kind") == "options" and not option and op["op"] not in ("undo", "redo"):
+                shared.append(op)                              # options asked for: never a change to the mockup itself
                 continue
             op = self.layer.add(op, rec, option)
             edits += 1
@@ -1315,6 +1947,18 @@ class App:
             wt = self.build_py("start", slug, "--design", stamp, "--title", f"the design agreed {stamp}")["worktree"]
         except (RuntimeError, ValueError, KeyError) as e:
             return {"error": f"couldn't start the build: {e}"}
+        self.layer.set_state("FROZEN", {"at": stamp, "build": slug, "card": None, "t": time.time()})
+        self.events.send("frozen", stamp=stamp)
+        threading.Thread(target=self.plan_agreed, args=(stamp, slug, wt), daemon=True).start()
+        return {"ok": True, "stamp": stamp, "build": slug}
+
+    def plan_agreed(self, stamp, slug, wt):
+        """After Agreed: the round's messages read once more for notes (the sweep), then the Manager's plan card."""
+        try:
+            swept = self.sweep("agreed")
+        except Exception as e:
+            swept = {"added": [], "error": str(e)[:120]}
+        open_ = fnotes.items(self.notes_page)
         card = self.kanban(
             f"Build the agreed design ({stamp})", "manager",
             f"The owner pressed Agreed in the design view: build this design into the main app. The design layer stays "
@@ -1329,14 +1973,17 @@ class App:
             f"the whole build once (suite + every card's checks), merges it into main, restarts the app and runs the live "
             f"checks; the owner's mockup then unfreezes onto it. `Review: tester` on a card only for behaviour cases you "
             f"write (one Tester review for the whole build). A defect noticed in the frozen mockup is fixed in the build, "
-            f"never in the layer. Don't merge or restart yourself. Progress: `build.py status {slug}`.")
+            f"never in the layer. Don't merge or restart yourself. Progress: `build.py status {slug}`."
+            + (f"\n\nThe owner's build notes: {len(open_)} open on vault/design/build-notes.md"
+               + (f" ({len(swept['added'])} just found by the sweep of this round's messages: {', '.join(swept['added'])})" if swept.get("added") else "")
+               + ". Not part of this build unless the owner says so: tell them in one line, and plan them with them "
+                 "(work-planning, \"Build notes\")." if open_ else ""))
         try:
             self.build_py("start", slug, "--plan-card", card.get("id") or "")
         except (RuntimeError, ValueError) as e:
             print(f"build {slug}: couldn't record the plan card: {e}", file=sys.stderr, flush=True)
         self.layer.set_state("FROZEN", {"at": stamp, "build": slug, "card": card, "t": time.time()})
         self.events.send("frozen", card=card, stamp=stamp)
-        return {"ok": True, "card": card, "stamp": stamp, "build": slug}
 
     def unfreeze(self):
         """The owner stops the build (Unfreeze): nothing goes live; the branch is kept for the Manager."""
@@ -1396,6 +2043,7 @@ class App:
             self.status["data"] = None
             self.events.send("data", state="done" if ok else "failed", text=out[0][:200], s=round(time.monotonic() - t0, 1))
             if ok:
+                self.app_v += 1
                 self.events.send("app-changed")                  # the page reloads onto the refreshed data
         threading.Thread(target=run, daemon=True).start()
         return {"ok": True}
@@ -1457,6 +2105,7 @@ class App:
             now = stamp()
             if now != last:
                 last = now
+                self.app_v += 1
                 self.events.send("app-changed")
 
 
@@ -1530,7 +2179,7 @@ def make_handler(app):
             if path == "/dv/report":
                 ids = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("ids", [""])[0].split(",")
                 return self.send(200, {i: app.reports.get(i) for i in ids if i})
-            if path == "/dv/functions":                              # the open function notes (the toolbar's 🔧)
+            if path == "/dv/functions":                              # the open build notes (the toolbar's 🔧)
                 return self.send(200, {"items": app.open_notes()})
             if path == "/dv/export":
                 return self.send(200, app.export(), "text/markdown; charset=utf-8")
@@ -1621,21 +2270,32 @@ def make_handler(app):
                 if q:
                     # An answer to the designer's question: the question and the original note travel with it, and
                     # the original note's marks too, so the work carries on where it stopped.
-                    text = (f"The owner's original note: {q['note']}\nYou asked: {q['question']}\nTheir answer: {text}\n"
+                    text = (f"The owner's original note: {q['note']}\nYour last attempt didn't work: {q['question']}\n"
+                            f"The owner adds: {text}\nNow do what the original note asked, using this." if q.get("issue") else
+                            f"The owner's original note: {q['note']}\nYou asked: {q['question']}\nTheir answer: {text}\n"
                             f"Now do what the original note asked, using this answer.")
                     marks = marks or q["marks"]
                 nid = app.layer.note_id()
+                img = d.get("image")                             # the picture of what's marked: in memory only
+                img = img if isinstance(img, str) and img.startswith("data:image/") and len(img) < 3_000_000 else None
                 clip = lambda xs, keys: [{k: str(x.get(k) or "")[:300] for k in keys} for x in (xs if isinstance(xs, list) else [])[-12:] if isinstance(x, dict)]
                 app.notes.put({"id": nid, "text": text[:3000], "marks": marks, "ask": bool(d.get("ask")), "undo": bool(d.get("undo")), "redo": bool(d.get("redo")),
                                "map": str(d.get("map") or ""), "route": str(d.get("route") or "#/"),
-                               "trail": clip(d.get("trail"), ("did", "on", "text", "route")), "errors": clip(d.get("errors"), ("kind", "text"))})
+                               "trail": clip(d.get("trail"), ("did", "on", "text", "route")), "errors": clip(d.get("errors"), ("kind", "text")),
+                               "image": img, "view": view_of(d.get("view"))})
                 waiting = app.notes.qsize() - (0 if app.status["busy"] else 1)
                 app.events.send("received", note=nid, text=text[:140], queued=max(0, waiting))
                 return self.send(200, {"id": nid, "queued": max(0, waiting)})
+            if path == "/dv/view":                                   # where the owner is: the headless browser goes there
+                app.last_view = view_of(d)
+                app.mirror.call("follow", wait=False, view=dict(app.last_view, key=app.mirror_key()))
+                return self.send(200, {"ok": True})
             if path == "/dv/map":
+                app.page_seen = time.time()
                 app.maps[str(d.get("route") or "#/")[:100]] = str(d.get("map") or "")[:20000]
                 return self.send(200, {"ok": True})
             if path == "/dv/report":                                 # the open page: how each edit fared
+                app.page_seen = time.time()
                 for k, v in (d.get("statuses") or {}).items():
                     app.reports[str(k)[:20]] = {"status": str(v)[:120], "route": str(d.get("route") or "")[:100], "t": time.time()}
                 return self.send(200, {"ok": True})
@@ -1671,6 +2331,36 @@ def make_handler(app):
                     app.layer.finish(rec)
                 app.events.send("done", note=rec["id"], verdict=rec["verdict"], plan=label, edits=len(done), s=0)
                 return self.send(200, {"note": rec["id"], "ops": [o["id"] for o in done]})
+            if path == "/dv/page-reply":                           # the owner's page answering a measure or picture request
+                w = app.page_wait.get(str(d.get("req") or ""))
+                if w and not w[0].is_set():
+                    w[1] = d.get("result")
+                    w[0].set()
+                return self.send(200, {"ok": True})
+            if path == "/dv/dry-run":                               # what a note would be taken to mean and planned as; nothing
+                note = {"id": "dry-run", "text": str(d.get("note") or "")[:3000], "route": str(d.get("route") or "#/"),   # changes
+                        "view": view_of(d.get("view")), "marks": (d.get("marks") or [])[:6], "identify": bool(d.get("identify", True))}
+                t = time.monotonic()
+                got = app.look(note, zoom=True)
+                note["image"], note["zoom"] = got.get("image"), got.get("zoom") or []
+                t1 = time.monotonic()
+                parts, _ = app.plan(model_config(), note)
+                return self.send(200, {"parts": parts, "seen": note.get("seen"), "pictures": 1 + len(note["zoom"]), "shot_s": round(t1 - t, 2),
+                                       "plan_s": round(time.monotonic() - t1, 1)})
+            if path == "/dv/retry":                                 # an ISSUE's "try again with thinking": undo it, run it again
+                old = app.recent.get(str(d.get("note") or ""))
+                if not old:
+                    return self.send(404, {"error": "that note is no longer at hand: send it again"})
+                app.pending.pop(old["id"], None)
+                if app.layer.undo_notes([old["id"]]):
+                    app.events.send("reload-ops", why=f"undid {old['id']} to try again")
+                nid = app.layer.note_id()
+                app.notes.put(dict(old, id=nid, think=True))
+                app.events.send("received", note=nid, text=("again, thinking: " + old["text"])[:140], queued=0)
+                return self.send(200, {"id": nid})
+            if path == "/dv/sweep":                                  # the 🔧 panel's Sweep: notes the plans missed
+                threading.Thread(target=app.sweep, args=("asked",), daemon=True).start()
+                return self.send(200, {"started": True})
             if path == "/dv/agree":
                 return self.send(200, app.agree())
             if path == "/dv/unfreeze":
@@ -1747,6 +2437,10 @@ def main():
     ap.add_argument("--api-proxy", default="", help="pass /api/... to this back end (a design copy, on copied data)")
     a = ap.parse_args()
     app = App(a)
+    import atexit
+    import signal
+    atexit.register(app.mirror.stop)
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))      # systemd's stop: exit cleanly, so the headless browser goes too
     srv = ThreadingHTTPServer((a.bind, a.port), make_handler(app))
     srv.daemon_threads = True
     print(f"design view for {a.project} on {a.bind}:{a.port}", flush=True)

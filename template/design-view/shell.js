@@ -117,6 +117,7 @@
       var host = d.at((x1 + x2) / 2, (y1 + y2) / 2);
       while (host && host.parentElement) { var hr = host.getBoundingClientRect(); if (hr.left <= x1 && hr.top <= y1 && hr.right >= x2 && hr.bottom >= y2) break; host = host.parentElement; }
       addMark({ kind: "area", sel: sel(host) || "body", rect: { x: Math.round(x1), y: Math.round(y1), w: Math.round(x2 - x1), h: Math.round(y2 - y1) },
+                sx: Math.round(frame.contentWindow.scrollX), sy: Math.round(frame.contentWindow.scrollY),
                 inside: inside.slice(0, 12).map(sel), label: "area" }, g.shape);
     } else if (g.tool === "arrow") {
       if (Math.hypot(p.x - g.x, p.y - g.y) < 12) { g.shape.remove(); return; }
@@ -158,7 +159,17 @@
       x.onclick = clearMarks;
       box.insertBefore(x, box.firstChild);                 // first, so it's never cut off by many marks
     }
+    follow();
   }
+  // The pictures are taken by the design view's own headless browser, showing your screen as you have it (window size,
+  // scroll, option): nothing is drawn here, so marking stays smooth. While you mark and type it is told where you are,
+  // so it's already there when the note goes.
+  var followTimer = 0;
+  function follow() {
+    clearTimeout(followTimer);
+    followTimer = setTimeout(function () { var d = dv(); if (d && d.view) post("/dv/view", d.view()).catch(function () {}); }, 400);
+  }
+  $("note").addEventListener("input", function () { if ($("note").value.length === 1) follow(); });
   // Start the pointing over: every mark, box and arrow goes. Esc does the same; a second Esc leaves the tool.
   function clearMarks() {
     marks = []; drawMarks(); clearDrawn("rect, line");
@@ -195,7 +206,8 @@
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
                  map: d ? d.map() : "", route: d ? d.route() : "#/", reply_to: replyTo,
-                 trail: d && d.trail ? d.trail() : [], errors: d && d.errors ? d.errors() : [] };
+                 trail: d && d.trail ? d.trail() : [], errors: d && d.errors ? d.errors() : [],
+                 view: d && d.view ? d.view() : null };
     if (replyTo) { showAnswer("Answered: " + question.question, "Your answer: " + text, []); }
     if (question) closeQuestion();                           // answered, or moved on to something else
     $("note").value = "";
@@ -234,6 +246,18 @@
       b.onclick = function () { $("note").value = c; send(); };
       box.appendChild(b);
     });
+    (e.actions || []).forEach(function (a) {                 // a change that didn't come out: try again, or drop it
+      var b = document.createElement("button"); b.textContent = a.label;
+      b.title = a.do === "retry" ? "Undo this attempt and do the note again, with thinking time" : "Take this note's changes back";
+      b.onclick = function () {
+        var id = e.note;
+        closeQuestion(); $("answer").hidden = true;
+        if (a.do === "retry") post("/dv/retry", { note: id }).then(function (r) { say(r.error ? r.error : "Trying again, with thinking", r.error ? "err" : "busy"); });
+        else post("/dv/undo", { notes: [id] }).then(function (r) { say(r.error ? r.error : "Undid " + id, r.error ? "err" : ""); });
+      };
+      box.appendChild(b);
+    });
+    if (e.actions && e.actions.length) $("answer-title").textContent = "It didn't come out right";
     $("note").classList.add("answering");
     $("note").placeholder = "Answering: " + e.question + "  (Enter sends your answer · Esc dismisses)";
     $("note").focus();
@@ -392,20 +416,24 @@
   loadState();
   setInterval(function () { if (build.frozen) drawBuild(); }, 30000);   // the minutes on the chips
 
-  // ---- function notes: what you said about what the app does, noted for proper work later (planned with the Manager) ----
+  // ---- build notes: what you said about what the app does, noted for proper work later (planned with the Manager) ----
   var functions = [];
   function loadFunctions() {
     fetch("/dv/functions", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
       functions = d.items || [];
       $("fns").hidden = !functions.length;
       $("fns").textContent = "🔧 " + functions.length;
-      $("fns").title = functions.length + " function note" + (functions.length === 1 ? "" : "s") + " waiting for the Manager: click to see them";
+      $("fns").title = functions.length + " build note" + (functions.length === 1 ? "" : "s") + " waiting for the Manager: click to see them";
     }).catch(function () {});
   }
   $("fns").onclick = function () {
-    showAnswer("Function notes (" + functions.length + " open)", functions.map(function (f) {
-      return "• " + f.id + " · " + f.note + (f.screen ? "  (" + f.screen + ")" : "");
+    showAnswer("Build notes (" + functions.length + " open)", functions.map(function (f) {
+      return "• " + f.id + " (" + (f.kind || "function") + ") " + f.note;
     }).join("\n") + "\n\nGo through them with the Manager in a chat: what goes in the next build, what gets checked first, what's dropped.", []);
+    var b = document.createElement("button"); b.textContent = "↻ Sweep my messages for missed notes";
+    b.title = "Read every message since the last sweep once more and add the notes it missed (also runs on Agreed)";
+    b.onclick = function () { post("/dv/sweep", {}); $("answer").hidden = true; };
+    $("answer-sugg").appendChild(b);
   };
   loadFunctions();
   setInterval(loadFunctions, 60000);
@@ -423,7 +451,7 @@
   // A note in several parts: one line showing each part's kind and where it is.
   var parts = {};
   // Each part's route: ⚡ fast (one quick call), 🧠 thinking (worked out first), 💬 an answer, and the rest.
-  var ROUTE = { quick: "⚡", options: "⚡", screen: "⚡", think: "🧠", review: "🧠", background: "🧠", answer: "💬",
+  var ROUTE = { change: "✎", quick: "⚡", options: "⚡", screen: "⚡", think: "🧠", review: "🧠", background: "🧠", answer: "💬",
                 ask: "❓", prefer: "📌", ack: "👍", function: "🔧" };
   function routed(kind) { return (ROUTE[kind] || "") + " " + kind; }
   function partLine(id) {
@@ -472,7 +500,12 @@
           e.refused && e.refused.length ? "err" : "");
     }
     else if (e.type === "question") { showQuestion(e); }
+    else if (e.type === "stage") { t0[e.note] = t0[e.note] || Date.now(); busy[e.note] = "✎ " + e.text; liveTick(); }
     else if (e.type === "functions") { loadFunctions(); }
+    else if (e.type === "sweep") {
+      if (e.state === "started") { t0.sweep = Date.now(); busy.sweep = "Sweeping " + e.n + " messages for notes you gave along the way"; liveTick(); }
+      else { delete busy.sweep; say("Sweep done in " + e.s + " s: " + (e.added && e.added.length ? e.added.length + " new note(s): " + e.added.join(", ") + " (🔧)" : "nothing missed")); }
+    }
     else if (e.type === "build") { setBuild(e); drawBuild(); }
     else if (e.type === "measure-options") { measureOptions(e); }
     else if (e.type === "data") {

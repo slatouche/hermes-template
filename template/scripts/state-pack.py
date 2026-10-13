@@ -2,7 +2,7 @@
 """state-pack.py: the project's state in a few hundred words, read in about a second, with no model.
 
 What the Manager would otherwise spend several steps reading at the start of a reply: the status page's fields,
-the board (running, next, blocked), the open function notes, the owner's queue, open builds and the last log lines. The Manager's
+the board (running, next, blocked), the open build notes, the owner's queue, open builds and the last log lines. The Manager's
 `state-pack` plugin adds it to each chat message when it has changed, so "where are we?" or "what needs me?"
 is answered from it in one step.
 
@@ -61,14 +61,14 @@ def board():
         return None
 
 
-def function_notes():
-    """The open items on the running list of function and usage notes (function-notes.py reads the page)."""
+def build_notes():
+    """The open items on the running list of function and usage notes (build-notes.py reads the page)."""
     try:
         import importlib.util
-        spec = importlib.util.spec_from_file_location("function_notes", pathlib.Path(__file__).resolve().parent / "function-notes.py")
+        spec = importlib.util.spec_from_file_location("build_notes", pathlib.Path(__file__).resolve().parent / "build-notes.py")
         fn = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(fn)
-        return fn.items(HOME / "vault" / "design" / "function-notes.md")
+        return fn.items(HOME / "vault" / "design" / "build-notes.md")
     except (OSError, SystemExit, AttributeError, ImportError):
         return []
 
@@ -104,9 +104,9 @@ def main():
             lines.append(f"  next {c['id']} {c.get('assignee')}: {(c.get('title') or '')[:60]}")
         for c in blocked[:8]:
             lines.append(f"  blocked {c['id']} {c.get('assignee')}: {(c.get('title') or '')[:60]}")
-    notes = function_notes()
+    notes = build_notes()
     if notes:
-        lines.append(f"function notes open: {len(notes)} (vault/design/function-notes.md; plan with the owner when they ask)")
+        lines.append(f"build notes open: {len(notes)} (vault/design/build-notes.md; plan with the owner when they ask)")
         lines += [f"  {i['id']}: {i['note'][:90]}" for i in notes[-6:]]
     bs = builds()
     if bs:

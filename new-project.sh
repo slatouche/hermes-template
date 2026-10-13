@@ -122,6 +122,28 @@ if [ "$WSL" = 1 ]; then            # Hermes Desktop reaches a project over SSH; 
   systemctl enable --now ssh >/dev/null 2>&1 || echo "warning: the SSH server didn't start (systemctl status ssh): Hermes Desktop needs it"
 fi
 /usr/bin/python3 -c 'import yaml' 2>/dev/null || die "python3-yaml is required and could not be installed"
+# The design view's headless browser draws the app as the owner's Windows browser does: Segoe UI is drawn with Selawik
+# (Microsoft's open, same-width stand-in), so text wraps the same in its pictures. Once per server.
+if ! fc-list 2>/dev/null | grep -qi selawik; then
+  FD=$(mktemp -d)
+  if curl -fsSL -o "$FD/s.zip" https://github.com/microsoft/Selawik/releases/download/1.01/Selawik_Release.zip \
+     && /usr/bin/python3 -I -c 'import sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); [z.extract(n, sys.argv[2]) for n in z.namelist() if n.endswith(".ttf")]' "$FD/s.zip" "$FD"; then
+    mkdir -p /usr/local/share/fonts/selawik && cp "$FD"/*.ttf /usr/local/share/fonts/selawik/
+    cat > /etc/fonts/conf.d/60-segoe-selawik.conf <<'FONTS'
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!-- Segoe UI (Windows) drawn with Selawik, its metric-compatible open stand-in: same widths, same wrapping -->
+<fontconfig>
+  <alias binding="same"><family>Segoe UI</family><prefer><family>Selawik</family></prefer></alias>
+</fontconfig>
+FONTS
+    fc-cache -f >/dev/null 2>&1
+    echo "design view: Segoe UI drawn with Selawik"
+  else
+    echo "warning: couldn't get the Selawik font: the design view's pictures may wrap text differently from Windows"
+  fi
+  rm -rf "$FD"
+fi
 if [ "${SEARXNG:-yes}" = yes ]; then
   step "Web search for the bots (SearXNG, shared by all projects)"
   bash "$HERE/install-searxng.sh" || echo "warning: SearXNG install failed; bots fall back to Hermes' keyless search"

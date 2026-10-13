@@ -151,6 +151,16 @@ def main():
     app.consume(stream("OPTION A Bold", '{"op":"css","rule":"h1{font-weight:800}"}'), rec, n, time.monotonic(), mode="edits", part=part)
     check("a part's options get their own set (note-part), kept apart from the note's", f"{rec['id']}-2" in app.layer.options,
           list(app.layer.options))
+    mock_before = len(app.layer.ops)
+    part3 = {"k": 3, "kind": "options", "text": "where the count could go"}
+    app.consume(stream('{"op":"remove","sel":".count"}', "OPTION A By the title", '{"op":"insert","where":"after","ref":"h1","html":"<b>1</b>"}',
+                       "OPTION B In the toolbar", '{"op":"insert","where":"into","ref":".bar","html":"<b>1</b>"}'),
+                rec, n, time.monotonic(), mode="edits", part=part3)
+    ch3 = app.layer.options.get(f"{rec['id']}-3", {}).get("choices", {})
+    check("options asked for never change the mockup: edits before the first choice go into every choice",
+          len(app.layer.ops) == mock_before and sorted(ch3) == ["A", "B"]
+          and all(any(o["op"] == "remove" and o["sel"] == ".count" for o in c["ops"]) for c in ch3.values()),
+          (len(app.layer.ops) - mock_before, {k: [o["op"] for o in c["ops"]] for k, c in ch3.items()}))
     plans.clear()
     app.consume(stream("PART 1 prefer | no reasoning unless you need a decision from me", "END"), rec, n, time.monotonic(),
                 on_plan=plans.append)
@@ -189,8 +199,8 @@ def main():
     hint3 = app.ask({"id": r3["id"], "text": r3["note"], "route": "#/", "marks": []})
     r4 = app.layer.new_note("this one again", [{"sel": "h1.title"}], "#/")
     hint4 = app.ask({"id": r4["id"], "text": r4["note"], "route": "#/", "marks": [{"sel": "h1.title"}]})
-    check("'still wrong' after a change: the planner is told to think", "isn't right yet" in hint2 and "Plan it as think" in hint2, hint2[-300:])
-    check("an unrelated note gets no such hint", "Plan it as think" not in hint3, hint3[-300:])
+    check("'still wrong' after a change: the planner is told it follows an attempt that isn't right yet", "isn't right yet" in hint2, hint2[-300:])
+    check("an unrelated note gets no such hint", "isn't right yet" not in hint3, hint3[-300:])
     check("the same element marked again: the planner is told so", "on the same element" in hint4, hint4[-300:])
     part = {"k": 1, "kind": "review", "text": "the glow"}
     app.consume(stream("WHY The glow stacked three shadows; one underline now.", '{"op":"css","rule":".t{text-shadow:none}"}'),
@@ -202,6 +212,18 @@ def main():
     ex, _, _, _ = app.consume(stream("PART 1 function | New deck does nothing", "END", '{"op":"behavior","name":"toast","sel":"b","text":"soon"}'),
                               rx, {"id": rx["id"], "text": rx["note"], "route": "#/"}, time.monotonic(), on_plan=lambda p: None)
     check("a plan with no change to make keeps no edits from the planning call", ex == 0 and rx.get("dropped"), (ex, rx.get("dropped")))
+    ru = app.layer.new_note("undo the padding and match the gap", [], "#/")
+    eu, _, _, _ = app.consume(stream("PART 1 think | match the gap", "END", '{"op":"undo","notes":["n999"]}'),
+                              ru, {"id": ru["id"], "text": ru["note"], "route": "#/"}, time.monotonic(), on_plan=lambda p: None)
+    check("...but an undo it writes is the owner's request and is kept", eu == 1, (eu, ru.get("dropped")))
+    rn = app.layer.new_note("align the title with the other box", [], "#/")
+    en, _, _, _ = app.consume(stream("PART 1 quick | align the title", "END", '{"op":"undo","notes":["n1"]}', '{"op":"css","rule":".t{margin:0}"}'),
+                              rn, {"id": rn["id"], "text": rn["note"], "route": "#/"}, time.monotonic(), on_plan=lambda p: None)
+    check("an undo the owner didn't ask for is never applied (only they take notes back)", en == 1 and any("undo" in x for x in rn.get("dropped") or []),
+          (en, rn.get("dropped")))
+    check("an edit scoped to one item's page (a deck name in the route) applies everywhere instead of being refused",
+          "on" not in m.check_op({"op": "css", "rule": ".a{color:red}", "on": "#/deck/You've%20Got"})
+          and m.check_op({"op": "css", "rule": ".a{color:red}", "on": "#/decks"})["on"] == "#/decks")
     calls = []
 
     def fake_stream(mc, msgs, session, max_tokens, thinking):
@@ -227,51 +249,171 @@ def main():
           and any("POST /api/import -> 500" in x and "boom" in x for x in saw) and not any("/api/decks" in x for x in saw), saw)
     check("...and no actions or errors for a note that has none", all(x.startswith("failed requests") for x in app.saw({"text": "x"})))
 
-    # a whole note through run_note: one model call (the plan); the move is done, the function point noted on the spot
-    plan_calls, plan_lines = [], []
+    # a whole note through run_note: the plan (from the note and its picture), then each change made, checked and finally
+    # checked; build notes on the spot. The fake model answers each step by its session and what it's asked.
+    plan_calls, plan_lines, fake = [], [], {"plan": {}, "edits": [], "notes": [], "final": "MET it shows"}
     m.model_config = lambda: {"model": "test", "url": "http://127.0.0.1:9", "key": "x"}
-    m.stream_lines = lambda mc, msgs, session, max_tokens=3000, thinking=False: (
-        plan_calls.append(session) or [("line", x) for x in plan_lines] + [("usage", {})])
+
+    def fake_model(mc, msgs, session, max_tokens=3000, thinking=False):
+        plan_calls.append(session)
+        c = msgs[-1]["content"]
+        text = c if isinstance(c, str) else c[0]["text"]
+        if session.endswith("-identify"):
+            fake["identify_text"] = text
+            looks = fake.get("looks") or []                  # each look's answer in turn (three looks at once), or the same
+            out = looks.pop(0) if looks else [
+                "THING: the two vertical lines side by side: the right border of the search panel and the left border of the Cards group",
+                "SHORT: the double divider between the search box and CARDS", "POINT: B|A.1, B|A.2",
+                "WRONG: there should be one line there, as on the left"]
+        elif session.endswith("-plan"):
+            fake["plan_text"] = text
+            out = [json.dumps(fake["plan"])]
+        elif session.endswith("-notes"):
+            out = fake["notes"]
+        elif session.endswith("-final"):
+            out = [fake["final"]]
+        elif session.endswith("-sweep"):
+            out = plan_lines
+        elif m.VERIFY_RULES in text:
+            out = fake.get("verify") or ["OK"]
+        else:
+            out = fake["edits"]
+        return [("line", x) for x in out] + [("usage", {})]
+    m.stream_lines = fake_model
+    class FakeMirror:                                        # the headless browser, faked: pictures and measures on request
+        ok = True
+        def call(self, cmd, **a):
+            seen.append(cmd)
+            return ({"image": "data:image/png;base64,QUZURVI=", "ms": 1} if cmd == "shot"
+                    else {"value": "" if fake.get("blind") else "A = div.issues: box x0 y0 10×10"})
+    seen = []
+    app.mirror = FakeMirror()
+    app.page_call = lambda what, timeout=6.0, **a: seen.append("owner page " + what)
     evq = app.events.add()
 
-    def run(text, lines, route="#/decks"):
-        plan_lines[:] = lines
+    def run(text, parts, edits=(), notes=(), final="MET it shows", route="#/decks", **extra):
+        fake.update(plan={"parts": parts}, edits=list(edits), notes=list(notes), final=final, verify=extra.pop("verify", None),
+                    blind=extra.pop("blind", False))
         plan_calls.clear()
         nid = app.layer.note_id()
-        app.run_note(dict(nf, id=nid, text=text, route=route))
+        app.run_note(dict(nf, id=nid, text=text, route=route, image="data:image/png;base64,QkVGT1JF", **extra))
         evs = []
         while not evq.empty():
             evs.append(json.loads(evq.get()))
         return [h for h in app.layer.history if h["id"] == nid][-1], evs
     ops_before = len(app.layer.ops)
     r1, e1 = run("this shouldn't be in my list of cards, it should be on the sidebar as the last item in the column. possibly with some functions to fix the issues found",
-                 ["PART 1 quick | move the issues panel to the end of the sidebar column",
-                  "PART 2 function | the issues panel in the sidebar should offer actions that fix the issues it lists", "END",
-                  '{"op":"move","sel":".issues","where":"into","ref":".sidebar"}'])
+                 [{"kind": "change", "text": "move the issues panel to the end of the sidebar column", "marked": ["A"], "work": "move"},
+                  {"kind": "function", "text": "the issues panel in the sidebar should offer actions that fix the issues it lists"}],
+                 edits=['{"op":"move","sel":".issues","where":"into","ref":".sidebar"}'])
     done1 = [e for e in e1 if e["type"] == "done"][-1]
     open1 = app.open_notes()
-    page = (app.layer.root / "function-notes.md").read_text(encoding="utf-8")
-    check("design feedback with a function point: the change is made and the point noted, in one model call",
-          len(app.layer.ops) == ops_before + 1 and len(plan_calls) == 1 and done1.get("noted") == ["F1"] and r1.get("noted") == ["F1"]
+    page = (app.layer.root / "build-notes.md").read_text(encoding="utf-8")
+    check("a note in the one flow: planned from its picture, measured, the change made and checked, then a final look at "
+          "the result; the function point noted on the spot",
+          len(app.layer.ops) == ops_before + 1
+          and sorted(plan_calls) == ["dv-t-change", "dv-t-change", "dv-t-final", "dv-t-notes", "dv-t-plan"]
+          and done1.get("noted") == ["F1"] and r1.get("noted") == ["F1"] and done1["plan"].startswith("✓")
           and open1 and open1[0]["note"] == "the issues panel in the sidebar should offer actions that fix the issues it lists"
           and open1[0]["screen"] == "#/decks", (len(app.layer.ops) - ops_before, plan_calls, done1, open1))
     check("...the list keeps the owner's words, where it was said, and what the page saw",
           'said: "this shouldn\'t be in my list of cards' in page and f"design view {r1['id']}" in page
           and "failed requests: POST /api/import -> 500" in page and page.startswith("---\n")
           and all(f"\n{k}:" in page.split("\n---\n")[0] for k in ("title", "type", "status", "owner", "updated", "summary")), page[:900])
-    r2, e2 = run("saving decks is broken, urgent", ["PART 1 function | saving a deck fails", "END"])
+    r2, e2 = run("saving decks is broken, urgent", [{"kind": "function", "text": "saving a deck fails"}])
     check("'urgent': noted, and the Manager gets a card now", r2.get("cards") and r2["cards"][0]["title"].startswith("Function (urgent): ")
-          and "urgent: card" in (app.layer.root / "function-notes.md").read_text(encoding="utf-8") and r2.get("noted") == ["F2"], r2.get("cards"))
+          and "urgent: card" in (app.layer.root / "build-notes.md").read_text(encoding="utf-8") and r2.get("noted") == ["F2"], r2.get("cards"))
+    r3, e3 = run("I flick between decks all the time so this should feel instant, make the title smaller",
+                 [{"kind": "change", "text": "make the deck title smaller", "work": "size"}],
+                 edits=['{"op":"css","rule":"h1{font-size:20px}"}'],
+                 notes=["NOTE usage | the owner switches between decks often", "NOTE feel: switching decks should feel instant"])
+    its = {i["id"]: i for i in app.open_notes()}
+    check("every message is checked for build notes: a design change still gets its usage and feel notes",
+          r3.get("noted") == ["F3", "F4"] and its["F3"]["kind"] == "usage" and its["F4"]["kind"] == "feel"
+          and its["F4"]["note"] == "switching decks should feel instant", (r3.get("noted"), its))
+    r3b, _ = run("again: decks should switch instantly", [{"kind": "function", "text": "deck switching should be instant"}],
+                 notes=["NOTE feel | switching decks should feel instant!"])
+    check("a note already on the list (or already noted by a function part) isn't saved again",
+          r3b.get("noted") == ["F5"] and len(app.open_notes()) == 5, (r3b.get("noted"), app.open_notes()))
+    r4, e4 = run("make this match the other box", [{"kind": "change", "text": "match the box", "work": "style"}],
+                 edits=['{"op":"css","rule":".box{padding:4px}"}'], final="NOT MET the box still has a border", blind=True)
+    q4 = [e for e in e4 if e["type"] == "question"]
+    check("with nothing measured, the before/after pictures decide; an ISSUE is put to the owner like a question: more "
+          "words, try again with thinking, or undo", q4 and [a["do"] for a in q4[0]["actions"]] == ["retry", "undo"]
+          and r4["plan"].startswith("⚠") and r4["id"] in app.pending and app.pending[r4["id"]].get("issue")
+          and r4["id"] in app.recent, (q4, r4.get("plan")))
+    r5, _ = run("think about the spacing here", [{"kind": "change", "text": "even out the spacing", "work": "spacing"}],
+                edits=['{"op":"css","rule":".sp{gap:8px}"}'])
+    check("'think' in a note, or a retry, gives the change thinking time", app.recent[r5["id"]]["think"] is True)
+    r7, e7 = run("make this gap match the sidebar", [{"kind": "change", "text": "match the gap", "work": "spacing"}],
+                 edits=['{"op":"css","rule":".g{margin-top:0}"}'], final="MET looks matched", verify=["FIX the gap is still 12px, not 18px"])
+    check("never 'done' while the check still says it isn't: an ISSUE with what's wrong, whatever the pictures suggest",
+          r7["plan"].startswith("⚠") and "still 12px" in r7["plan"] and any(e["type"] == "question" for e in e7), r7.get("plan"))
+    r8, _ = run("make this box match the other", [{"kind": "change", "text": "match the box", "work": "style"}],
+                edits=['{"op":"css","rule":".box{padding:2px}"}'], final="the box still has a border, unlike the other -> NOT MET", blind=True)
+    check("the final check gives what it saw first and its verdict last", r8["plan"].startswith("⚠") and "still has a border" in r8["plan"],
+          r8.get("plan"))
+    spot = {"label": "B|A", "what": "where B (left) and A (right) meet", "image": "data:image/png;base64,U1BPVA==",
+            "drawn": "The spot is 72×36 px; positions are px from its top-left.\nvertical line at x 27: the right border of "
+                     "details.panel-fold\nvertical line at x 44: the left border of div.vgroup"}
+    run("there are 2 lines here when there should be 1", [{"kind": "change", "text": "remove the extra divider", "work": "remove"}],
+        edits=['{"op":"css","rule":".vgroup{border-left:0}"}'], zoom=[spot])
+    check("what the owner means is worked out first (three looks at once, from the close-ups and exactly what's drawn in "
+          "them, as numbered entries); when they agree the plan gets it",
+          plan_calls[:4] == ["dv-t-identify"] * 3 + ["dv-t-plan"]
+          and "B|A.2 vertical line at x 44" in fake.get("identify_text", "") and "the double divider between the search box and CARDS" in fake.get("plan_text", "")
+          and "there should be one line there" in fake.get("plan_text", ""), (plan_calls, fake.get("plan_text", "")[-300:]))
+    lines = lambda short, point: ["THING: it", f"SHORT: {short}", f"POINT: {point}", "WRONG: one too many"]
+    fake["looks"] = [lines("the double divider", "B|A.1"), lines("the extra line by CARDS", "B|A.1, B|A.2"), lines("the header's bottom edge", "")]
+    r9, e9 = run("there are 2 lines here when there should be 1", [{"kind": "change", "text": "should not be planned", "work": "remove"}], zoom=[spot])
+    check("two looks pointing at the same thing (in any words) go ahead", "-plan" in " ".join(plan_calls) and not r9["plan"].startswith("?"),
+          (plan_calls, r9.get("plan")))
+    fake["looks"] = [lines("the double divider", "B|A.1"), lines("the search box's top and bottom edges", "B.3"),
+                     lines("the header's bottom edge", "B.5")]
+    spot3 = dict(spot, drawn=spot["drawn"] + "\nhorizontal line at y 2: the top border of input.filter-q\nhorizontal line at y 33: "
+                                              "the bottom border of input.filter-q\nhorizontal line at y 35: the bottom border of div.deck-head")
+    spotB = dict(spot3, label="B")
+    r10, e10 = run("there are 2 lines here when there should be 1", [{"kind": "change", "text": "should not be planned", "work": "remove"}],
+                   zoom=[spot, spotB])
+    q10 = [e for e in e10 if e["type"] == "question"]
+    check("when the looks don't agree it isn't clear: the owner is asked which they mean, with each as an answer (nothing planned or changed)",
+          not any(c.endswith("-plan") for c in plan_calls) and q10 and "the double divider" in json.dumps(q10)
+          and "the search box's top and bottom edges" in json.dumps(q10) and not r10.get("ops"), (plan_calls, q10, r10.get("plan")))
+    run("make the title bigger", [{"kind": "change", "text": "bigger title", "work": "size"}], edits=['{"op":"css","rule":"h1{font-size:24px}"}'])
+    check("nothing pointed at, nothing to work out: no extra step", not any(c.endswith("-identify") for c in plan_calls), plan_calls)
+    check("every picture and measurement comes from the headless browser, never the owner's page",
+          "shot" in seen and "inspect" in seen and not any(x.startswith("owner page") for x in seen), sorted(set(seen)))
+    v = m.view_of({"route": "#/x", "w": 99999, "h": "900", "scroll": -5, "opt": "s1:A", "scrollers": [{"sel": "#list", "top": 120}, "junk"]})
+    check("the owner's view is cleaned before the headless browser shows it",
+          v == {"route": "#/x", "w": 4000, "scroll": 0, "opt": "s1:A", "scrollers": [{"sel": "#list", "top": 120, "left": 0}]}, v)
+    pf = app.layer.root / "prefs.json"
+    pf.write_text(json.dumps(["keep a running backlog of notes", "no reasoning unless asked"]))
+    run("drop: the backlog instruction", [{"kind": "prefer", "text": "Drop the backlog instruction, no running backlog from now on"}])
+    check("'drop:' in the owner's words removes the instruction, even when the plan rewords it",
+          json.loads(pf.read_text()) == ["no reasoning unless asked"], pf.read_text())
+    r6, _ = run("hmm", [{"kind": "nonsense"}])
+    check("a plan that can't be read becomes one change part with the note (never nothing)",
+          r6["parts"] == [{"k": 1, "kind": "change", "text": "hmm"}], r6.get("parts"))
     app.events.drop(evq)
+    plan_lines[:] = ["NOTE function | each category row should be editable in place | n1, n3", "not a note line", "NOTE nonsense | x",
+                     "NOTE usage | the owner switches between decks often | n2"]
+    sw = app.sweep("test")
+    swept = [i for i in app.open_notes() if i["id"] in sw["added"]]
+    check("the sweep reads the round's messages once more and adds what the plans missed, with where it came from",
+          sw["read"] > 3 and len(sw["added"]) == 1 and swept and swept[0]["kind"] == "function"
+          and "sweep of n1, n3" in (app.layer.root / "build-notes.md").read_text(encoding="utf-8"), (sw, swept))
+    check("...and a second sweep reads only what came after it", app.sweep("test")["read"] == 0)
+    check("the designer knows its build notes: the open ones are in every note's context",
+          "## The owner's build notes" in app.pack() and "F2 (function): saving a deck fails" in app.pack(), app.pack()[-900:])
 
     # the Manager's side: the same list from a chat, and every item ends up saying where it went
-    fnp = str(app.layer.root / "function-notes.md")
-    fn_cli = [sys.executable, str(ROOT / "scripts" / "function-notes.py"), "--page", fnp]
+    fnp = str(app.layer.root / "build-notes.md")
+    fn_cli = [sys.executable, str(ROOT / "scripts" / "build-notes.py"), "--page", fnp]
     r = subprocess.run(fn_cli + ["add", "deck export should include the sideboard", "--said", "export misses my sideboard"],
                        capture_output=True, text=True)
     ls = json.loads(subprocess.run(fn_cli + ["list", "--json"], capture_output=True, text=True).stdout)
-    check("a note from a chat goes on the same list (function-notes.py add)", r.stdout.strip() == "F3"
-          and [i["id"] for i in ls] == ["F1", "F2", "F3"] and ls[2]["source"] == "chat", (r.stdout, r.stderr, ls))
+    check("a note from a chat goes on the same list (build-notes.py add)", r.stdout.strip() == "F7"
+          and [i["id"] for i in ls] == ["F1", "F2", "F3", "F4", "F5", "F6", "F7"] and ls[6]["source"] == "chat", (r.stdout, r.stderr, ls))
     txt = pathlib.Path(fnp).read_text(encoding="utf-8")
     pathlib.Path(fnp).write_text(txt.replace("## Open\n", "## Open\nThe Manager's own line under Open.\n"), encoding="utf-8")
     r = subprocess.run(fn_cli + ["done", "F1", "build design-20261014-0910"], capture_output=True, text=True)
@@ -280,10 +422,10 @@ def main():
     left = json.loads(subprocess.run(fn_cli + ["list", "--json"], capture_output=True, text=True).stdout)
     gone = json.loads(subprocess.run(fn_cli + ["list", "--json", "--done"], capture_output=True, text=True).stdout)
     check("done moves an item under Done saying where it went; the rest and any hand-written lines stay",
-          r.returncode == 0 and bad.returncode == 1 and [i["id"] for i in left] == ["F2", "F3"]
+          r.returncode == 0 and bad.returncode == 1 and [i["id"] for i in left] == ["F2", "F3", "F4", "F5", "F6", "F7"]
           and gone and gone[0]["id"] == "F1" and gone[0]["outcome"].startswith("build design-20261014-0910")
           and "The Manager's own line under Open." in txt and txt.index("**F1**") > txt.index("## Done"), (r.stderr, txt[-700:]))
-    check("ids never repeat once items are done", subprocess.run(fn_cli + ["add", "another"], capture_output=True, text=True).stdout.strip() == "F4")
+    check("ids never repeat once items are done", subprocess.run(fn_cli + ["add", "another"], capture_output=True, text=True).stdout.strip() == "F8")
 
     rf = app.layer.new_note("new deck does nothing", [], "#/")
     app.layer.finish(dict(rf, verdict="function", plan="New deck does nothing"))
@@ -478,7 +620,11 @@ elif a[1] == "create":
                 return e.code, json.loads(e.read() or b"{}")
         post2("/dv/op", {"op": {"op": "token", "name": "--bg", "value": "#111"}})
         code, r = post2("/dv/agree", {})
-        b = json.loads((home / ".hermes" / "builds" / f"{r.get('build')}.json").read_text()) if r.get("build") else {}
+        for _ in range(50):                                  # the sweep, then the plan card, follow Agreed in the background
+            b = json.loads((home / ".hermes" / "builds" / f"{r.get('build')}.json").read_text()) if r.get("build") else {}
+            if b.get("plan_card"):
+                break
+            time.sleep(0.2)
         board = json.loads((home / "board.json").read_text()) if (home / "board.json").exists() else []
         check("Agreed starts a build: branch, worktree, frozen layer", code == 200 and b.get("branch", "").startswith("design/")
               and pathlib.Path(b.get("worktree", "/nope")).is_dir() and json.loads(urllib.request.urlopen(

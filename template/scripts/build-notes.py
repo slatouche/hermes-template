@@ -1,15 +1,18 @@
 #!/usr/bin/python3
-"""function-notes.py: the running list of function and usage notes (vault/design/function-notes.md).
+"""build-notes.py: the build notes, a running, consolidated list (vault/design/build-notes.md) of what the Manager,
+Engineer and the rest need to know for the build.
 
-What the owner noticed about what the app does (something that doesn't work, a missing behaviour, a usage point
-inside design feedback), noted in seconds and worked on properly later. The design view adds them as the owner gives
+What the owner noticed about what the app does, noted in seconds and worked on properly later. Each item has a kind:
+function (what something should do, or something that doesn't work), usage (how they use it or move through the app),
+feel (how it should feel or behave). The design view adds them as the owner gives
 feedback; the Manager adds the ones raised in a chat and plans the list with the owner. Each item ends up under Done
 saying where it went (a build, a card, or dropped and why).
 
-  function-notes.py add "<note>" [--said "<owner's words>"] [--screen "#/x"] [--source chat] [--evidence "<line>"]...
-  function-notes.py list [--json]                the open ones
-  function-notes.py done F3 "<where it went>"     e.g. "build design-20261014-0910", "card t_ab12", "dropped: works as designed"
-  --page <path>                                  another page (a test copy); default ~/vault/design/function-notes.md
+  build-notes.py add "<note>" [--kind function|usage|feel] [--said "<owner's words>"] [--screen "#/x"] [--source chat]
+                         [--evidence "<line>"]...
+  build-notes.py list [--json]                the open ones
+  build-notes.py done F3 "<where it went>"     e.g. "build design-20261014-0910", "card t_ab12", "dropped: works as designed"
+  --page <path>                                  another page (a test copy); default ~/vault/design/build-notes.md
 """
 import argparse
 import contextlib
@@ -19,21 +22,21 @@ import pathlib
 import re
 import sys
 
-PAGE = pathlib.Path.home() / "vault" / "design" / "function-notes.md"
+PAGE = pathlib.Path.home() / "vault" / "design" / "build-notes.md"
 HEAD = """---
-title: "Function notes"
+title: "Build notes"
 type: note
 status: active
 owner: manager
 updated: {day}
-summary: "The owner's running notes on what the app does (problems, missing behaviour, usage), noted from the design view and chats; the Manager plans them with the owner."
+summary: "The running, consolidated list of what the Manager, Engineer and the rest need to know for the build: how the app should work, be used and feel, from the owner's design view notes and chats; planned with the owner."
 tags: [design, backlog]
 ---
-# Function notes
+# Build notes
 
 What the owner noticed about what the app does, noted as they gave feedback, so it can be worked on properly later.
-The design view adds items (`function-notes.py add`); the Manager adds what the owner raises in a chat, plans the
-open ones with them, and moves each to Done saying where it went (`function-notes.py done`). Nothing here is checked
+The design view adds items (`build-notes.py add`); the Manager adds what the owner raises in a chat, plans the
+open ones with them, and moves each to Done saying where it went (`build-notes.py done`). Nothing here is checked
 yet: a note is what the owner said and saw, not a diagnosis.
 
 ## Open
@@ -41,6 +44,7 @@ yet: a note is what the owner said and saw, not a diagnosis.
 ## Done
 """
 ITEM = re.compile(r"^- \[( |x)\] \*\*(F\d+)\*\* (.*)$")
+KINDS = ("function", "usage", "feel")
 
 
 def one_line(text, cap):
@@ -81,7 +85,7 @@ def blocks(text):
         o = lines.index("## Open")
         d = lines.index("## Done")
     except ValueError:
-        raise SystemExit("function-notes: the page has lost its '## Open' or '## Done' heading; put them back")
+        raise SystemExit("build-notes: the page has lost its '## Open' or '## Done' heading; put them back")
 
     def items(part):
         out, rest = [], []
@@ -107,8 +111,10 @@ def assemble(head, op, op_rest, dn, dn_rest):
 def parse(block):
     m = ITEM.match(block[0])
     parts = [p.strip() for p in m.group(3).split(" · ")]
-    item = {"id": m.group(2), "done": m.group(1) == "x", "note": parts[0], "screen": "", "when": "", "source": "",
-            "said": "", "evidence": [], "outcome": ""}
+    k = re.match(r"\((%s)\) (.*)$" % "|".join(KINDS), parts[0])
+    item = {"id": m.group(2), "done": m.group(1) == "x", "kind": k.group(1) if k else "function",
+            "note": k.group(2) if k else parts[0], "screen": "", "when": "", "source": "", "said": "", "evidence": [],
+            "outcome": ""}
     for p in parts[1:]:
         if p.startswith("#/"):
             item["screen"] = p
@@ -127,14 +133,15 @@ def parse(block):
     return item
 
 
-def add(note, said="", screen="", source="", evidence=(), page=PAGE):
+def add(note, said="", screen="", source="", evidence=(), page=PAGE, kind="function"):
     """Add an open item; returns its id (F<n>)."""
+    kind = kind if kind in KINDS else "function"
     page = pathlib.Path(page)
     with locked(page):
         head, op, op_rest, dn, dn_rest = blocks(read(page))
         used = [int(b[0].split("**F")[1].split("**")[0]) for b in op + dn]
         fid = f"F{max(used, default=0) + 1}"
-        bits = [one_line(note, 300) or "(no note)"] + [x for x in (one_line(screen, 80), datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+        bits = [f"({kind}) " + (one_line(note, 300) or "(no note)")] + [x for x in (one_line(screen, 80), datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
                                                                    one_line(source, 80)) if x]
         block = [f"- [ ] **{fid}** " + " · ".join(b.replace(" · ", ", ") for b in bits)]
         if said and one_line(said, 400) != one_line(note, 400):
@@ -176,6 +183,7 @@ def main(argv):
     a = sub.add_parser("add")
     a.add_argument("note")
     a.add_argument("--said", default="")
+    a.add_argument("--kind", default="function", choices=KINDS)
     a.add_argument("--screen", default="")
     a.add_argument("--source", default="chat")
     a.add_argument("--evidence", action="append", default=[])
@@ -187,13 +195,13 @@ def main(argv):
     d.add_argument("outcome")
     o = ap.parse_args(argv)
     if o.cmd == "add":
-        print(add(o.note, o.said, o.screen, o.source, o.evidence, o.page))
+        print(add(o.note, o.said, o.screen, o.source, o.evidence, o.page, o.kind))
     elif o.cmd == "list":
         its = items(o.page, o.done)
         if o.json:
             print(json.dumps(its))
         else:
-            print("\n".join(f"{i['id']}  {i['note']}" + (f"  ({i['screen']})" if i["screen"] else "")
+            print("\n".join(f"{i['id']}  ({i['kind']}) {i['note']}" + (f"  ({i['screen']})" if i["screen"] else "")
                             + (f"  -> {i['outcome']}" if i["outcome"] else "") for i in its) or "(none)")
     elif o.cmd == "done":
         if not close(o.id, o.outcome, o.page):
