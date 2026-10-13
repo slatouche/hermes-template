@@ -52,8 +52,10 @@ Example, project 1: you use the app on `10101`, and design it on `10151`. The re
 
 ## The design view
 One page per project (`1NN51`), the same everywhere: a toolbar above the app, the app below it, never covered.
-- **Notes:** type what you want. **Mark** (click elements), **Box** (draw round an area) or **Arrow** (from this to there) to point. Each note is one direct model call: a verdict in about 2 s, then the edits stream onto the page one by one, each flashing where it lands. Typical: first change in 2–3 s, a whole new screen in about 10 s. Nothing goes through a chat session, so nothing grows or slows down over a day of notes.
-- **Questions and Ask:** a question in a note ("why are there two Import buttons?") is a **review**. The designer thinks it through (10–20 s), shows its reasoning in a panel, and changes it, or keeps it and says why. **Ask** (or Ctrl+Enter) gets an answer and "Do it" suggestions, with no changes to the page.
+- **One box for everything:** a change, a problem, a question, a reaction, an undo in words; Enter sends. **Mark** (click elements), **Box** (draw round an area) or **Arrow** (from this to there) to point at what you mean. Each note is one direct model call: a verdict in about 2 s, then the edits stream onto the page one by one, each flashing where it lands. Typical: first change in 2–3 s, a whole new screen in about 10 s. Nothing goes through a chat session, so nothing grows or slows down over a day of notes.
+- **Fast or thinking, per part:** each part goes ⚡ fast, or 🧠 with thinking time when it needs working out (the cause isn't obvious, it spans several elements, you say an earlier try didn't work, or you write "think"). The status line shows which.
+- **Questions:** "is this right?" is judged with thinking time: changed if it's clearly wrong (one line says what; Undo takes it back), otherwise a short answer says why it's fine. "What font is this?" gets an answer and "Do it" buttons, and nothing changes. "Nice" changes nothing. How you want it to work ("keep answers short") is kept for every later note.
+- **When the designer needs you,** its question shows above the box with answers to click; while it's open, Enter answers it (Esc dismisses).
 - **Several things in one note** are split into parts, each on its own path at the same time. Quick ones land first.
 - **It checks its own work:** each change is checked on your page against what was asked; if the app's own styling overrules it, or it ends up hidden, clipped or covered, the page names the cause and the designer fixes it in the same note. Every option is checked, not just the one on show.
 - **Instant tools, no designer:** **Move** (drag an element somewhere) and **Text** (click text and type).
@@ -63,10 +65,12 @@ One page per project (`1NN51`), the same everywhere: a toolbar above the app, th
   - **screen:** a new simulated page with its own nav link;
   - **background:** the same call again with thinking on, about a minute, still live;
   - **function:** a card for the Manager, because it needs real code;
-  - **ask:** a one-line question in the toolbar.
+  - **think:** worked out first, then done;
+  - **review / answer:** a question judged (and fixed if wrong) or answered;
+  - **ask:** the designer's one-line question to you.
 - **Interactions:** behaviors (`sortable`, `toggle`, `dialog`, `tabs`, `toast`) make the mockup clickable without code. A new kind of interaction is proposed as a file, checked by script in about 2 s (no network, storage or eval, even disguised; sets up fast), and the Manager approves it for fit; after that every note can use it.
 - **Data:** an app with a back end runs a design copy on a copy of its data, so nothing you try touches your real data. **↻ Data** refreshes the copy from your real data (only changes are copied; your real data is only read), and a build going live does it automatically. An app without a back end uses placeholder data.
-- **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **Undo last**, or say what to undo ("undo the colour changes").
+- **The design layer:** everything you design lives in `vault/design/layer/`, on top of the app's real front end, which is never touched while you design. Engineer changes to the app show straight away. **↶ Undo** and **↷ Redo** are one click (the last change, or the last undone one); or write what to undo ("undo the colour changes", "bring back the glow").
 - **Agreed → live:**
   1. **Agreed** freezes the mockup and starts a build; the Manager plans its cards.
   2. The Designer folds the layer into the real front end on the build's branch, and the Engineer wires what must really work.

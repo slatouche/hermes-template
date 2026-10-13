@@ -165,8 +165,7 @@
     var d = dv(); if (d) d.unpickAll();
   }
   function escape() {
-    if (undoMode) setUndo(false);
-    else if (question) { closeQuestion(); $("answer").hidden = true; }
+    if (question) { closeQuestion(); $("answer").hidden = true; }
     else if (marks.length || ov.querySelector("rect, line")) clearMarks();
     else if (tool) setTool(tool);
   }
@@ -188,25 +187,23 @@
       var d2 = dv(); if (d2 && tool === "mark") d2.pick(true);
     }
   });
-  function send(ask) {
-    var text = $("note").value.trim(), mode = undoMode, replyTo = !mode && ask !== true && question ? question.note : null;
-    if (mode) setUndo(false);
-    if (mode && !text) { if (mode === "undo") undoLast(); else redoLast(); return; }   // nothing typed: the last one
+  // One box for everything: a change, a problem, a question, a reaction, an undo in words. The designer splits it into
+  // parts and sends each the fast or the thinking way; while it has asked you something, Enter answers it.
+  function send() {
+    var text = $("note").value.trim(), replyTo = question ? question.note : null;
     if (!text) return;
     var d = dv();
     var body = { note: text, marks: marks.map(function (m) { var c = Object.assign({}, m); delete c.drawn; return c; }),
-                 map: d ? d.map() : "", route: d ? d.route() : "#/", ask: ask === true && !mode, undo: mode === "undo", redo: mode === "redo", reply_to: replyTo };
+                 map: d ? d.map() : "", route: d ? d.route() : "#/", reply_to: replyTo };
     if (replyTo) { showAnswer("Answered: " + question.question, "Your answer: " + text, []); }
     if (question) closeQuestion();                           // answered, or moved on to something else
-    if (ask === true) showAnswer("Asking: " + text.slice(0, 80), "Thinking it through…", []);
     $("note").value = "";
     post("/dv/note", body).then(function (r) { if (r.error) say("Not sent: " + r.error, "err"); })
       .catch(function () { say("Not sent: the design view didn't answer", "err"); });
     marks = []; drawMarks(); clearDrawn(); if (tool === "mark") setTool("mark");
     var d3 = dv(); if (d3) d3.unpickAll();
   }
-  $("send").onclick = function () { send(false); };
-  $("ask").onclick = function () { send(true); };
+  $("send").onclick = function () { send(); };
 
   // ---- the answer panel: the Ask button's answer, and a review's reasoning ("why") ------------------------------------
   function showAnswer(title, text, sugg, append) {
@@ -218,7 +215,7 @@
     var box = $("answer-sugg"); box.innerHTML = "";
     (sugg || []).forEach(function (sg) {
       var b = document.createElement("button"); b.textContent = "Do it: " + sg; b.title = "Send this as a note";
-      b.onclick = function () { $("note").value = sg; send(false); };
+      b.onclick = function () { $("note").value = sg; send(); };
       box.appendChild(b);
     });
   }
@@ -233,7 +230,7 @@
     var box = $("answer-sugg"); box.innerHTML = "";
     (e.choices || []).forEach(function (c) {
       var b = document.createElement("button"); b.textContent = c; b.title = "Answer with this";
-      b.onclick = function () { $("note").value = c; send(false); };
+      b.onclick = function () { $("note").value = c; send(); };
       box.appendChild(b);
     });
     $("note").classList.add("answering");
@@ -244,36 +241,22 @@
     question = null;
     $("answer").classList.remove("asking");
     $("note").classList.remove("answering");
-    if (!undoMode) $("note").placeholder = notePlaceholder;
+    $("note").placeholder = notePlaceholder;
   }
-  $("note").addEventListener("keydown", function (e) {     // Enter sends; Ctrl+Enter asks
-    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(e.ctrlKey || e.metaKey); }
+  $("note").addEventListener("keydown", function (e) {     // Enter sends
+    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
   });
-  // Undo mode: the note box asks what to undo. Enter on an empty box takes back the last note; words ("the last 3",
-  // "put the Import button back") go to the designer as an undo request. Esc (or a sent note) leaves the mode.
-  var undoMode = false, notePlaceholder = $("note").placeholder;   // false, "undo" or "redo"
-  var HINT = {
-    undo: "Enter: undo the last note · or say what to undo (\"the last 3\", \"put the Import button back\")",
-    redo: "Enter: bring back the last undo · or say what to bring back (\"the green button\", \"the last 2\")"
-  };
-  // Undo or Redo puts the note box in that mode; nothing happens until Enter or Send. Clicking the same button again,
-  // or Esc, leaves the mode.
-  function setUndo(mode) {
-    undoMode = mode || false;
-    $("undo").classList.toggle("on", undoMode === "undo");
-    $("redo").classList.toggle("on", undoMode === "redo");
-    $("note").classList.toggle("undo", !!undoMode);
-    $("note").placeholder = undoMode ? HINT[undoMode] : notePlaceholder;
-    if (undoMode) $("note").focus();
-  }
+  var notePlaceholder = $("note").placeholder;
+  // Undo and Redo are one click: the last change, or the last undone one (no model). Anything more specific is written
+  // in the box ("undo the colour change", "bring back the glow").
   function undoLast() {
     post("/dv/undo", { last: true }).then(function (r) { say(r.error ? r.error : r.undone && r.undone.length ? "Undid " + r.undone.join(", ") : "Nothing to undo", r.error ? "err" : ""); });
   }
   function redoLast() {
     post("/dv/redo", {}).then(function (r) { say(r.error ? r.error : r.redone && r.redone.length ? "Brought back " + r.redone.join(", ") : "Nothing to redo", r.error ? "err" : ""); });
   }
-  $("undo").onclick = function () { setUndo(undoMode === "undo" ? false : "undo"); };
-  $("redo").onclick = function () { setUndo(undoMode === "redo" ? false : "redo"); };
+  $("undo").onclick = undoLast;
+  $("redo").onclick = redoLast;
 
   // ---- options: live switch, or side by side --------------------------------------------------------------------------
   function drawOpts() {
@@ -372,7 +355,7 @@
     }, "Refresh the design copy's data from the app's real data (your real data is only read)");
     var frozen = !!build.frozen;
     $("note").disabled = frozen; $("send").disabled = frozen;
-    $("note").placeholder = frozen ? "Agreed — the mockup is frozen while it's built and put live" : "Tell the designer what to change…";
+    $("note").placeholder = frozen ? "Agreed — the mockup is frozen while it's built and put live" : (question ? $("note").placeholder : notePlaceholder);
     if (frozen) {
       var rows = build.rows || [], st = build.state || "planning";
       var doneN = rows.filter(function (r) { return r.status === "done" || r.status === "archived"; }).length;
@@ -420,12 +403,16 @@
   }
   // A note in several parts: one line showing each part's kind and where it is.
   var parts = {};
+  // Each part's route: ⚡ fast (one quick call), 🧠 thinking (worked out first), 💬 an answer, and the rest.
+  var ROUTE = { quick: "⚡", options: "⚡", screen: "⚡", think: "🧠", review: "🧠", background: "🧠", answer: "💬",
+                ask: "❓", prefer: "📌", ack: "👍", function: "→" };
+  function routed(kind) { return (ROUTE[kind] || "") + " " + kind; }
   function partLine(id) {
     var ps = parts[id] || {}, marks = { doing: "…", starting: "…", done: "✓", card: "→ card", asked: "? question", failed: "✗" };
     return Object.keys(ps).length + " parts: " + Object.keys(ps).map(function (k) {
       var p = ps[k];
       var tail = p.state === "asked" ? " " + p.text : "";
-      return p.kind + " " + (marks[p.state] || p.state) + tail;
+      return routed(p.kind) + " " + (marks[p.state] || p.state) + tail;
     }).join(" · ");
   }
   function countUp(id) { counts[id] = (counts[id] || 0) + 1; return counts[id] + (counts[id] === 1 ? " edit" : " edits"); }
@@ -447,7 +434,7 @@
         busy[e.note] = partLine(e.note);
       }
     }
-    else if (e.type === "verdict") { if (!parts[e.note]) busy[e.note] = e.verdict + ": " + e.plan; }
+    else if (e.type === "verdict") { if (!parts[e.note]) busy[e.note] = routed(e.verdict) + ": " + e.plan; }
     else if (e.type === "op" && busy[e.note]) { busy[e.note] = busy[e.note].replace(/ \(\d+ edits?\)$/, "") + " (" + countUp(e.note) + ")"; }
     else if (e.type === "option") { optsState[e.set] = optsState[e.set] || { choices: {} }; optsState[e.set].choices[e.choice] = { name: e.name, ops: [] }; if (!active) active = { set: e.set, choice: e.choice }; drawOpts(); }
     else if (e.type === "done") {
@@ -460,7 +447,7 @@
         e.plan = partLine(e.note); delete parts[e.note];
       }
       var bad = e.refused && e.refused.length ? " · " + e.refused.length + " edit(s) refused" : "";
-      say((e.s ? "Done in " + e.s + " s · " : "Done · ") + e.verdict + ": " + (e.plan || "") + (e.edits ? " · " + e.edits + " edits" : "") + extra + bad,
+      say((e.s ? "Done in " + e.s + " s · " : "Done · ") + routed(e.verdict) + ": " + (e.plan || "") + (e.edits ? " · " + e.edits + " edits" : "") + extra + bad,
           e.refused && e.refused.length ? "err" : "");
     }
     else if (e.type === "question") { showQuestion(e); }

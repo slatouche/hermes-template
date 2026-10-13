@@ -171,6 +171,16 @@ def main():
     app.consume(stream("PART 1 think | find why the title glows and fix the cause", "END"), rec, n, time.monotonic(),
                 on_plan=plans.append)
     check("a change that needs working out is its own kind of part (think)", plans and plans[0][0]["kind"] == "think", plans)
+    plans.clear()
+    app.consume(stream("PART 1 ack | glad it works", "PART 2 answer | which font the title uses", "END"), rec, n,
+                time.monotonic(), on_plan=plans.append)
+    check("one box: a reaction and an information question are their own kinds", plans
+          and [p["kind"] for p in plans[0]] == ["ack", "answer"], plans)
+    ra = app.layer.new_note("think about the header spacing", [{"sel": "header", "kind": "area", "inside": ["h1", "nav", "button"]}], "#/")
+    ha = app.ask({"id": ra["id"], "text": ra["note"], "route": "#/", "marks": [{"sel": "header", "kind": "area", "inside": ["h1", "nav", "button"]}]})
+    check("'think' in a note, and a drawn area over several elements, both point to thinking time",
+          "asked you to think" in ha and "area over several elements" in ha, ha[-400:])
+    check("the notes list says which notes were taken back (undo and redo in words)", "Notes so far" in ha)
     r1 = app.layer.new_note("make the title glow", [{"sel": "h1.title"}], "#/")
     app.layer.finish(dict(r1, verdict="quick", plan="Glow on the title"))
     r2 = app.layer.new_note("it still looks wrong", [], "#/")

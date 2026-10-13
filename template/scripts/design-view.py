@@ -43,7 +43,7 @@ TYPES = {".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=u
 RULES = """You change how a live web app looks while its owner watches. Answer in lines and nothing else.
 
 First the plan: split the note into parts, one line each, then a line END.
-PART 1 <quick|think|options|screen|background|function|review|ask|prefer> | <one short line for the owner: what you'll do>
+PART 1 <quick|think|options|screen|background|function|review|answer|ask|prefer|ack> | <one short line for the owner: what you'll do>
 PART 2 ...
 END
 Splitting: one part per separate ask; asks about the same element or area are one part; a note with one ask is one
@@ -63,13 +63,19 @@ part; at most 5 parts. Kinds:
 - background: interaction work no ready-made behavior covers (custom animation choreography, multi-step flows, new
   kinds of widget).
 - function: it needs real behaviour or data (parsing, saving, importing, accounts). The plan line is for the Manager.
-- review: the note asks a question about what's on the page ("why is there…", "should this…", "does this make
-  sense?", "is this right?"). That is the owner asking you to judge it: think about whether it's right, what should
-  be there instead, and change it if it isn't. Only for a question, never for a problem stated (that's quick). Never
-  do a review part yourself here; it is thought through separately.
+- review: a judgement question about what's on the page ("should this…", "is this right?", "does this make
+  sense?", "why is there…"): judge it, change it if it's clearly wrong, otherwise say briefly why it's fine. Only
+  for a question, never for a problem stated (that's quick). Never do a review part yourself here; it is thought
+  through separately.
+- answer: a question that wants information or an opinion, not a change ("what font is this?", "how would sorting
+  work?", "what else could go here?"). It is answered, with changes offered for the owner to choose; the page
+  doesn't change. Never do it yourself here.
 - prefer: a standing instruction about how you work with the owner, not about the page ("stop explaining unless
   you need me", "always tell me the percentage", "use British spelling"). The plan line is the instruction in a few
   words; it is kept and applies to every later note. To drop one they gave before: "drop: <it>".
+- ack: a reaction with nothing to do ("nice", "much better", "ok"). Nothing changes.
+- Undo and redo in words ("undo the colour change", "bring back the glow"): a quick part with an undo or redo edit
+  naming the notes (ids from "Notes so far"; one marked [taken back] can be brought back).
 - ask: you can't tell what they want (e.g. a bare "undo"). The plan line is one short question; when there are a
   few clear answers, add them after it, each after " :: " (e.g. "Which one should go? :: the toolbar button :: the
   nav link"). The owner's answer comes back as a new note with your question and their original note.
@@ -637,7 +643,9 @@ class App:
             notes = ("Changes that were taken back, newest first (only these can be brought back; \"the last N\" means 1 "
                      "to N of this list):\n" + ("\n".join(f"{i}. {line(h)}" for i, h in enumerate(back, 1)) or "(none)"))
         else:
-            notes = "\n".join(map(line, self.layer.history[-6:])) or "(none)"
+            back = {u["note"] for u in self.layer.undone}
+            notes = "\n".join(line(h) + (" [taken back]" if h["id"] in back else "")
+                              for h in self.layer.history[-10:]) or "(none)"
         def mark(m):
             if m.get("kind") == "area":
                 return (f'- an area the owner drew ({m.get("rect")}), inside {m.get("sel")}; it covers: '
@@ -657,6 +665,12 @@ class App:
                     hint = (f"\n\nThis follows {prev[0]['id']} ({(prev[0].get('plan') or '')[:120]})"
                             + (" on the same element" if same else "") + (": the owner says it isn't right yet" if retry else "")
                             + ". Plan it as think unless the fix is plain.")
+            wide = [m for m in n.get("marks") or [] if m.get("kind") == "arrow"
+                    or (m.get("kind") == "area" and len(m.get("inside") or []) >= 3)]
+            if wide:
+                hint += "\n\nThe owner drew " + ("an arrow" if wide[0].get("kind") == "arrow" else "an area over several elements") + ": a change to it usually needs working out (think)."
+            if re.search(r"\bthink\b", n["text"], re.I):
+                hint += "\n\nThe owner asked you to think: plan a change as think, a question as review."
         # The page's latest map of this screen, not the one from when the note was sent: a note that waited in the
         # queue sees what the notes before it changed.
         page = self.maps.get(n.get("route") or "#/") or n.get("map") or ""
@@ -723,6 +737,9 @@ class App:
                     cards.append(c)
                     self.events.send("part", note=n["id"], k=p["k"], kind=p["kind"], state="card", card=c,
                                      s=round(time.monotonic() - t0, 2))
+                elif p["kind"] == "ack":
+                    self.events.send("part", note=n["id"], k=p["k"], kind="ack", state="done", text="Noted",
+                                     s=round(time.monotonic() - t0, 2))
                 elif p["kind"] == "prefer":
                     said_ = self.prefer(p["text"])
                     self.events.send("part", note=n["id"], k=p["k"], kind="prefer", state="done", text=said_,
@@ -785,7 +802,8 @@ class App:
                          s=rec["s"], tokens=rec["tokens"])
 
     def run_answer(self, n):
-        """The Ask button: the designer's answer to a question, with suggestions the owner can send as notes. Nothing
+        """A note sent as a question only (dv API "ask": the toolbar sends everything through the plan now, where a
+        question is an answer part): the designer's answer, with suggestions the owner can send as notes. Nothing
         on the page changes."""
         mc = model_config()
         if not mc:
@@ -795,8 +813,19 @@ class App:
         self.events.send("doing", note=n["id"], text=n["text"][:140])
         msgs = [{"role": "system", "content": self.pack().replace(RULES.split("\n\nEdits, each")[0], ANSWER_RULES)},
                 {"role": "user", "content": self.ask(n)}]
+        ans, sugg, usage = self.answer_stream(mc, msgs, n, t0, think=True, usage_out=True)
+        rec["answer"], rec["suggest"], rec["plan"] = ans, sugg, (ans.split("\n")[0] if ans else "")[:200]
+        rec["s"] = round(time.monotonic() - t0, 2)
+        rec["tokens"] = {"in": usage.get("prompt_tokens"), "cached": usage.get("prompt_cache_hit_tokens"), "out": usage.get("completion_tokens")}
+        self.layer.finish(rec)
+        self.events.send("done", note=n["id"], verdict="answer", plan="answered (see the panel)", edits=0, s=rec["s"],
+                         tokens=rec["tokens"])
+
+    def answer_stream(self, mc, msgs, n, t0, think=False, usage_out=False):
+        """An answer streamed into the owner's panel as it comes, with SUGGEST lines as "Do it" buttons."""
         lines, sugg, usage = [], [], {}
-        for kind, val in stream_lines(mc, msgs, session=f"dv-{self.project}-deep", max_tokens=6000, thinking=True):
+        for kind, val in stream_lines(mc, msgs, session=f"dv-{self.project}" + ("-deep" if think else ""),
+                                      max_tokens=6000 if think else 2500, thinking=think):
             if kind == "usage":
                 usage = val
                 continue
@@ -806,12 +835,8 @@ class App:
                 lines.append(val)
             self.events.send("answer", note=n["id"], title="Answer", text="\n".join(lines), suggest=sugg, kind="answer",
                              s=round(time.monotonic() - t0, 2))
-        rec["answer"], rec["suggest"], rec["plan"] = "\n".join(lines), sugg, (lines[0] if lines else "")[:200]
-        rec["s"] = round(time.monotonic() - t0, 2)
-        rec["tokens"] = {"in": usage.get("prompt_tokens"), "cached": usage.get("prompt_cache_hit_tokens"), "out": usage.get("completion_tokens")}
-        self.layer.finish(rec)
-        self.events.send("done", note=n["id"], verdict="answer", plan="answered (see the panel)", edits=0, s=rec["s"],
-                         tokens=rec["tokens"])
+        ans = "\n".join(lines).strip()
+        return (ans, sugg, usage) if usage_out else (ans, sugg)
 
     def run_part(self, mc, rec, n, t0, p, parts, add_up, cards):
         """One part of a note that isn't quick, in parallel with the rest: options, a new screen, or background work
@@ -821,7 +846,13 @@ class App:
         plan = "\n".join(f"PART {q['k']} {q['kind']} | {q['text']}" for q in parts)
         focus = f"\n\nThe plan for this note:\n{plan}\n\nYour part: PART {p['k']} {p['kind']} | {p['text']}\n"
         try:
-            if p["kind"] == "background":
+            if p["kind"] == "answer":
+                msgs = [{"role": "system", "content": self.pack().replace(RULES.split("\n\nEdits, each")[0], ANSWER_RULES)},
+                        {"role": "user", "content": self.ask(n) + focus + "Answer only this part."}]
+                ans, sugg = self.answer_stream(mc, msgs, n, t0, think=False)
+                rec["answer"], rec["suggest"] = ans, sugg
+                e, r, u = 0, [], {}
+            elif p["kind"] == "background":
                 others = "\n\n".join(f"Map of {r}:\n{m[:5000]}" for r, m in list(self.maps.items())[-5:] if r != n.get("route"))
                 msgs = [{"role": "system", "content": self.pack() + DEEP_RULES},
                         {"role": "user", "content": self.ask(n) + (f"\n\nOther screens:\n{others}" if others else "") + focus}]
@@ -1020,14 +1051,14 @@ class App:
                 proposal = {"name": m.group(1), "why": m.group(2).strip(), "js": ""}
                 continue
             if not planned:
-                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|think|options|screen|background|function|review|ask|prefer)>?\s*\|?\s*(.*)", line, re.I)
+                m = re.match(r"PART\s+(\d+)\s*[:.]?\s*<?(quick|think|options|screen|background|function|review|answer|ask|prefer|ack)>?\s*[|:\-–]?\s*(.*)", line, re.I)
                 if m and len(plan) < 5:
                     plan.append({"k": int(m.group(1)), "kind": m.group(2).lower(), "text": m.group(3).strip()})
                     continue
                 m = re.match(r"VERDICT\s+<?(\w+)>?\s*\|?\s*(.*)", line, re.I)       # the single-verdict form still works
                 if m and not plan:
                     kind_ = m.group(1).lower()
-                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "think", "options", "screen", "background", "function", "review", "ask", "prefer")
+                    plan.append({"k": 1, "kind": kind_ if kind_ in ("quick", "think", "options", "screen", "background", "function", "review", "answer", "ask", "prefer", "ack")
                                  else "quick", "text": m.group(2).strip()})
                     finish_plan()
                     continue
