@@ -392,21 +392,20 @@
   loadState();
   setInterval(function () { if (build.frozen) drawBuild(); }, 30000);   // the minutes on the chips
 
-  // ---- the function backlog: problems with what the app does, logged for the Manager (planned with them there) ----------
+  // ---- function notes: what you said about what the app does, noted for proper work later (planned with the Manager) ----
   var functions = [];
   function loadFunctions() {
     fetch("/dv/functions", { cache: "no-store" }).then(function (r) { return r.json(); }).then(function (d) {
       functions = d.items || [];
       $("fns").hidden = !functions.length;
       $("fns").textContent = "🔧 " + functions.length;
-      $("fns").title = functions.length + " function problem" + (functions.length === 1 ? "" : "s") + " on the Manager's backlog: click to see them";
+      $("fns").title = functions.length + " function note" + (functions.length === 1 ? "" : "s") + " waiting for the Manager: click to see them";
     }).catch(function () {});
   }
   $("fns").onclick = function () {
-    var st = { triage: "backlog", ready: "next", todo: "next", running: "being worked on", blocked: "waiting", review: "in review" };
-    showAnswer("Function problems with the Manager (" + functions.length + ")", functions.map(function (f) {
-      return "• " + f.title.replace(/^Function( \(urgent\))?: /, "") + "  (" + (st[f.status] || f.status) + ", " + f.id + ")";
-    }).join("\n") + "\n\nPlan them with the Manager in a chat: what goes in the next build, what gets checked first, what's dropped.", []);
+    showAnswer("Function notes (" + functions.length + " open)", functions.map(function (f) {
+      return "• " + f.id + " · " + f.note + (f.screen ? "  (" + f.screen + ")" : "");
+    }).join("\n") + "\n\nGo through them with the Manager in a chat: what goes in the next build, what gets checked first, what's dropped.", []);
   };
   loadFunctions();
   setInterval(loadFunctions, 60000);
@@ -428,7 +427,7 @@
                 ask: "❓", prefer: "📌", ack: "👍", function: "🔧" };
   function routed(kind) { return (ROUTE[kind] || "") + " " + kind; }
   function partLine(id) {
-    var ps = parts[id] || {}, marks = { doing: "…", starting: "…", done: "✓", card: "→ card", asked: "? question", failed: "✗" };
+    var ps = parts[id] || {}, marks = { doing: "…", starting: "…", done: "✓", card: "→ card", noted: "📝 noted", asked: "? question", failed: "✗" };
     return Object.keys(ps).length + " parts: " + Object.keys(ps).map(function (k) {
       var p = ps[k];
       var tail = p.state === "asked" ? " " + p.text : "";
@@ -461,8 +460,9 @@
       if (!busy[e.note] && e.verdict === "direct") return;
       delete busy[e.note];
       var cs = e.cards && e.cards.length ? e.cards : (e.card ? [e.card] : []);
-      var extra = cs.map(function (c) { return c.label ? " → " + c.label : " → card for the " + c.to + (c.id ? " (" + c.id + ")" : ""); }).join("");
-      if (cs.length) loadFunctions();
+      var extra = (e.noted && e.noted.length ? " → noted for later (" + e.noted.join(", ") + ")" : "") +
+        cs.map(function (c) { return c.label ? " → " + c.label : " → card for the " + c.to + (c.id ? " (" + c.id + ")" : ""); }).join("");
+      if (cs.length || (e.noted && e.noted.length)) loadFunctions();
       if (parts[e.note]) {
         Object.keys(parts[e.note]).forEach(function (k) { var p = parts[e.note][k]; if (p.state === "doing" || p.state === "starting") p.state = "done"; });
         e.plan = partLine(e.note); delete parts[e.note];

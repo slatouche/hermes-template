@@ -197,90 +197,104 @@ def main():
                 rec, n, time.monotonic(), mode="edits", part=part)
     check("a review's reasoning is kept with its part (shown only when needed)", part.get("why", "").startswith("The glow"), part)
 
-    # ---- a function problem: judged with the evidence, then the Manager's backlog -------------------------------------
-    f = m.parse_function("VERDICT bug\nTITLE Import button does nothing on a Moxfield link that is far too long to fit\n"
-                         "WHERE data: the API answered 500\nSTEPS\n1. Open #/decks\n2. Paste a link, click Import\n"
-                         "EXPECTED the deck appears\nACTUAL nothing happens\nEVIDENCE\n- POST /api/import -> 500\n- console: boom")
-    check("the judge's write-up is read, steps and evidence over several lines, the title cut to 50",
-          f["verdict"] == "bug" and f["steps"].count("\n") == 1 and "boom" in f["evidence"] and len(f["title"]) <= 50
-          and f["where"].startswith("data"), f)
-    check("'same <id>' names the backlog card; an unreadable verdict counts as a bug (logged, not lost)",
-          m.parse_function("VERDICT same t_0042\nSAY it's on the list")["same"] == "t_0042"
-          and m.parse_function("I think it's broken")["verdict"] == "bug")
-    check("a stray edit line in the write-up is left out of it",
-          m.parse_function('VERDICT bug\nSAY it is dead\n{"op":"link","sel":"b","to":"#/x"}')["say"] == "it is dead")
+    # ---- function points: noted for later on the running list, never worked on here -----------------------------------
     rx = app.layer.new_note("new deck does nothing", [], "#/")
     ex, _, _, _ = app.consume(stream("PART 1 function | New deck does nothing", "END", '{"op":"behavior","name":"toast","sel":"b","text":"soon"}'),
                               rx, {"id": rx["id"], "text": rx["note"], "route": "#/"}, time.monotonic(), on_plan=lambda p: None)
     check("a plan with no change to make keeps no edits from the planning call", ex == 0 and rx.get("dropped"), (ex, rx.get("dropped")))
-    app.log_api("POST", "/api/import", 500, 41, b'{"error":"boom"}')
-    app.log_api("GET", "/api/decks", 200, 12)
-    nf = {"id": "n90", "text": "the import button does nothing", "route": "#/decks", "marks": [{"sel": "#import"}],
-          "trail": [{"did": "set", "on": "#link", "text": "https://moxfield.com/decks/x", "route": "#/decks"},
-                    {"did": "click", "on": "#import", "text": "Import", "route": "#/decks"}],
-          "errors": [{"kind": "console", "text": "import failed: 500"}]}
-    ev = app.evidence(nf)
-    check("the evidence: the owner's last actions, the page's errors, the API calls with a failed one's answer, the backlog",
-          "click #import" in ev and "import failed: 500" in ev and "POST /api/import -> 500" in ev and '"boom"' in ev
-          and "Already in the backlog" in ev, ev)
     calls = []
 
     def fake_stream(mc, msgs, session, max_tokens, thinking):
         calls.append(thinking)
         if not thinking:
-            yield "line", "VERDICT fine"
+            yield "line", "WHY fine"
         yield "usage", {"completion_tokens": max_tokens}
     real_stream = m._stream
     m._stream = fake_stream
     out = list(m.stream_lines({}, [], "s", 8000, thinking=True))
     m._stream = real_stream
     check("a thinking call that answers nothing is asked once more without thinking (never an empty part)",
-          calls == [True, False] and ("line", "VERDICT fine") in out and out[-1] == ("usage", {"prompt_tokens": 0, "completion_tokens": 11000, "prompt_cache_hit_tokens": 0}), (calls, out))
-    said_lines = []
+          calls == [True, False] and ("line", "WHY fine") in out and out[-1] == ("usage", {"prompt_tokens": 0, "completion_tokens": 11000, "prompt_cache_hit_tokens": 0}), (calls, out))
+    app.log_api("POST", "/api/import", 500, 41, b'{"error":"boom"}')
+    app.log_api("GET", "/api/decks", 200, 12)
+    nf = {"text": "the import button does nothing", "route": "#/decks", "marks": [{"sel": "#import"}],
+          "trail": [{"did": "set", "on": "#link", "text": "https://moxfield.com/decks/x", "route": "#/decks"},
+                    {"did": "click", "on": "#import", "text": "Import", "route": "#/decks"}],
+          "errors": [{"kind": "console", "text": "import failed: 500"}]}
+    saw = app.saw(nf)
+    check("what the page saw is kept as it was: last actions, page errors, failed requests only (no model)",
+          any("click #import" in x for x in saw) and any("import failed: 500" in x for x in saw)
+          and any("POST /api/import -> 500" in x and "boom" in x for x in saw) and not any("/api/decks" in x for x in saw), saw)
+    check("...and no actions or errors for a note that has none", all(x.startswith("failed requests") for x in app.saw({"text": "x"})))
+
+    # a whole note through run_note: one model call (the plan); the move is done, the function point noted on the spot
+    plan_calls, plan_lines = [], []
+    m.model_config = lambda: {"model": "test", "url": "http://127.0.0.1:9", "key": "x"}
     m.stream_lines = lambda mc, msgs, session, max_tokens=3000, thinking=False: (
-        [("line", x) for x in said_lines] + [("usage", {})])
+        plan_calls.append(session) or [("line", x) for x in plan_lines] + [("usage", {})])
     evq = app.events.add()
 
-    def judge(text, lines):
-        said_lines[:] = lines
-        r_ = app.layer.new_note(text, [], "#/decks")
-        n_ = dict(nf, text=text, id=r_["id"])
-        cards_ = []
-        app.run_function({}, r_, n_, time.monotonic(), {"k": 1, "kind": "function", "text": text}, [], cards_)
+    def run(text, lines, route="#/decks"):
+        plan_lines[:] = lines
+        plan_calls.clear()
+        nid = app.layer.note_id()
+        app.run_note(dict(nf, id=nid, text=text, route=route))
         evs = []
         while not evq.empty():
             evs.append(json.loads(evq.get()))
-        return r_, cards_, evs
-    r1, c1, e1 = judge("the import button does nothing", ["VERDICT bug", "TITLE Import does nothing", "EVIDENCE", "- 500"])
-    check("a bug goes on the backlog as a triage card for the Manager, with the steps and the evidence",
-          c1 and app.backlog() and app.backlog()[0]["title"] == "Function: Import does nothing"
-          and app.backlog()[0]["status"] == "triage" and r1["function"]["card"] == c1[0]["id"]
-          and any(e.get("state") == "card" for e in e1), (c1, app.backlog()))
-    first = app.backlog()[0]["id"]
-    r2, c2, e2 = judge("import still broken", [f"VERDICT same {first}", "SAY already on the list"])
-    check("the same problem again: added to that card, no second card", len(app.backlog()) == 1 and c2
-          and c2[0].get("comment") and c2[0]["id"] == first, (c2, app.backlog()))
-    r3, c3, e3 = judge("the total shows 59, not 60", ["VERDICT fine", "SAY The commander is counted apart: 59 + 1."])
-    ans = [e for e in e3 if e["type"] == "answer"]
-    check("works as designed: no card, a short why, and 'Log it anyway'", not c3 and ans
-          and "commander" in ans[0]["text"] and ans[0]["suggest"][0].startswith("Log it anyway"), (c3, e3))
-    r4, c4, _ = judge("Log it anyway: the total shows 59, not 60", ["VERDICT fine", "SAY it's right"])
-    check("'log it anyway' logs it whatever the judge thinks", c4 and len(app.backlog()) == 2, (c4, app.backlog()))
-    r5, c5, _ = judge("saving decks is broken, urgent", ["VERDICT bug", "TITLE Saving decks fails"])
-    check("'urgent' makes it ready for the Manager now, not backlog", c5 and app.backlog()[-1]["status"] == "ready"
-          and app.backlog()[-1]["title"].startswith("Function (urgent): "), app.backlog())
-    r6, c6, e6 = judge("the import is weird", ["VERDICT unclear", "QUESTION Which link did you paste? :: Moxfield :: Archidekt"])
-    check("unclear: one question to the owner, no card", not c6 and any(e["type"] == "question" and e["choices"] == ["Moxfield", "Archidekt"]
-          for e in e6) and r6["id"] in app.pending, e6)
+        return [h for h in app.layer.history if h["id"] == nid][-1], evs
+    ops_before = len(app.layer.ops)
+    r1, e1 = run("this shouldn't be in my list of cards, it should be on the sidebar as the last item in the column. possibly with some functions to fix the issues found",
+                 ["PART 1 quick | move the issues panel to the end of the sidebar column",
+                  "PART 2 function | the issues panel in the sidebar should offer actions that fix the issues it lists", "END",
+                  '{"op":"move","sel":".issues","where":"into","ref":".sidebar"}'])
+    done1 = [e for e in e1 if e["type"] == "done"][-1]
+    open1 = app.open_notes()
+    page = (app.layer.root / "function-notes.md").read_text(encoding="utf-8")
+    check("design feedback with a function point: the change is made and the point noted, in one model call",
+          len(app.layer.ops) == ops_before + 1 and len(plan_calls) == 1 and done1.get("noted") == ["F1"] and r1.get("noted") == ["F1"]
+          and open1 and open1[0]["note"] == "the issues panel in the sidebar should offer actions that fix the issues it lists"
+          and open1[0]["screen"] == "#/decks", (len(app.layer.ops) - ops_before, plan_calls, done1, open1))
+    check("...the list keeps the owner's words, where it was said, and what the page saw",
+          'said: "this shouldn\'t be in my list of cards' in page and f"design view {r1['id']}" in page
+          and "failed requests: POST /api/import -> 500" in page and page.startswith("---\n")
+          and all(f"\n{k}:" in page.split("\n---\n")[0] for k in ("title", "type", "status", "owner", "updated", "summary")), page[:900])
+    r2, e2 = run("saving decks is broken, urgent", ["PART 1 function | saving a deck fails", "END"])
+    check("'urgent': noted, and the Manager gets a card now", r2.get("cards") and r2["cards"][0]["title"].startswith("Function (urgent): ")
+          and "urgent: card" in (app.layer.root / "function-notes.md").read_text(encoding="utf-8") and r2.get("noted") == ["F2"], r2.get("cards"))
+    app.events.drop(evq)
+
+    # the Manager's side: the same list from a chat, and every item ends up saying where it went
+    fnp = str(app.layer.root / "function-notes.md")
+    fn_cli = [sys.executable, str(ROOT / "scripts" / "function-notes.py"), "--page", fnp]
+    r = subprocess.run(fn_cli + ["add", "deck export should include the sideboard", "--said", "export misses my sideboard"],
+                       capture_output=True, text=True)
+    ls = json.loads(subprocess.run(fn_cli + ["list", "--json"], capture_output=True, text=True).stdout)
+    check("a note from a chat goes on the same list (function-notes.py add)", r.stdout.strip() == "F3"
+          and [i["id"] for i in ls] == ["F1", "F2", "F3"] and ls[2]["source"] == "chat", (r.stdout, r.stderr, ls))
+    txt = pathlib.Path(fnp).read_text(encoding="utf-8")
+    pathlib.Path(fnp).write_text(txt.replace("## Open\n", "## Open\nThe Manager's own line under Open.\n"), encoding="utf-8")
+    r = subprocess.run(fn_cli + ["done", "F1", "build design-20261014-0910"], capture_output=True, text=True)
+    bad = subprocess.run(fn_cli + ["done", "F9", "x"], capture_output=True, text=True)
+    txt = pathlib.Path(fnp).read_text(encoding="utf-8")
+    left = json.loads(subprocess.run(fn_cli + ["list", "--json"], capture_output=True, text=True).stdout)
+    gone = json.loads(subprocess.run(fn_cli + ["list", "--json", "--done"], capture_output=True, text=True).stdout)
+    check("done moves an item under Done saying where it went; the rest and any hand-written lines stay",
+          r.returncode == 0 and bad.returncode == 1 and [i["id"] for i in left] == ["F2", "F3"]
+          and gone and gone[0]["id"] == "F1" and gone[0]["outcome"].startswith("build design-20261014-0910")
+          and "The Manager's own line under Open." in txt and txt.index("**F1**") > txt.index("## Done"), (r.stderr, txt[-700:]))
+    check("ids never repeat once items are done", subprocess.run(fn_cli + ["add", "another"], capture_output=True, text=True).stdout.strip() == "F4")
+
     rf = app.layer.new_note("new deck does nothing", [], "#/")
     app.layer.finish(dict(rf, verdict="function", plan="New deck does nothing"))
     rs = app.layer.new_note("the new deck button is still dead", [], "#/")
     hs = app.ask({"id": rs["id"], "text": rs["note"], "route": "#/", "marks": []})
-    check("'still broken' after a function problem: the same report for the backlog, not a mocked-up fix",
-          "function problem sent to the Manager's backlog" in hs and "Plan it as think" not in hs, hs[-300:])
-    hl = app.ask({"id": "n99", "text": "log it anyway please", "route": "#/", "marks": []})
-    check("'log it anyway' tells the planner it's a function part", "plan it as one function part" in hl, hl[-200:])
-    app.events.drop(evq)
+    check("'still broken' after a function point: noted again with the detail, not a mocked-up fix",
+          "a function point noted for later" in hs and "Plan it as think" not in hs, hs[-300:])
+    hl = app.ask({"id": "n99", "text": "put that on the backlog please", "route": "#/", "marks": []})
+    hn = app.ask({"id": "n98", "text": "note that the header is too tall", "route": "#/", "marks": []})
+    check("'put it on the backlog' tells the planner it's a function part; 'note that the header…' doesn't",
+          "noted for later: plan it as a function part" in hl and "noted for later: plan it as" not in hn, (hl[-200:], hn[-200:]))
 
     # ---- the server ------------------------------------------------------------------------------------------------
     (home / ".hermes").mkdir(exist_ok=True)

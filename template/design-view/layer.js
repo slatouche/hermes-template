@@ -652,7 +652,7 @@
     return true;
   }
 
-  // ---- what the app did, for a function problem the owner reports: their last actions on the page and the errors it
+  // ---- what the page saw, kept with a function note: the owner's last actions on the page and the errors it
   // logged (a failed picture or script too), sent with each note. Not in a side-by-side or measuring frame.
   var trail = [], errs = [];
   function keep(list, item) { item.t = Date.now() / 1000; list.push(item); if (list.length > 12) list.shift(); }

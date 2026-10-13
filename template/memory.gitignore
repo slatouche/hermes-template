@@ -42,3 +42,4 @@ auth*.json
 *.key
 .usage.json
 *.lock
+__pycache__/
