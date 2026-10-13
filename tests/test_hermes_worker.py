@@ -6,6 +6,7 @@
 import json
 import os
 import pathlib
+import shutil
 import sqlite3
 import subprocess
 import sys
@@ -232,6 +233,7 @@ def main():
     got, log = run("t_32", "Context: not design.\nSession: eng:x")
     check("other cards keep the plain first message", bool(got) and got[got.index("-q") + 1] == "work kanban task t_32", got)
     os.environ.pop("HERMES_KANBAN_TASK", None)
+    shutil.rmtree(tmp, ignore_errors=True)                  # the temporary profile: nothing left behind
     print(f"\n{'ALL PASS' if not failures else str(len(failures)) + ' FAILED'}")
     return 1 if failures else 0
 
