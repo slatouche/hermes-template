@@ -1974,7 +1974,8 @@ class App:
             f"layer stays frozen (the reference) until the build is live.\n\n"
             f"The build is `{slug}`: branch `design/{stamp}`, worktree `{wt}`. Read the build sheet first: `dv.py export` "
             f"(what the owner asked, change by change in their words, the edits, and this round's build notes).\n\n"
-            f"Plan it as few cards as the work allows (usually one Engineer card per area of the app), each with the line "
+            f"Plan it as few cards as possible: one Engineer card for the whole fold, unless it genuinely can't be checked or "
+            f"finished as one (then one per area, never one per screen), each with the line "
             f"`Build: {slug}` and `--workspace dir:{wt}`:\n"
             f"- **Engineer**: fold the look into the real front end exactly (tokens -> theme.css, rules -> ui.css, screens and "
             f"markup) and make it work: the API, data, state and this round's build notes. Where it needs something the "
@@ -2226,6 +2227,12 @@ def make_handler(app):
 
         def log_message(self, *a):
             pass
+
+        def handle(self):
+            try:
+                super().handle()
+            except (BrokenPipeError, ConnectionResetError):        # the browser left before the answer was sent (a page
+                pass                                                # reloaded or moved on mid-load): nothing to report
 
         def send(self, code, body, ctype="application/json", extra=None):
             if isinstance(body, (dict, list)):
