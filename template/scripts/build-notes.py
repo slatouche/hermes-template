@@ -12,6 +12,10 @@ saying where it went (a build, a card, or dropped and why).
                          [--evidence "<line>"]...
   build-notes.py list [--json]                the open ones
   build-notes.py done F3 "<where it went>"     e.g. "build design-20261014-0910", "card t_ab12", "dropped: works as designed"
+  build-notes.py tidy [--days 30] [--dry]      keep it short and single (the vault sweep runs it every 15 min, no model):
+                                               open items saying the same thing are merged into the older one (its
+                                               words and evidence kept, the newer one done as "merged into F<n>"),
+                                               and Done items older than --days move to build-notes-archive.md
   --page <path>                                  another page (a test copy); default ~/vault/design/build-notes.md
 """
 import argparse
@@ -176,6 +180,70 @@ def close(fid, outcome, page=PAGE):
     return True
 
 
+def same(a, b):
+    """Two notes saying the same thing: most of their words in common (as the design view judges it)."""
+    wa, wb = (set(re.findall(r"[a-z0-9]{3,}", x.lower())) for x in (a, b))
+    return bool(wa and wb) and len(wa & wb) / min(len(wa), len(wb)) >= 0.75
+
+
+ARCHIVE_HEAD = """---
+title: "Build notes: archive"
+type: note
+status: active
+owner: manager
+updated: {day}
+summary: "Build notes done more than a month ago, moved here from build-notes.md to keep that page short. Each says where it went."
+tags: [design, backlog, archive]
+---
+# Build notes: archive
+
+Done items from [[design/build-notes]], oldest at the bottom.
+"""
+
+
+def tidy(page=PAGE, days=30, dry=False):
+    """Merge open items that say the same thing (into the older one: its line stays, the newer one's words and
+    evidence are added under it, and the newer one goes to Done as merged); move Done items older than `days` to the
+    archive page. -> (merged [(newer, older)], archived [ids])"""
+    page = pathlib.Path(page)
+    if not page.exists():
+        return [], []
+    with locked(page):
+        head, op, op_rest, dn, dn_rest = blocks(read(page))
+        kept, merged, closed = [], [], []
+        for b in op:                                           # oldest first, as they were added
+            it = parse(b)
+            twin = next((k for k in kept if same(parse(k)["note"], it["note"])), None)
+            if twin is None:
+                kept.append(b)
+                continue
+            into = parse(twin)["id"]
+            twin.append(f"  - merged {it['id']}: {it['note']}" + (f" · {it['screen']}" if it["screen"] and it["screen"] != parse(twin)["screen"] else ""))
+            twin += [ln for ln in b[1:] if ln.strip()]
+            closed.append([b[0].replace("- [ ] ", "- [x] ", 1)] + b[1:] + [f"  - went: merged into {into} ({datetime.date.today().isoformat()})"])
+            merged.append((it["id"], into))
+        cutoff = datetime.date.today() - datetime.timedelta(days=days)
+        old = []
+        for b in dn:
+            went = re.findall(r"\((\d{4}-\d\d-\d\d)\)\s*$", "\n".join(b), re.M)
+            if went and datetime.date.fromisoformat(went[-1]) < cutoff:
+                old.append(b)
+        if (merged or old) and not dry:
+            dn = closed + [b for b in dn if b not in old]
+            write(page, assemble(head, kept, op_rest, dn, dn_rest))
+            if old:
+                arch = page.with_name(page.stem + "-archive.md")
+                text = arch.read_text(encoding="utf-8") if arch.exists() else ARCHIVE_HEAD.format(day=datetime.date.today().isoformat())
+                head_a, _, body = text.partition("\n# Build notes: archive\n")
+                body_lines = body.split("\n")
+                intro = body_lines[:2]                         # the blank line and the "Done items from" line
+                rest = "\n".join(body_lines[2:]).strip("\n")
+                text = (head_a + "\n# Build notes: archive\n" + "\n".join(intro) + "\n\n"
+                        + "\n".join(ln for b in old for ln in b) + ("\n" + rest if rest else "") + "\n")
+                write(arch, text)
+    return merged, [parse(b)["id"] for b in old]
+
+
 def main(argv):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--page", default=str(PAGE))
@@ -193,6 +261,9 @@ def main(argv):
     d = sub.add_parser("done")
     d.add_argument("id")
     d.add_argument("outcome")
+    t = sub.add_parser("tidy")
+    t.add_argument("--days", type=int, default=30)
+    t.add_argument("--dry", action="store_true")
     o = ap.parse_args(argv)
     if o.cmd == "add":
         print(add(o.note, o.said, o.screen, o.source, o.evidence, o.page, o.kind))
@@ -208,6 +279,12 @@ def main(argv):
             print(f"no open item {o.id}", file=sys.stderr)
             return 1
         print(f"{o.id} done: {o.outcome}")
+    elif o.cmd == "tidy":                                     # silent when there's nothing to do (the sweep's rule)
+        merged, archived = tidy(o.page, o.days, o.dry)
+        for new, old in merged:
+            print(f"{'would merge' if o.dry else 'merged'} {new} into {old}")
+        if archived:
+            print(f"{'would archive' if o.dry else 'archived'} {len(archived)} done item(s): {', '.join(archived)}")
     return 0
 
 

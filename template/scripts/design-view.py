@@ -2022,8 +2022,19 @@ class App:
         return {"ok": True}
 
     def landed(self):
-        """The agreed design is live in the main app: archive the layer, and the mockup starts from the new app."""
+        """The agreed design is live in the main app: archive the layer, and the mockup starts from the new app. This
+        round's build notes still open (built but not closed, or left out) go to the Manager on one card, so none is
+        forgotten."""
         stamp = time.strftime("%Y%m%d-%H%M%S")
+        left, _ = self.round_notes()
+        fz = self.layer.state("FROZEN") or {}
+        if left and not self.a.no_cards:
+            self.kanban(f"Build notes still open after {fz.get('build') or 'the build'}", "manager",
+                        f"The agreed design is live, and these build notes from its round are still open:\n"
+                        + "\n".join(f"- {x['id']} ({x['kind']}) {x['note']}" for x in left)
+                        + f"\n\nShape: quick. Built (check the app, or the cards' results): `build-notes.py done <id> \"build "
+                          f"{fz.get('build') or '<slug>'}\"`. Not built: leave it open and tell the owner in one line; it's "
+                          f"planned with them like any other (work-planning, \"Build notes\").")
         agreed = self.layer.root / "agreed.md"
         agreed_page(agreed)
         with agreed.open("a", encoding="utf-8") as f:
@@ -2073,7 +2084,8 @@ class App:
     def round_notes(self):
         """The build notes of this design round (noted from a note still in the layer: the functions behind the look),
         and the other open ones. -> (this round's, others)"""
-        mine = {h["id"] for h in self.layer.history}
+        back = {u["note"] for u in self.layer.undone}           # a message the owner took back: not theirs any more
+        mine = {h["id"] for h in self.layer.history} - back
         open_ = fnotes.items(self.notes_page)
         ours = [x for x in open_ if (re.search(r"\bn\d+\b", x.get("source") or "") or [None])[0] in mine]
         return ours, [x for x in open_ if x not in ours]

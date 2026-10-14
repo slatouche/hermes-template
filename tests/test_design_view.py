@@ -4,6 +4,7 @@
   python3 tests/test_design_view.py      (a temporary HOME and a server on a free local port)
 """
 import importlib.util
+import datetime
 import json
 import os
 import pathlib
@@ -393,7 +394,12 @@ def main():
     f_old = m.fnotes.add("something from an older chat", source="chat", page=app.notes_page)
     ours, others = app.round_notes()
     sheet = app.export()
+    app.layer.undone.append({"note": made["id"], "ops": [], "at": "00:00:00"})       # the owner took that message back
+    ours_back, others_back = app.round_notes()
+    app.layer.undone.pop()
     app.notes_page = real_page
+    check("a build note from a message the owner took back isn't part of the build (it's theirs to confirm)",
+          not ours_back and f_ours in [x["id"] for x in others_back], (ours_back, others_back))
     check("the build sheet: what the owner asked, change by change (their words, what was done, the edits), then this "
           "round's build notes as part of the build, the older ones apart",
           [x["id"] for x in ours] == [f_ours] and f_old in [x["id"] for x in others]
@@ -441,6 +447,27 @@ def main():
           and gone and gone[0]["id"] == "F1" and gone[0]["outcome"].startswith("build design-20261014-0910")
           and "The Manager's own line under Open." in txt and txt.index("**F1**") > txt.index("## Done"), (r.stderr, txt[-700:]))
     check("ids never repeat once items are done", subprocess.run(fn_cli + ["add", "another"], capture_output=True, text=True).stdout.strip() == "F8")
+    tp = str(app.layer.root / "tidy-notes.md")
+    t_cli = [sys.executable, str(ROOT / "scripts" / "build-notes.py"), "--page", tp]
+    for note, said in (("the info button should open a help note covering what each control does", "help me"),
+                       ("save should keep my scroll position", ""),
+                       ("The info button's help note should cover what each control does", "explain the controls")):
+        subprocess.run(t_cli + ["add", note, "--said", said] if said else t_cli + ["add", note], capture_output=True, text=True)
+    subprocess.run(t_cli + ["done", "F2", "build design-old"], capture_output=True, text=True)
+    pg = pathlib.Path(tp)
+    pg.write_text(pg.read_text().replace(f"(build design-old ({datetime.date.today().isoformat()})", "x").replace(
+        f"build design-old ({datetime.date.today().isoformat()})", "build design-old (2026-01-02)"))
+    quiet = subprocess.run(t_cli + ["tidy", "--dry"], capture_output=True, text=True).stdout
+    out = subprocess.run(t_cli + ["tidy"], capture_output=True, text=True).stdout
+    again = subprocess.run(t_cli + ["tidy"], capture_output=True, text=True).stdout
+    page_now, arch = pg.read_text(), pathlib.Path(tp.replace(".md", "-archive.md"))
+    open_now = json.loads(subprocess.run(t_cli + ["list", "--json"], capture_output=True, text=True).stdout)
+    check("tidy: the same note twice is merged into the older (its words kept), and a done item over a month old moves "
+          "to the archive; a second run has nothing to do",
+          "would merge F3 into F1" in quiet and "merged F3 into F1" in out and "archived 1" in out and again == ""
+          and [x["id"] for x in open_now] == ["F1"] and "merged F3: The info button's help note" in page_now
+          and "explain the controls" in page_now and "went: merged into F1" in page_now
+          and arch.exists() and "**F2**" in arch.read_text() and "**F2**" not in page_now, (out, page_now[-700:]))
 
     rf = app.layer.new_note("new deck does nothing", [], "#/")
     app.layer.finish(dict(rf, verdict="function", plan="New deck does nothing"))
@@ -655,11 +682,18 @@ elif a[1] == "create":
         time.sleep(6)
         st = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops").read()).get("build") or {}
         check("the toolbar follows the build's stage", st.get("state") == "planning" and st.get("rows"), st)
+        op_note = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/status").read())["notes"][-1]["id"]
+        bn2 = [sys.executable, str(ROOT / "scripts" / "build-notes.py"), "--page", str(home / "vault" / "design" / "build-notes.md")]
+        subprocess.run(bn2 + ["add", "the background colour is saved per deck", "--source", f"design view {op_note}"], capture_output=True)
         b["state"] = "live"                                  # as build.py leaves it once it went live
         (home / ".hermes" / "builds" / f"{r['build']}.json").write_text(json.dumps(b))
         time.sleep(6)
         o3 = json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port2}/dv/ops").read())
         check("live: the mockup unfreezes onto the new app and the layer is archived", not o3["frozen"] and o3["ops"] == [], o3["frozen"])
+        left = [c for c in json.loads((home / "board.json").read_text()) if c["title"].startswith("Build notes still open after")]
+        check("live: this round's build notes still open go to the Manager on one card, so none is forgotten",
+              len(left) == 1 and left[0]["assignee"] == "manager" and "the background colour is saved per deck" in left[0]["body"]
+              and "build-notes.py done" in left[0]["body"], left)
         post2("/dv/op", {"op": {"op": "token", "name": "--bg", "value": "#222"}})
         code, r2 = post2("/dv/agree", {})
         code, u = post2("/dv/unfreeze", {})
